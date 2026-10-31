@@ -41,7 +41,7 @@ jobs:
       - id: p
         name: 版本与是否需要构建
         run: |
-          V=$(sed -n 's/^PANEL_VERSION = "\(.*\)"/\1/p' server.py)
+          V=$(sed -n 's/^PANEL_VERSION = "\(.*\)"/\1/p' server.py | head -n1)
           [ -n "$V" ] || { echo "读不到 PANEL_VERSION"; exit 1; }
           B=1
           if [ "${{ github.event_name }}" = push ] && git rev-parse -q --verify HEAD^ >/dev/null; then
