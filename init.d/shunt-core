@@ -1,0 +1,58 @@
+#!/sbin/openrc-run
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Shunt 代理核心（服务名 shunt-core）：按 /etc/mihomo-panel/core 选择 mihomo、mihomo Smart 或 sing-box（面板「设置 → 核心 → 内核」切换）
+CORE=$(cat /etc/mihomo-panel/core 2>/dev/null)
+name="shunt-core"
+if [ "$CORE" = "singbox" ] && [ -x /usr/local/bin/sing-box ]; then
+  description="sing-box proxy core"
+  command="/usr/local/bin/sing-box"
+  command_args="run --disable-color -c /etc/sing-box/config.json -D /etc/sing-box"
+elif [ "$CORE" = "smart" ] && [ -x /usr/local/bin/mihomo-smart ]; then
+  description="mihomo Smart proxy core"
+  command="/usr/local/bin/mihomo-smart"
+  command_args="-d /etc/mihomo"
+else
+  description="mihomo proxy core"
+  command="/usr/local/bin/mihomo"
+  command_args="-d /etc/mihomo"
+fi
+# 文件句柄：conf.d 没设置 rc_ulimit 时按本机硬上限提高（最多 1048576）。默认 1024 在 TUN / TProxy 下连接一多就用完，
+# 核心进程还在但控制接口 accept 失败，看门狗判定「控制接口无响应」反复重启
+if [ -z "$rc_ulimit" ]; then
+  _h=$(ulimit -Hn 2>/dev/null)
+  case "$_h" in ''|unlimited) _h=1048576;; esac
+  [ "$_h" -gt 1048576 ] 2>/dev/null && _h=1048576
+  rc_ulimit="-n $_h"
+fi
+command_background=true
+retry="TERM/15/KILL/5"  # 先给核心 15 秒正常退出：sing-box 只在正常退出时把 Fake-IP 映射写入 cache.db，被直接 kill 会全部丢失
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/mihomo.log"
+error_log="/var/log/mihomo.log"
+
+depend() { need net; after firewall; }
+PREP=/run/shunt-core.prep  # 面板（或 --gen）刚生成好配置时写下的透明代理参数，见 start_pre / start_post
+# 生成配置失败（如 data.json 有坏数据）时不阻止启动：配置是原子写入的，沿用上一次的配置照常启动
+# 面板按钮 / 看门狗 / 定时任务重启时，面板已在自己的进程里生成好配置并写了 $PREP（2 分钟内有效）：跳过 --gen，
+# 省掉一次 Python 启动（每次要编译、导入整个面板，路由器上约 0.3～1 秒）。开机、SSH 里 rc-service 时照旧 --gen
+start_pre() {
+  [ -s /var/log/mihomo.log ] && { { echo "===== $(date '+%F %T') 启动前，上次运行的最后 200 行 ====="; tail -n 200 /var/log/mihomo.log; } >> /var/log/mihomo.log.prev; tail -n 600 /var/log/mihomo.log.prev > /var/log/mihomo.log.prev.t && mv -f /var/log/mihomo.log.prev.t /var/log/mihomo.log.prev; } 2>/dev/null; : > /var/log/mihomo.log; modprobe tun 2>/dev/null; mkdir -p /etc/sing-box
+  if [ -f "$PREP" ] && [ $(( $(date +%s) - $(stat -c %Y "$PREP" 2>/dev/null || echo 0) )) -lt 120 ]; then return 0; fi
+  rm -f "$PREP"
+  python3 /opt/mihomo-panel/server.py --gen >/dev/null || ewarn "生成配置失败，沿用上一次的配置启动"
+  return 0
+}
+# 按代理方式：TProxy 全量规则 / TUN 仅 DNS 重定向 / 关闭。以前固定 sleep 1 再挂规则：核心 0.2 秒就监听好也要白等，
+# 加载大规则集超过 1 秒时规则又先挂上、流量被导向还没监听的端口。现在 tproxy.sh 每 0.1 秒查一次端口（最多 10 秒），
+# 核心进程退出则不挂规则（局域网保持直连，不被导向不存在的端口）；参数直接读 $PREP，不再起一次 Python
+start_post() {
+  _tpe=""; [ -f "$PREP" ] && _tpe="$PREP"
+  TPENV_FILE="$_tpe" WAIT_PID="$pidfile" /opt/mihomo-panel/tproxy.sh apply || ewarn "透明代理规则未加载（核心已退出，或内核缺少 nftables / TProxy 模块？），可改用 TUN 模式"
+  rm -f "$PREP"
+  return 0
+}
+# 先撤规则再停核心：sing-box 正常退出最多要等 15 秒（写 Fake-IP 缓存），以前这段时间局域网流量仍被导向正在退出的核心
+# 只删 nftables 表（表名同 tproxy.sh 的 TABLE）：流量不再被打标记 / 重定向即恢复直连，策略路由等由 stop_post 收尾
+stop_pre() { nft delete table inet mihomo_panel 2>/dev/null; return 0; }
+# 再撤一次（幂等，防停止期间别处又挂上）；核心被 KILL 时来不及撤的 TUN 策略路由 / auto-redirect 表顺带清掉（有核心进程在跑时不动）
+stop_post() { /opt/mihomo-panel/tproxy.sh stop leftovers; return 0; }  # 旧版 tproxy.sh 忽略第二个参数，只做 stop

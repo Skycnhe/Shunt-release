@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+# SPDX-License-Identifier: GPL-3.0-or-later
+name="shunt"
+description="Shunt side-router panel"
+command="/usr/bin/python3"
+command_args="/opt/mihomo-panel/server.py"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/mihomo-panel.log"
+error_log="/var/log/mihomo-panel.log"
+depend() { need net; }
+# 面板端口：在 /etc/conf.d/shunt 写一行 PANEL_PORT=8081（OpenRC 启动前会读取该文件），默认 8080
+start_pre() {
+  [ -n "${PANEL_PORT:-}" ] && export PANEL_PORT
+  return 0
+}
