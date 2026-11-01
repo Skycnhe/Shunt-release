@@ -236,7 +236,7 @@ status() {
 case "$1" in
   start) start ;;
   dns) dns_only ;;
-  stop) stop; [ "$2" = leftovers ] && leftovers ;;  # init.d 的 stop_post：stop leftovers 一次调用做完
+  stop) stop; [ "$2" != leftovers ] || leftovers ;;  # init.d 的 stop_post：stop leftovers 一次调用做完。以前写成 [ = ] && …，不带参数的 stop 退出码变成 1
   status) status ;;
   leftovers) leftovers ;;
   apply)

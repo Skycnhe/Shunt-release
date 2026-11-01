@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.10"
+PANEL_VERSION = "8.10.11"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.10"
+PANEL_VERSION = "8.10.11"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1913,6 +1913,8 @@ def mihomo_rules(d, policies, dc):
     if d.get("proxy_mode") == "tun":  # TUN 模式下无法在 nftables 里按来源绕过，改用规则让这些设备直连
         for x in d.get("bypass", []):
             try:
+                if "%" in x:  # 带网卡的地址生成的 SRC-IP-CIDR 内核不认（以前整份配置加载失败）
+                    raise ValueError
                 n = ipaddress.ip_network(x.strip(), strict=False)
                 pre.append(f"SRC-IP-CIDR,{n},DIRECT")
             except ValueError:
@@ -2306,6 +2308,8 @@ def clean_rulesets(v):
 def bypass_ok(x):
     if MAC_RX.fullmatch(x):
         return True
+    if "%" in x:  # 以前 fe80::1%eth0 这种带网卡的地址也算合法：写进 nftables 集合语法错误、整份透明代理规则加载失败，
+        return False  # sing-box 的 source_ip_cidr 也解析不了（Go 后端本来就不收）
     try:
         ipaddress.ip_network(x, strict=False)
         return True
@@ -4138,9 +4142,14 @@ def _sb_dns_server(addr, tag, boot, warn, via=None):
     else:
         m = re.match(r"^(https|tls|quic|h3|udp|tcp)://(.+)$", base)
         scheme, rest = (m.group(1), m.group(2)) if m else ("udp", base)
-        u = urlsplit("x://" + rest)
-        host = u.hostname or rest
         s["type"] = scheme
+        if is_ip_addr(rest.strip("[]")):
+            # 以前裸 IPv6（如 2001:4860:4860::8888，校验允许）交给 urlsplit 取端口会抛 ValueError，整份配置生成失败（500）；
+            # 现在整体是 IP 就直接用（不带端口）
+            u, host = urlsplit("x://"), rest.strip("[]")
+        else:
+            u = urlsplit("x://" + rest)
+            host = u.hostname or rest
         s["server"] = host
         if u.port:
             s["server_port"] = u.port
@@ -4166,12 +4175,24 @@ def _domestic(addr):
     base = addr.split("#", 1)[0]
     if CN_DNS.search(base) or base.startswith(("system", "dhcp://", "rcode://")):
         return True
-    host = urlsplit("x://" + re.sub(r"^[a-z0-9]+://", "", base)).hostname or ""
     try:
-        ip = ipaddress.ip_address(host)
-        return ip.is_private or ip.is_loopback or ip.is_link_local
+        host = urlsplit("x://" + re.sub(r"^[a-z0-9]+://", "", base)).hostname or ""
+    except ValueError:  # 「[::1」这类写错的地址 urlsplit 会抛异常，以前整份配置生成 500
+        host = ""
+    try:  # 裸 IPv6（如 fe80::1，不带方括号）urlsplit 取不出主机，先整体按 IP 解析
+        ip = ipaddress.ip_address(base.strip().strip("[]"))
     except ValueError:
-        return False
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+    # 以前用 ip.is_private：100.64.0.0/10（CGNAT，如 Tailscale MagicDNS 100.100.100.100）不算内网，
+    # respect-rules 下被改成经节点发出，节点那头根本到不了 → 这些域名全部解析失败。现在按明确的内网段判断（与 Go 一致）
+    return any(ip in n for n in _LOCAL_NETS)
+
+
+_LOCAL_NETS = [ipaddress.ip_network(c) for c in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8",
+                                                 "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10")]
 
 
 def sb_dns(d, cfg, policies, rs, alias, v6):
@@ -4361,15 +4382,23 @@ def build_singbox(d):
     if d.get("sniffer", True) or dns_cfg(d)["mode"] == "fake-ip":
         route_rules.append({"action": "sniff"})
     route_rules += [{"inbound": ["dns-in"], "action": "hijack-dns"}, {"protocol": ["dns"], "action": "hijack-dns"},
-                    {"clash_mode": "Direct", "action": "route", "outbound": "DIRECT"},
-                    {"clash_mode": "Global", "action": "route", "outbound": G_SEL if G_SEL in policies else "DIRECT"}]
+                    {"clash_mode": "Direct", "action": "route", "outbound": "DIRECT"}]
+    route_rules += sb_global_direct(d)
+    route_rules.append({"clash_mode": "Global", "action": "route", "outbound": G_SEL if G_SEL in policies else "DIRECT"})
     resolved = False
     final = "DIRECT"
     for line in cfg["rules"]:
         if line.upper().startswith("MATCH,"):
+            # 与 mihomo 一致：第一条 MATCH 之后的规则都不再生效。以前只记下 final 后继续翻译，自定义规则里写的
+            # 「MATCH,DIRECT」被后面内置的分流规则和最后的 MATCH 覆盖、等于没写；MATCH,REJECT 也变成了直连
             act = tr.action(line.split(",", 1)[1])
-            final = act.get("outbound", "DIRECT") if act else "DIRECT"
-            continue
+            if act is None:  # PASS：跳过这条
+                continue
+            if act.get("action") == "reject":
+                route_rules.append(dict({"network": ["tcp", "udp"]}, **act))
+            else:
+                final = act.get("outbound", "DIRECT")
+            break
         r, needs = tr.rule(line)
         if r is None:
             continue
@@ -4408,6 +4437,30 @@ def build_singbox(d):
     return conf, list(dict.fromkeys(warn)), need
 
 
+def sb_global_direct(d):
+    """「全局代理」模式下仍直连的流量（排在 clash_mode Global 之前，只在全局模式生效）。
+    以前全局模式一条 Global 规则把所有流量都送去节点：TUN 模式下「绕过设备」（nftables 管不到，靠 SRC-IP-CIDR 规则直连）、
+    经路由器转发的局域网 / 保留地址、NTP 对时全部走节点，绕过设备照样被代理、跨网段访问局域网断开；TProxy 模式下这些在
+    nftables 里本来就不进核心，两种代理方式表现不一致。现在这三类在全局模式下也直连"""
+    rules = []
+    if d.get("proxy_mode") == "tun":
+        src = []
+        for x in d.get("bypass") or []:
+            try:
+                if "%" in x:  # 带网卡的地址 sing-box 不认
+                    raise ValueError
+                n = str(ipaddress.ip_network(x.strip(), strict=False))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if n not in src:
+                src.append(n)
+        if src:
+            rules.append({"clash_mode": "Global", "source_ip_cidr": src, "action": "route", "outbound": "DIRECT"})
+    rules.append({"clash_mode": "Global", "ip_is_private": True, "action": "route", "outbound": "DIRECT"})
+    rules.append({"clash_mode": "Global", "network": ["udp"], "port": [123], "action": "route", "outbound": "DIRECT"})
+    return rules
+
+
 def sb_node_outbounds(d, cfg, sub_out, warn):
     """手动节点与订阅节点 → (outbounds, 手动节点名, {订阅名: 节点名列表})"""
     outbounds, node_names, prov_names = [], [], {}
@@ -4438,6 +4491,21 @@ def sb_node_outbounds(d, cfg, sub_out, warn):
     for sname, conv in convs.items():
         mine = {name for name, _, _ in conv}
         convs[sname], dropped[sname] = sb_fix_detour(conv, base_known | (all_sub - mine))
+    # 跨订阅成环（订阅 A 的节点 detour 到订阅 B 的节点，B 的又 detour 回 A）：sb_fix_detour 只看本订阅，把对方当成
+    # 「存在的外部出站」放行，以前整环原样写进配置，sing-box 启动失败；现在整环跳过（依赖它们的在下面的循环里一并跳过）
+    owner = {name: sname for sname, conv in convs.items() for name, _, _ in conv}
+    det = {name: o.get("detour") for conv in convs.values() for name, _, o in conv}
+    for start in list(det):
+        seen, cur = [], start
+        while cur in owner and cur not in seen:
+            seen.append(cur)
+            cur = det.get(cur)
+        if cur in seen:  # 回到了走过的订阅节点：从 cur 开始的这一段是环
+            for n in seen[seen.index(cur):]:
+                sname = owner[n]
+                if n not in dropped[sname]:
+                    dropped[sname].append(n)
+                    convs[sname] = [x for x in convs[sname] if x[0] != n]
     while True:  # 跨订阅：前置节点在别的订阅里被跳过的，依赖它的也跳过
         gone = {n for v in dropped.values() for n in v}
         more = False
@@ -4802,7 +4870,25 @@ def _headless(r):
         r["source_ip_cidr"] = list(_PRIVATE_CIDRS)
     if not r or not set(r) <= _HEADLESS_KEYS or set(r) == {"invert"}:
         return None
+    if not all(_re2_ok(x) for k in ("domain_regex", "process_path_regex") for x in r.get(k) or []):
+        return None
     return r
+
+
+# Go regexp（RE2）不支持的写法：前后断言、原子组、反向引用、\\Z。mihomo 的 DOMAIN-REGEX 用 regexp2，这些都能用
+_NOT_RE2 = re.compile(r"\\(\\?<?[=!]|\\(\\?>|\\(\\?P=|\\\\[1-9]|\\\\Z")
+
+
+def _re2_ok(rx):
+    """正则能否被 sing-box（Go regexp）编译。以前 classical 规则集里的 DOMAIN-REGEX 原样写进规则集文件，
+    带前后断言 (?!…) 或写错的正则让 sing-box 加载规则集失败、内核起不来（之后每次保存都校验不过被撤销）"""
+    if not isinstance(rx, str) or _NOT_RE2.search(rx):
+        return False
+    try:
+        re.compile(re.sub(r"\\\\[pP]\\{\\w+\\}", "x", rx))  # \\p{Han} 等 Unicode 类 Go 支持、Python re 不支持
+    except re.error:
+        return False
+    return True
 
 
 def _rule_lines_to_source(text, behavior, fmt, skipped=None):
@@ -8102,6 +8188,12 @@ def watchdog_tick():
     WD["last_check"] = int(time.time())
     if not d.get("watchdog", True):
         WD["status"] = "off"
+        # 以前：看门狗撤规则直连（tp_off）期间关掉看门狗，tp_off 再也没人清，局域网一直直连、之后保存设置也不再重载透明代理规则。
+        # 现在核心在跑时补开规则并清标志（核心没响应时保持直连，不把流量导向卡死的核心）
+        if WD["tp_off"] and not WD["manual_stop"] and core_alive():
+            WD["tp_off"] = False
+            if d.get("proxy_mode") != "off":
+                sh(TPROXY_SH + " apply")
         return
     if mass_testing():  # 全节点测速进行中：核心高负载，/version 可能超时，暂停故障判定
         return
@@ -8177,7 +8269,9 @@ def _wd_fail(d, cname):
     if WD["status"] != "direct":
         WD["status"] = "direct"
         if redirecting:
-            sh(TPROXY_SH + " stop")  # TUN 模式下核心退出时 TUN 设备与路由随之消失，这里再撤掉 DNS 重定向
+            # 以前只 stop：核心崩溃 / 被 KILL 时 TUN 的 auto-route 策略路由（2022 表，strict_route 的 unreachable）留着，
+            # 说是「局域网直连」实际照样断网。现在顺带清残留（leftovers 只在没有核心进程时才动）
+            sh(TPROXY_SH + " stop leftovers")
             WD["tp_off"] = True
         wd_event(f"{cname} 核心重启 2 次仍无响应，已关闭透明代理，局域网暂时直连上网", kind="direct")
     elif WD["fails"] % 10 == 0:  # 直连状态下每 5 分钟再尝试拉起一次
@@ -8187,7 +8281,7 @@ def _wd_fail(d, cname):
             # rc 的 start_post 不管核心是否真的起来都会重新挂上规则（command_background 下启动总算成功）：
             # 一律撤掉，局域网保持直连；核心若已恢复，下一轮确认后再重新开启
             # TUN 模式下核心一启动就接管路由，无法“暂不接管”，下一轮检查会正常恢复
-            sh(TPROXY_SH + " stop")
+            sh(TPROXY_SH + " stop leftovers")  # 核心没起来又崩溃时清掉它留下的 TUN 策略路由（有核心进程时不动）
             WD["tp_off"] = True
 
 
@@ -13934,6 +14028,8 @@ def tp_env():
     ips, ip6s = [], []
     for x in items:
         try:
+            if "%" in x:  # 带网卡的地址（fe80::1%eth0）nftables 不认，以前写进集合导致整份规则加载失败；Go 后端同样跳过
+                raise ValueError
             n = ipaddress.ip_network(x, strict=False)
             (ips if n.version == 4 else ip6s).append(n)
         except ValueError:
