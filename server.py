@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.9"
+PANEL_VERSION = "11.6.10"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.9"
+PANEL_VERSION = "11.6.10"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -9723,7 +9723,10 @@ def dns_probe(server=("127.0.0.1", 1053), name="www.baidu.com"):
     try:
         st = time.time()
         s.sendto(pkt, server)
-        data = s.recv(1500)
+        while True:  # 丢弃 ID 不符的迟到报文；短于 12 字节的报文以前抛 IndexError
+            data = s.recv(1500)
+            if len(data) >= 12 and int.from_bytes(data[:2], "big") == qid and data[2] & 0x80:
+                break
         rcode, an = data[3] & 0x0F, int.from_bytes(data[6:8], "big")
         return rcode == 0 and an > 0, int((time.time() - st) * 1000), rcode
     finally:
@@ -9980,27 +9983,57 @@ def dns_probe_ip(name, server=("127.0.0.1", 1053)):
     s.settimeout(4)
     try:
         s.sendto(pkt, server)
-        data = s.recv(1500)
+        data = _recv_reply(s, qid)
     finally:
         s.close()
+    rcode, ips, ok = parse_a_records(data)
+    if not ok:
+        raise ValueError(f"DNS 应答格式错误（{len(data)} 字节）")
+    return rcode, ips
+
+
+def _recv_reply(s, qid):
+    """读取与 qid 匹配的 DNS 应答：丢弃 ID 不符的迟到 / 串号报文，直到超时"""
+    while True:
+        data = s.recv(1500)
+        if len(data) >= 12 and int.from_bytes(data[:2], "big") == qid and data[2] & 0x80:
+            return data
+
+
+def parse_a_records(data):
+    """解析应答里的 A 记录，返回 (rcode, [IP], 完整)；截断 / 格式错误时不再抛 IndexError"""
+    if len(data) < 12:
+        return 0, [], False
     rcode, an = data[3] & 0x0F, int.from_bytes(data[6:8], "big")
-    i, ips = 12, []
-    while data[i]:  # 跳过问题部分
-        i += data[i] + 1
-    i += 5
+    pos, ips = [12], []
+
+    def skip_name():
+        i = pos[0]
+        while i < len(data):
+            n = data[i]
+            if n == 0:
+                pos[0] = i + 1
+                return True
+            if n & 0xC0 == 0xC0:
+                pos[0] = i + 2
+                return pos[0] <= len(data)
+            i += n + 1
+        return False
+    if not skip_name():  # 问题部分
+        return rcode, ips, False
+    pos[0] += 4
     for _ in range(an):
-        if data[i] & 0xC0 == 0xC0:
-            i += 2
-        else:
-            while data[i]:
-                i += data[i] + 1
-            i += 1
+        if not skip_name() or pos[0] + 10 > len(data):
+            return rcode, ips, False
+        i = pos[0]
         typ, rdlen = int.from_bytes(data[i:i + 2], "big"), int.from_bytes(data[i + 8:i + 10], "big")
         i += 10
+        if i + rdlen > len(data):
+            return rcode, ips, False
         if typ == 1 and rdlen == 4:
             ips.append(".".join(str(b) for b in data[i:i + 4]))
-        i += rdlen
-    return rcode, ips
+        pos[0] = i + rdlen
+    return rcode, ips, True
 
 
 def resolv_servers():
@@ -10485,11 +10518,9 @@ from .sysopt import sh
 def _lan_ip():
     """本机局域网 IP：UDP connect 只查路由出口地址，不实际发包；拿不到返回空串"""
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:  # connect 失败（无默认路由）时也关掉 socket
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
     except OSError:
         return ""
 
