@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.10"
+PANEL_VERSION = "11.6.11"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.10"
+PANEL_VERSION = "11.6.11"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -7026,9 +7026,9 @@ def _rtt_ctx():
     return _RTT_CTX
 
 
-def site_rtt(url, timeout=6):
-    """经 mixed 端口建立一条连接（DNS、TCP、TLS 握手不计时），在同一连接上再请求一次，只计这一次的往返。
-    与核心 unified-delay 的测法一致，也和浏览器复用连接时的实际体验一致；第二次请求失败时退回第一次的总耗时"""
+def _rtt_open(url, timeout=6):
+    """经 mixed 端口建立一条连接并发出第一次请求（DNS、TCP、TLS 握手与首包都在这里，不计入延迟）。
+    返回 (连接, 请求路径, 请求头, 第一次总耗时 ms, 连接是否可复用)；连接由调用方关闭"""
     u = urlsplit(url)
     https = u.scheme == "https"
     port = u.port or (443 if https else 80)
@@ -7045,16 +7045,29 @@ def site_rtt(url, timeout=6):
         c.request("HEAD", path, headers=hdr)
         r = c.getresponse()
         r.read()
-        first = int((time.time() - st) * 1000)
-        if r.will_close:
-            return first
-        try:
-            st = time.time()
-            c.request("HEAD", path, headers=hdr)
-            c.getresponse().read()
-            return max(1, int((time.time() - st) * 1000))
-        except Exception:
-            return first
+        return c, path, hdr, int((time.time() - st) * 1000), not r.will_close
+    except BaseException:
+        c.close()
+        raise
+
+
+def _rtt_second(c, path, hdr, first):
+    """在已建立的连接上再请求一次，只计这一次的往返；失败时退回第一次的总耗时"""
+    try:
+        st = time.time()
+        c.request("HEAD", path, headers=hdr)
+        c.getresponse().read()
+        return max(1, int((time.time() - st) * 1000))
+    except Exception:
+        return first
+
+
+def site_rtt(url, timeout=6):
+    """经 mixed 端口建立一条连接（DNS、TCP、TLS 握手不计时），在同一连接上再请求一次，只计这一次的往返。
+    与核心 unified-delay 的测法一致，也和浏览器复用连接时的实际体验一致；第二次请求失败时退回第一次的总耗时"""
+    c, path, hdr, first, reuse = _rtt_open(url, timeout)
+    try:
+        return _rtt_second(c, path, hdr, first) if reuse else first
     finally:
         c.close()
 
@@ -7120,15 +7133,30 @@ def delay_test(force=False):
     tests = load()["tests"] or TESTS
     out = [None] * len(tests)
 
+    conns = [None] * len(tests)
+
     def one(i, t):
         try:
-            out[i] = {"name": t["name"], "url": t["url"], "ms": site_rtt(t["url"])}
+            conns[i] = _rtt_open(t["url"])
         except Exception:
-            out[i] = {"name": t["name"], "url": t["url"], "ms": -1}
+            conns[i] = None
 
+    # 建连、TLS 握手和首个请求并发进行（省时间）；计时的第二次请求逐个进行：
+    # 6 个站点同时计时，其他连接的 TLS 握手会占满路由器 CPU，把计时请求拖慢（实测百度 32 ms 显示成 128 ms）
     ths = [threading.Thread(target=one, args=(i, t)) for i, t in enumerate(tests)]
     [t.start() for t in ths]
     [t.join() for t in ths]
+    for i, t in enumerate(tests):
+        ms = -1
+        if conns[i] is not None:
+            c, path, hdr, first, reuse = conns[i]
+            try:
+                ms = _rtt_second(c, path, hdr, first) if reuse else first
+            except Exception:
+                ms = -1
+            finally:
+                c.close()
+        out[i] = {"name": t["name"], "url": t["url"], "ms": ms}
     with SITE_LOCK:
         if not force and SITE_LAST["r"] is not None and time.time() - SITE_LAST["t"] < 20:
             return SITE_LAST["r"]  # 测速期间已有更新鲜的结果，直接复用，丢弃本次结果
