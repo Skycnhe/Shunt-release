@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.8"
+PANEL_VERSION = "11.6.9"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.8"
+PANEL_VERSION = "11.6.9"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1158,6 +1158,42 @@ def rule_policy_index(parts):
     return i
 
 
+LOGICAL_RX = re.compile(r"^\\s*(?:AND|OR|NOT)\\s*,\\s*\\(", re.I)
+RULE_FLAGS = ("no-resolve", "src")
+
+
+def _logical_end(s):
+    """逻辑规则「AND,(...)」里第一个「(」对应的「)」的位置；括号不配对返回 -1"""
+    depth = 0
+    for j in range(s.find("("), len(s)):
+        if s[j] == "(":
+            depth += 1
+        elif s[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+    return -1
+
+
+def split_rule(rule):
+    """规则 → (匹配部分, 策略, 末尾参数列表)。与 mihomo 一致：策略是去掉末尾 no-resolve / src 后的最后一项。
+    逻辑规则同样按匹配部分的括号收尾来拆：以前按最后一个「)」拆，策略名本身带括号（如节点「HK(IPLC)」）时
+    sing-box 把整条规则当成不支持跳过、mihomo 的失效策略检查也被绕过。逻辑规则没写策略时策略为空"""
+    s = rule.strip()
+    if LOGICAL_RX.match(s):
+        e = _logical_end(s)
+        if e < 0:
+            return s, "", []
+        tail = [x.strip() for x in s[e + 1:].split(",")[1:]] if s[e + 1:].lstrip().startswith(",") else []
+        i = len(tail)
+        while i > 0 and tail[i - 1].lower() in RULE_FLAGS:
+            i -= 1
+        return s[:e + 1], (tail[i - 1] if i else ""), tail[i:]
+    parts = s.split(",")
+    i = rule_policy_index(parts)
+    return ",".join(parts[:i]), parts[i].strip() if i > 0 else "", [x.strip() for x in parts[i + 1:]]
+
+
 def dns_policy_of(server):
     _, sep, tail = server.partition("#")
     if not sep:
@@ -1180,6 +1216,14 @@ def _mh_domain(x):
     if pre:
         return "domain_suffix", x if pre.endswith("*") else "." + x
     return "domain", x
+
+
+def _wildcard_regex(x):
+    """DOMAIN-WILDCARD 的值 → sing-box domain_regex。mihomo component/wildcard 里「*」匹配任意个字符（含「.」），
+    「?」匹配一个字符：*.google.com 也命中 a.b.google.com。以前借用 _mh_domain（「*」只算一级），sing-box 下多级子域不命中"""
+    x = x.strip().lower()
+    # re.escape 会转义「-」而 Go regexp.QuoteMeta 不会：去掉这处差异，Py 与 Go 生成的配置逐字一致
+    return "^" + re.escape(x).replace(r"\\-", "-").replace(r"\\*", ".*").replace(r"\\?", ".") + "$"
 
 
 def _rs_tag(kind, name):
@@ -1652,7 +1696,7 @@ from .base import (
 from .data import LB_KINDS, auto_name, lb_name, region_label, safe
 from .devroute import device_route_rules, mark_applied
 from .groups import clean_custom_group, gcfg, group_opts, region_plan, rx
-from .ruleutil import DOMAIN_RX, adblock_providers, adblock_scopes, dns_policy_of, rule_policy_index
+from .ruleutil import DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, dns_policy_of, rule_policy_index, split_rule
 from .sb_common import active_core
 from .sysopt import sh
 def build_config(d, strict=False):
@@ -1829,6 +1873,8 @@ def mihomo_rules(d, policies, dc):
     if d.get("proxy_mode") == "tun":  # TUN 模式下无法在 nftables 里按来源绕过，改用规则让这些设备直连
         for x in d.get("bypass", []):
             try:
+                if "%" in x:  # 带网卡的地址生成的 SRC-IP-CIDR 内核不认（以前整份配置加载失败）
+                    raise ValueError
                 n = ipaddress.ip_network(x.strip(), strict=False)
                 pre.append(f"SRC-IP-CIDR,{n},DIRECT")
             except ValueError:
@@ -1935,9 +1981,15 @@ def fix_rule_policy(rule, policies):
     rule = rule.strip()
     if not rule or rule.startswith("#"):
         return None
+    if LOGICAL_RX.match(rule):
+        # 逻辑规则：策略是匹配部分括号收尾后的那一项（可以带括号，如「HK(IPLC)」）。以前策略以「)」结尾的一律放行，
+        # 删掉的节点 / 组「Gone(X)」仍被引用时 sing-box 报 outbound not found、内核起不来；没写策略的补上节点选择。
+        # 末尾的 no-resolve / src 原样保留（sing-box 翻译时由 split_rule 处理）
+        body, pol, flags = split_rule(rule)
+        return ",".join([body, pol if pol in policies else G_SEL] + flags)
     parts = rule.split(",")
     i = rule_policy_index(parts)
-    if i > 0 and parts[i].strip() not in policies and not parts[i].strip().endswith(")"):
+    if i > 0 and parts[i].strip() not in policies:  # 以前以「)」结尾的策略名一律放行（同上，Gone(X) 起不来）
         parts[i] = G_SEL
     return ",".join(parts)
 
@@ -2078,9 +2130,8 @@ def bad_rule_policies(rules, d):
     pol = {g["name"] for g in build_config(dict(d, rules=[]))["proxy-groups"]} | BUILTIN_POLICIES | {n["proxy"]["name"] for n in d["nodes"]}
     bad = []
     for r in rules:
-        parts = r.split(",")
-        i = rule_policy_index(parts)
-        if i <= 0 or parts[i].strip() not in pol:
+        _, p, _ = split_rule(r)  # 逻辑规则按匹配部分的括号收尾取策略（策略名可带括号；以前按逗号切出「UDP))」之类报错）
+        if not p or p not in pol:
             bad.append(r)
     return bad
 
@@ -2206,6 +2257,8 @@ def clean_rulesets(v):
 def bypass_ok(x):
     if MAC_RX.fullmatch(x):
         return True
+    if "%" in x:  # 以前 fe80::1%eth0 这种带网卡的地址也算合法：写进 nftables 集合语法错误、整份透明代理规则加载失败，
+        return False  # sing-box 的 source_ip_cidr 也解析不了（Go 后端本来就不收）
     try:
         ipaddress.ip_network(x, strict=False)
         return True
@@ -3448,8 +3501,11 @@ _SRC['shunt.sb_rules'] = '''"""规则：mihomo 规则字符串 → sing-box 路�
 import ipaddress
 import re
 
-from .ruleutil import _mh_domain, _rs_tag, rule_policy_index
+from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, split_rule
 from .sb_common import SB_GEO
+
+# 值里可能带逗号的规则类型：mihomo 把类型与策略之间的所有项拼回去当值（如 DOMAIN-REGEX,^a{1,3}\\.com$）
+_REGEX_TYPES = {"DOMAIN-REGEX", "PROCESS-NAME-REGEX", "PROCESS-PATH-REGEX", "URL-REGEX"}
 
 
 def geo_srs_entry(kind, name):
@@ -3494,6 +3550,10 @@ class SBRules:
     def __init__(self, cfg, inbounds, alias, rule_sets):
         self.cfg, self.inbounds, self.alias, self.rule_sets = cfg, inbounds, alias, rule_sets
         self.warn = []
+        # 匹配目标 IP 的规则集（ipcidr / classical）：与 mihomo 一致，引用它们且没写 no-resolve / src 时先解析域名再匹配。
+        # build_singbox 会按已转换好的 classical 文件里有没有 IP 条目再收窄
+        self.ip_sets = {k for k, v in ((cfg or {}).get("rule-providers") or {}).items()
+                        if isinstance(v, dict) and v.get("behavior") in ("ipcidr", "classical")}
 
     def use_geo(self, kind, name):
         tag, entry = geo_srs_entry(kind, name)
@@ -3501,8 +3561,9 @@ class SBRules:
             self.rule_sets[tag] = entry
         return tag
 
-    def cond(self, typ, val):
-        """单个匹配条件 → sing-box 规则字段（dict）；不支持时返回 None"""
+    def cond(self, typ, val, src=False):
+        """单个匹配条件 → sing-box 规则字段（dict）；不支持时返回 None。
+        src：规则带「,src」参数（mihomo 按来源地址匹配 IP-CIDR / GEOIP / RULE-SET），以前被忽略、当成目标地址匹配"""
         typ, val = typ.strip().upper(), val.strip()
         if typ == "DOMAIN":
             return {"domain": [val.lower()]}
@@ -3512,11 +3573,11 @@ class SBRules:
             return {"domain_keyword": [val.lower()]}
         if typ == "DOMAIN-REGEX":
             return {"domain_regex": [val]}
-        if typ == "DOMAIN-WILDCARD":
-            k, v = _mh_domain(val)
-            return {k: [v]}
+        if typ == "DOMAIN-WILDCARD":  # 「*」可跨多级（与 mihomo 一致），不能用 _mh_domain（那是域名集合里「*」只算一级的写法）
+            v = val.lower()
+            return {"domain_regex": [_wildcard_regex(v)]} if ("*" in v or "?" in v) else {"domain": [v]}
         if typ in ("IP-CIDR", "IP-CIDR6"):
-            return {"ip_cidr": [_cidr(val)]}
+            return {"source_ip_cidr" if src else "ip_cidr": [_cidr(val)]}
         if typ in ("SRC-IP-CIDR",):
             return {"source_ip_cidr": [_cidr(val)]}
         if typ in ("DST-PORT", "SRC-PORT", "IN-PORT"):
@@ -3542,43 +3603,82 @@ class SBRules:
             return {"rule_set": [self.use_geo("geosite", val)]}
         if typ == "GEOIP":
             if val.lower() in ("private", "lan"):
-                return {"ip_is_private": True}
-            return {"rule_set": [self.use_geo("geoip", val)]}
+                return {"source_ip_is_private" if src else "ip_is_private": True}
+            r = {"rule_set": [self.use_geo("geoip", val)]}
+            return dict(r, rule_set_ip_cidr_match_source=True) if src else r
         if typ == "RULE-SET":
-            return {"rule_set": [val]} if val in self.rule_sets else None
+            if val not in self.rule_sets:
+                return None
+            return {"rule_set": [val], "rule_set_ip_cidr_match_source": True} if src else {"rule_set": [val]}
         if typ == "IN-TYPE":
             want = {"TPROXY": "tproxy-in", "TUN": "tun-in", "MIXED": "mixed-in", "HTTP": "mixed-in", "SOCKS5": "mixed-in"}
             tags = sorted({want[x] for x in val.upper().split("/") if want.get(x) in self.inbounds})
             return {"inbound": tags} if tags else False
         if typ in ("PROCESS-NAME", "PROCESS-PATH"):
             return {"process_name" if typ == "PROCESS-NAME" else "process_path": [val]}
+        if typ == "PROCESS-PATH-REGEX":
+            return {"process_path_regex": [val]}
         return None
 
     def logical(self, typ, inner):
+        """AND / OR / NOT → 规则 dict / None（不支持）/ False（永不命中）/ True（永远命中）。
+        以前任何一个子条件「永不命中」（如 TProxy 模式下的 IN-TYPE,TUN）就把整条规则当成永不命中：
+        OR 里的其余条件、NOT 取反后本该永远成立的条件都被一起丢掉"""
         subs = []
         for part in _split_top(inner):
             part = part.strip()
             if part.startswith("(") and part.endswith(")"):
                 part = part[1:-1]
             r = self.match(part)
-            if r is None or r is False:
-                return r
+            if r is None:
+                return None
             subs.append(r)
         if not subs:
             return None
         if typ == "NOT":
+            if len(subs) == 1 and isinstance(subs[0], bool):
+                return not subs[0]
+            if any(x is False for x in subs):  # NOT(A 且 永不命中) = 永远命中
+                return True
+            subs = [x for x in subs if x is not True]
+            if not subs:
+                return False
             r = dict(subs[0]) if len(subs) == 1 else {"type": "logical", "mode": "and", "rules": subs}
             r["invert"] = not r.get("invert", False)
             return r
+        if typ == "AND":
+            if any(x is False for x in subs):
+                return False
+            subs = [x for x in subs if x is not True]
+            if not subs:
+                return True
+        else:  # OR
+            if any(x is True for x in subs):
+                return True
+            subs = [x for x in subs if x is not False]
+            if not subs:
+                return False
+        if len(subs) == 1:
+            return subs[0]
         return {"type": "logical", "mode": typ.lower(), "rules": subs}
 
-    def match(self, body):
-        """不含策略的匹配部分 → 规则 dict / None（不支持）/ False（永不命中）"""
+    def match(self, body, flags=()):
+        """不含策略的匹配部分 → 规则 dict / None（不支持）/ False（永不命中）。
+        flags：规则末尾的参数（no-resolve / src）；逻辑规则的子规则自带的参数（如 (IP-CIDR,a/24,src)）在这里拆出"""
         m = re.match(r"^(AND|OR|NOT)\\s*,\\s*\\((.*)\\)$", body.strip(), re.I)
         if m:
             return self.logical(m.group(1).upper(), m.group(2))
         typ, _, val = body.partition(",")
-        return self.cond(typ, val.split(",")[0]) if val else None
+        if not val:
+            return None
+        items = val.split(",")
+        k = len(items)
+        while k > 1 and items[k - 1].strip().lower() in RULE_FLAGS:
+            k -= 1
+        flags = {x.strip().lower() for x in items[k:]} | {x.strip().lower() for x in flags}
+        # DOMAIN-REGEX 等正则的值本身可能带逗号（^a{1,3}\\.com$）：以前只取第一项，被截成「^a{1」永远不命中
+        v = ",".join(items[:k]) if typ.strip().upper() in _REGEX_TYPES else items[0]
+        return self.cond(typ, v, src="src" in flags)
 
     def action(self, pol):
         pol = self.alias.get(pol.strip(), pol.strip())
@@ -3593,52 +3693,57 @@ class SBRules:
         return {"action": "route", "outbound": pol}
 
     def rule(self, line):
-        """完整规则「类型,值,策略[,no-resolve]」→ (规则 dict 或 None, 是否需要先解析域名)"""
-        parts = line.split(",")
-        i = rule_policy_index(parts)
-        if line.upper().startswith(("AND,", "OR,", "NOT,")):
-            k = line.rfind(")")
-            body, pol = line[:k + 1], line[k + 1:].strip(",").split(",")[0]
-        else:
-            body, pol = ",".join(parts[:i]), parts[i]
+        """完整规则「类型,值,策略[,no-resolve][,src]」→ (规则 dict 或 None, 是否需要先解析域名)"""
+        body, pol, flags = split_rule(line)
+        flags = [x.lower() for x in flags]
         typ = body.split(",")[0].strip().upper()
         if typ == "MATCH":
             return None, False
         act = self.action(pol)
-        r = self.match(body)
+        r = self.match(body, flags)
         if act is None or r is False:
             return None, False
         if r is None:
             self.warn.append(f"规则「{line[:80]}」sing-box 不支持，已跳过")
             return None, False
+        if r is True:  # 逻辑规则化简后永远命中：sing-box 规则至少要一个条件，用「TCP 或 UDP」表示全部流量
+            r = {"network": ["tcp", "udp"]}
         r = dict(r, **act)
         if typ in ("AND", "OR", "NOT"):
-            needs = _logical_needs_resolve(body)
+            needs = _logical_needs_resolve(body, self.ip_sets)
+        elif "no-resolve" in flags or "src" in flags or r.get("ip_is_private"):  # 按来源匹配不需要解析目标域名
+            needs = False
+        elif typ == "RULE-SET":  # 以前 RULE-SET 一律不解析：ipcidr / classical 规则集里的 IP 条目对域名连接永远不命中
+            needs = body.split(",", 1)[1].strip() in self.ip_sets
         else:
-            needs = typ in ("GEOIP", "IP-CIDR", "IP-CIDR6") and "no-resolve" not in [x.strip().lower() for x in parts[i + 1:]] \\
-                and not r.get("ip_is_private")
+            needs = typ in ("GEOIP", "IP-CIDR", "IP-CIDR6")
         return r, needs
 
 
-def _logical_needs_resolve(body):
-    """逻辑规则里有不带 no-resolve 的 IP 类子条件时，mihomo 同样会先解析域名再匹配。
+def _logical_needs_resolve(body, ip_sets=()):
+    """逻辑规则里有不带 no-resolve / src 的 IP 类子条件（含 ipcidr / classical 规则集）时，mihomo 同样会先解析域名再匹配。
     以前只看行首类型：AND,((NETWORK,UDP),(IP-CIDR,1.2.3.0/24)) 在 sing-box 下域名连接永远不解析，规则对域名访问不生效"""
-    for m in re.finditer(r"\\(\\s*(GEOIP|IP-CIDR6?)\\s*,([^()]*)\\)", body, re.I):
+    for m in re.finditer(r"\\(\\s*(GEOIP|IP-CIDR6?|RULE-SET)\\s*,([^()]*)\\)", body, re.I):
+        typ = m.group(1).upper()
         args = [x.strip().lower() for x in m.group(2).split(",")]
-        if "no-resolve" in args[1:] or (m.group(1).upper() == "GEOIP" and args[0] in ("private", "lan")):
+        if "no-resolve" in args[1:] or "src" in args[1:] or (typ == "GEOIP" and args[0] in ("private", "lan")):
+            continue
+        if typ == "RULE-SET" and m.group(2).split(",")[0].strip() not in ip_sets:
             continue
         return True
     return False
 '''
 _SRC['shunt.sb_dns'] = '''"""DNS"""
+import ipaddress
 import re
 from urllib.parse import urlsplit
 
-from .base import DNS_DEFAULT
+from .base import CN_DNS, DNS_DEFAULT, G_SEL
 from .mihomo import dns_cfg, fix_dns_policy, is_ip_addr, policy_parts
 from .ruleutil import _mh_domain, adblock_scopes, dns_policy_of
-def _sb_dns_server(addr, tag, boot, warn):
-    """mihomo DNS 地址（含 #策略组）→ sing-box DNS server"""
+def _sb_dns_server(addr, tag, boot, warn, via=None):
+    """mihomo DNS 地址（含 #策略组）→ sing-box DNS server。
+    via：没写 #策略组 时经哪个出站发出（respect-rules 开启时的代理 DNS）；不传就是直连"""
     addr = addr.strip()
     pol = dns_policy_of(addr)
     base = addr.split("#", 1)[0]
@@ -3653,9 +3758,14 @@ def _sb_dns_server(addr, tag, boot, warn):
     else:
         m = re.match(r"^(https|tls|quic|h3|udp|tcp)://(.+)$", base)
         scheme, rest = (m.group(1), m.group(2)) if m else ("udp", base)
-        u = urlsplit("x://" + rest)
-        host = u.hostname or rest
         s["type"] = scheme
+        if is_ip_addr(rest.strip("[]")):
+            # 以前裸 IPv6（如 2001:4860:4860::8888，校验允许）交给 urlsplit 取端口会抛 ValueError，整份配置生成失败（500）；
+            # 现在整体是 IP 就直接用（不带端口）
+            u, host = urlsplit("x://"), rest.strip("[]")
+        else:
+            u = urlsplit("x://" + rest)
+            host = u.hostname or rest
         s["server"] = host
         if u.port:
             s["server_port"] = u.port
@@ -3671,7 +3781,34 @@ def _sb_dns_server(addr, tag, boot, warn):
         warn.append(f"DNS「{addr}」指定的策略 {pol} sing-box 不支持，已按直连处理")
     elif pol:
         s["detour"] = pol
+    elif via:
+        s["detour"] = via
     return s
+
+
+def _domestic(addr):
+    """国内 / 本机 / 内网 DNS：respect-rules 下 mihomo 按规则也是直连发出"""
+    base = addr.split("#", 1)[0]
+    if CN_DNS.search(base) or base.startswith(("system", "dhcp://", "rcode://")):
+        return True
+    try:
+        host = urlsplit("x://" + re.sub(r"^[a-z0-9]+://", "", base)).hostname or ""
+    except ValueError:  # 「[::1」这类写错的地址 urlsplit 会抛异常，以前整份配置生成 500
+        host = ""
+    try:  # 裸 IPv6（如 fe80::1，不带方括号）urlsplit 取不出主机，先整体按 IP 解析
+        ip = ipaddress.ip_address(base.strip().strip("[]"))
+    except ValueError:
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+    # 以前用 ip.is_private：100.64.0.0/10（CGNAT，如 Tailscale MagicDNS 100.100.100.100）不算内网，
+    # respect-rules 下被改成经节点发出，节点那头根本到不了 → 这些域名全部解析失败。现在按明确的内网段判断（与 Go 一致）
+    return any(ip in n for n in _LOCAL_NETS)
+
+
+_LOCAL_NETS = [ipaddress.ip_network(c) for c in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8",
+                                                 "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10")]
 
 
 def sb_dns(d, cfg, policies, rs, alias, v6):
@@ -3681,14 +3818,21 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
     fx = lambda xs: [fix_dns_policy(fixd(x), policies) for x in xs]
     servers, tags = [], {}
 
-    def server(addr, boot="dns-boot"):
-        if addr in tags:
-            return tags[addr]
+    # respect-rules：mihomo 的 nameserver / nameserver-policy 查询连接遵循分流规则（国外 DNS 经节点发出）。
+    # sing-box 以前不读这个开关：没写 #策略组 的代理 DNS 直接从 WAN 明文发出（泄露 / 被干扰），防泄露检测却显示正常。
+    # 现在这类服务器经节点选择发出（国内 / 内网 DNS 照旧直连，与 mihomo 按规则的结果一致）
+    via = G_SEL if dc["respect_rules"] and G_SEL in policies else None
+
+    def server(addr, boot="dns-boot", routed=False):
         if addr.startswith("rcode://"):
             return addr
+        det = via if routed and not _domestic(addr) else None
+        key = (addr, det)  # 同一地址作节点域名解析（直连）和代理 DNS（经节点）时分成两个服务器，避免节点域名解析绕回节点
+        if key in tags:
+            return tags[key]
         tag = f"dns-{len(tags) + 1}"
-        servers.append(_sb_dns_server(addr, tag, boot, warn))
-        tags[addr] = tag
+        servers.append(_sb_dns_server(addr, tag, boot, warn, det))
+        tags[key] = tag
         return tag
 
     boot_list = list(dc["default"] or DNS_DEFAULT["default"])
@@ -3696,16 +3840,31 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
     direct = fx(dc["direct"] or DNS_DEFAULT["direct"])
     proxy = fx(dc["proxy"])
     t_direct = server(direct[0])
-    t_proxy = server(proxy[0]) if proxy else None
+    t_proxy = server(proxy[0], routed=True) if proxy else None
     t_node = server(dc["pserver"][0].split("#", 1)[0]) if dc["pserver"] else server(direct[0].split("#", 1)[0])
     final = t_proxy or t_direct
     rules = []
+    fake = dc["mode"] == "fake-ip"
+    fc = _fake_filter_cond(dc, rs) if fake else None
+
+    def add_route(c, tgt):
+        """按域名指定上游的 DNS 规则（广告白名单 / 自定义 DNS 策略）。fake-ip 模式下 mihomo 的 nameserver-policy 只决定
+        用哪个上游，A / AAAA 照样返回 fake-ip（只有 fake-ip-filter 和 hosts 拿真实 IP）。以前这些规则排在 fakeip 规则之前，
+        sing-box 直接返回真实 IP：不能嗅探的连接丢了域名、域名规则失效，白名单里的国外域名还拿到国内 DNS（可能被污染）的结果"""
+        if not fake or tgt.get("action") != "route":
+            rules.append(dict(c, **tgt))
+            return
+        if fc:  # 同时在 Fake-IP 过滤名单里的：照旧用指定的上游解析真实 IP
+            rules.append({"type": "logical", "mode": "and", "rules": [c, fc], **tgt})
+        rules.append(dict(c, query_type=["A", "AAAA"], action="route", server="dns-fake", rewrite_ttl=1))
+        rules.append(dict(c, **tgt))  # 其余查询类型（HTTPS / TXT / MX 等）走指定的上游
+
     ab = d.get("adblock") or {}
     # 按类型认广告拦截规则集：以前按名字前缀「ad-」认，用户自己的规则集叫 ad-xxx（哪怕目标是直连）也会被 DNS 层拦成 NXDOMAIN
     ab_sets = [k for k, v in rs.rule_sets.items() if k.startswith("ad-") and v.get("kind") == "adblock"]
     if ab.get("enabled") and ab.get("dns") and ab_sets:
         if "ad-allow" in ab_sets:
-            rules.append({"rule_set": ["ad-allow"], "action": "route", "server": t_direct})
+            add_route({"rule_set": ["ad-allow"]}, {"action": "route", "server": t_direct})
         scoped = adblock_scopes(d)  # 与 mihomo 一致：限定国内直连 / 国外代理的列表只在路由层拦
         bl = [k for k in ab_sets if k != "ad-allow" and k not in scoped]
         if bl:
@@ -3730,12 +3889,12 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
             rc = {"success": "NOERROR", "format_error": "FORMERR", "server_failure": "SERVFAIL", "name_error": "NXDOMAIN",
                   "not_implemented": "NOTIMP", "refused": "REFUSED"}.get(s0[8:], "NXDOMAIN")
             return {"action": "predefined", "rcode": rc}
-        return {"action": "route", "server": server(s0)}
+        return {"action": "route", "server": server(s0, routed=True)}
 
     for pe in dc["policies"]:
         c = policy_cond(pe["match"])
         if c:
-            rules.append(dict(c, **target(fx(pe["servers"]))))
+            add_route(c, target(fx(pe["servers"])))
         else:
             warn.append(f"DNS 策略「{pe['match']}」引用的规则集 sing-box 中不存在，已跳过")
     exact = {}
@@ -3753,27 +3912,12 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
     cn_cond = {"rule_set": [rs.use_geo("geosite", "cn"), rs.use_geo("geosite", "private")]}
     if "cn-apps" in rs.rule_sets:  # 内置国内 App 名单与 geosite:cn 一样走直连 DNS
         cn_cond["rule_set"].insert(0, "cn-apps")
-    if dc["mode"] == "fake-ip":
+    if fake:
         # v7.5.9 曾把范围从 198.18.0.0/15 缩小到 /16，导致老版本分配的 198.19.x.x 映射变孤儿
         # （sing-box 不认识 → missing fakeip record）。/15 是 /16 的超集，含 198.18.x 和 198.19.x
         servers.append({"type": "fakeip", "tag": "dns-fake", "inet4_range": "198.18.0.0/15",
                         **({"inet6_range": "fc00::/18"} if v6 else {})})
-        conds = {}
-        for x in dc["fake_filter"]:
-            if x.lower().startswith("geosite:"):
-                conds.setdefault("rule_set", []).append(rs.use_geo("geosite", x[8:]))
-            elif x.lower().startswith("rule-set:"):
-                if x[9:] in rs.rule_sets:
-                    conds.setdefault("rule_set", []).append(x[9:])
-            else:
-                k, v = _mh_domain(x)
-                conds.setdefault(k, []).append(v)
-        if conds:  # Fake-IP 过滤名单：按国内 / 国外分流到真实 DNS
-            parts = [{k: v} for k, v in conds.items() if k == "rule_set"]
-            dom = {k: v for k, v in conds.items() if k != "rule_set"}
-            if dom:
-                parts.insert(0, dom)
-            fc = parts[0] if len(parts) == 1 else {"type": "logical", "mode": "or", "rules": parts}
+        if fc:  # Fake-IP 过滤名单：按国内 / 国外分流到真实 DNS
             if dc["policy"] and t_proxy:
                 rules.append({"type": "logical", "mode": "and", "rules": [fc, cn_cond], "action": "route", "server": t_direct})
             rules.append(dict(fc, action="route", server=final))
@@ -3786,6 +3930,27 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
            "cache_capacity": 4096}
     return out, t_node, t_direct, t_proxy
 
+
+
+def _fake_filter_cond(dc, rs):
+    """Fake-IP 过滤名单 → sing-box DNS 规则条件（没有条目返回 None）"""
+    conds = {}
+    for x in dc["fake_filter"]:
+        if x.lower().startswith("geosite:"):
+            conds.setdefault("rule_set", []).append(rs.use_geo("geosite", x[8:]))
+        elif x.lower().startswith("rule-set:"):
+            if x[9:] in rs.rule_sets:
+                conds.setdefault("rule_set", []).append(x[9:])
+        elif x.strip():
+            k, v = _mh_domain(x)
+            conds.setdefault(k, []).append(v)
+    if not conds:
+        return None
+    parts = [{k: v} for k, v in conds.items() if k == "rule_set"]
+    dom = {k: v for k, v in conds.items() if k != "rule_set"}
+    if dom:
+        parts.insert(0, dom)
+    return parts[0] if len(parts) == 1 else {"type": "logical", "mode": "or", "rules": parts}
 '''
 _SRC['shunt.sb_config'] = '''"""生成 sing-box 配置"""
 import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, urllib.error
@@ -3803,7 +3968,7 @@ from .sb_yaml import yaml_lite
 from .groups import sb_provider_nodes, sb_sub_cache, sb_sub_outbounds
 from .sb_nodes import sb_outbound
 from .sb_rules import SBRules, geo_srs_entry
-from .ruleutil import _mh_domain
+from .ruleutil import LOGICAL_RX, _mh_domain, split_rule
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
@@ -3827,20 +3992,29 @@ def build_singbox(d):
     rule_sets = sb_rule_sets(cfg, warn)
     tr = SBRules(cfg, in_tags, alias, rule_sets)
     tr.warn = warn
+    tr.ip_sets = sb_ip_sets(tr.ip_sets, rule_sets)
     # 路由规则
     route_rules = []
     if d.get("sniffer", True) or dns_cfg(d)["mode"] == "fake-ip":
         route_rules.append({"action": "sniff"})
     route_rules += [{"inbound": ["dns-in"], "action": "hijack-dns"}, {"protocol": ["dns"], "action": "hijack-dns"},
-                    {"clash_mode": "Direct", "action": "route", "outbound": "DIRECT"},
-                    {"clash_mode": "Global", "action": "route", "outbound": G_SEL if G_SEL in policies else "DIRECT"}]
+                    {"clash_mode": "Direct", "action": "route", "outbound": "DIRECT"}]
+    route_rules += sb_global_direct(d)
+    route_rules.append({"clash_mode": "Global", "action": "route", "outbound": G_SEL if G_SEL in policies else "DIRECT"})
     resolved = False
     final = "DIRECT"
     for line in cfg["rules"]:
         if line.upper().startswith("MATCH,"):
+            # 与 mihomo 一致：第一条 MATCH 之后的规则都不再生效。以前只记下 final 后继续翻译，自定义规则里写的
+            # 「MATCH,DIRECT」被后面内置的分流规则和最后的 MATCH 覆盖、等于没写；MATCH,REJECT 也变成了直连
             act = tr.action(line.split(",", 1)[1])
-            final = act.get("outbound", "DIRECT") if act else "DIRECT"
-            continue
+            if act is None:  # PASS：跳过这条
+                continue
+            if act.get("action") == "reject":
+                route_rules.append(dict({"network": ["tcp", "udp"]}, **act))
+            else:
+                final = act.get("outbound", "DIRECT")
+            break
         r, needs = tr.rule(line)
         if r is None:
             continue
@@ -3879,6 +4053,30 @@ def build_singbox(d):
     return conf, list(dict.fromkeys(warn)), need
 
 
+def sb_global_direct(d):
+    """「全局代理」模式下仍直连的流量（排在 clash_mode Global 之前，只在全局模式生效）。
+    以前全局模式一条 Global 规则把所有流量都送去节点：TUN 模式下「绕过设备」（nftables 管不到，靠 SRC-IP-CIDR 规则直连）、
+    经路由器转发的局域网 / 保留地址、NTP 对时全部走节点，绕过设备照样被代理、跨网段访问局域网断开；TProxy 模式下这些在
+    nftables 里本来就不进核心，两种代理方式表现不一致。现在这三类在全局模式下也直连"""
+    rules = []
+    if d.get("proxy_mode") == "tun":
+        src = []
+        for x in d.get("bypass") or []:
+            try:
+                if "%" in x:  # 带网卡的地址 sing-box 不认
+                    raise ValueError
+                n = str(ipaddress.ip_network(x.strip(), strict=False))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if n not in src:
+                src.append(n)
+        if src:
+            rules.append({"clash_mode": "Global", "source_ip_cidr": src, "action": "route", "outbound": "DIRECT"})
+    rules.append({"clash_mode": "Global", "ip_is_private": True, "action": "route", "outbound": "DIRECT"})
+    rules.append({"clash_mode": "Global", "network": ["udp"], "port": [123], "action": "route", "outbound": "DIRECT"})
+    return rules
+
+
 def sb_node_outbounds(d, cfg, sub_out, warn):
     """手动节点与订阅节点 → (outbounds, 手动节点名, {订阅名: 节点名列表})"""
     outbounds, node_names, prov_names = [], [], {}
@@ -3895,7 +4093,10 @@ def sb_node_outbounds(d, cfg, sub_out, warn):
             try:
                 outbounds.append(sb_outbound(p, name))
                 prov_names[sname].append(name)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError, KeyError):
+                # 订阅内容不可信：字段类型不对（如 ws-opts / grpc-opts / plugin-opts 是文本或列表）时 .get / .items 抛
+                # AttributeError。以前只捕获 ValueError / TypeError，一个坏节点让整份 sing-box 配置生成失败（订阅更新、改任何
+                # 设置都报错）；现在跳过这个节点，与协议不支持的节点同样计数提示（与 Shunt v8.10.x 一致）
                 skipped += 1
     if skipped:
         warn.append(f"订阅中有 {skipped} 个节点的协议 sing-box 不支持（如 ssr、snell、wireguard），已跳过")
@@ -4000,9 +4201,13 @@ def sb_geo_rule_sets(d, dc=None):
     for kind, name in BUILTIN_GEO:  # mihomo_rules 末尾硬编码分流规则
         add(kind, name)
     for line in d.get("rules") or []:  # 用户自定义规则里的 GEOSITE/GEOIP（fix_rule_policy 只换 target，不过滤）
-        parts = str(line).split(",")
-        if len(parts) >= 2 and parts[0].strip().upper() in ("GEOSITE", "GEOIP"):
-            add(parts[0].strip().lower(), parts[1].strip())
+        line = str(line).strip()
+        if line.startswith("#"):
+            continue
+        # 逻辑规则 AND,((GEOSITE,steam),(NETWORK,TCP)) 里的也要算：以前只看行首，完整构建会引用 geosite-steam，
+        # 但下载 / GEO 更新按这里的需求表从不下载它，这条规则永远被当成「规则集未下载」跳过
+        for m in re.finditer(r"(?:^|\\()\\s*(GEOSITE|GEOIP)\\s*,\\s*([^,()]+)", line, re.I):
+            add(m.group(1).lower(), m.group(2).strip())
     for pe in dc.get("policies") or []:  # sb_dns.policy_cond：DNS 策略里的 geosite 匹配
         kind, names = policy_parts(pe["match"])
         if kind == "geosite":
@@ -4058,6 +4263,37 @@ def sb_rule_sets(cfg, warn):
     return rule_sets
 
 
+def _has_ip(rules):
+    """sing-box source 规则集的规则里有没有目标 IP 条件（含逻辑规则的子规则）"""
+    for r in rules or []:
+        if isinstance(r, dict) and ("ip_cidr" in r or _has_ip(r.get("rules"))):
+            return True
+    return False
+
+
+def sb_ip_sets(ip_sets, rule_sets):
+    """引用时需要先解析域名的规则集（mihomo：ipcidr 总是解析，classical 有 IP 条目才解析）。
+    已转换好的 classical 文件里没有 IP 条目的去掉，免得多做一次 DNS 解析；还没下载 / .srs 的按需要解析算"""
+    out = set()
+    for tag in ip_sets:
+        rsd = rule_sets.get(tag)
+        if not rsd:
+            continue
+        if rsd["kind"] == "inline":
+            if _has_ip(rsd["rules"]):
+                out.add(tag)
+            continue
+        if rsd["kind"] == "convert" and rsd.get("behavior") == "classical":
+            try:
+                with open(os.path.join(SB_RULE_DIR, rsd["path"])) as f:
+                    if not _has_ip(json.load(f).get("rules")):
+                        continue
+            except (OSError, ValueError, AttributeError):
+                pass
+        out.add(tag)
+    return out
+
+
 def sb_rule_set_defs(rule_sets, warn):
     """规则集定义：只保留本地已有文件的（缺失的规则及引用跳过，避免启动失败）"""
     defs, missing = [], set()
@@ -4068,6 +4304,10 @@ def sb_rule_set_defs(rule_sets, warn):
         path = os.path.join(SB_RULE_DIR, rsd["path"])
         if os.path.isfile(path) and os.path.getsize(path) > 0:
             defs.append({"type": "local", "tag": tag, "format": "binary" if path.endswith(".srs") else "source", "path": path})
+            skip = _skip_note(path)
+            if skip:
+                warn.append(f"规则集「{tag}」里有 {skip['n']} 条 sing-box 规则集文件不支持的条目（规则集里不能再引用 GEOSITE / GEOIP / "
+                            f"RULE-SET 等），已跳过：" + "、".join(skip.get("sample") or [])[:120])
         else:
             missing.add(tag)
     if missing:
@@ -4094,8 +4334,55 @@ def sb_prune_rules(lst, missing):
     return out
 
 
-def _rule_lines_to_source(text, behavior, fmt):
-    """mihomo 规则集文本（yaml payload / text）→ sing-box source 规则集"""
+# GEOIP,private 在规则集文件里不能写成 ip_is_private（headless 规则没有这个字段），换成对应网段
+_PRIVATE_CIDRS = ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+                  "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"]
+# sing-box headless 规则（规则集文件里的规则）支持的字段
+_HEADLESS_KEYS = {"query_type", "network", "domain", "domain_suffix", "domain_keyword", "domain_regex", "source_ip_cidr",
+                  "ip_cidr", "source_port", "source_port_range", "port", "port_range", "process_name", "process_path",
+                  "process_path_regex", "package_name", "network_type", "wifi_ssid", "wifi_bssid", "invert"}
+
+
+def _headless(r):
+    """路由规则条件 → 规则集文件可用的 headless 规则；有规则集引用（GEOSITE / GEOIP / RULE-SET）等不支持的字段返回 None"""
+    if not isinstance(r, dict):
+        return None
+    if r.get("type") == "logical":
+        subs = [_headless(x) for x in r.get("rules") or []]
+        if not subs or any(x is None for x in subs):
+            return None
+        return dict(r, rules=subs)
+    r = dict(r)
+    if r.pop("ip_is_private", None):
+        r["ip_cidr"] = list(_PRIVATE_CIDRS)
+    if r.pop("source_ip_is_private", None):
+        r["source_ip_cidr"] = list(_PRIVATE_CIDRS)
+    if not r or not set(r) <= _HEADLESS_KEYS or set(r) == {"invert"}:
+        return None
+    if not all(_re2_ok(x) for k in ("domain_regex", "process_path_regex") for x in r.get(k) or []):
+        return None
+    return r
+
+
+# Go regexp（RE2）不支持的写法：前后断言、原子组、反向引用、\\Z。mihomo 的 DOMAIN-REGEX 用 regexp2，这些都能用
+_NOT_RE2 = re.compile(r"\\(\\?<?[=!]|\\(\\?>|\\(\\?P=|\\\\[1-9]|\\\\Z")
+
+
+def _re2_ok(rx):
+    """正则能否被 sing-box（Go regexp）编译。以前 classical 规则集里的 DOMAIN-REGEX 原样写进规则集文件，
+    带前后断言 (?!…) 或写错的正则让 sing-box 加载规则集失败、内核起不来（之后每次保存都校验不过被撤销）"""
+    if not isinstance(rx, str) or _NOT_RE2.search(rx):
+        return False
+    try:
+        re.compile(re.sub(r"\\\\[pP]\\{\\w+\\}", "x", rx))  # \\p{Han} 等 Unicode 类 Go 支持、Python re 不支持
+    except re.error:
+        return False
+    return True
+
+
+def _rule_lines_to_source(text, behavior, fmt, skipped=None):
+    """mihomo 规则集文本（yaml payload / text）→ sing-box source 规则集。
+    skipped：传入列表时收集转换不了、被跳过的 classical 条目（以前 GEOSITE / GEOIP / 逻辑规则静默丢掉）"""
     t = text.strip()
     items = []
     if fmt == "yaml" or re.search(r"(?m)^payload\\s*:", t):
@@ -4104,6 +4391,8 @@ def _rule_lines_to_source(text, behavior, fmt):
     else:
         items = [l.strip() for l in t.splitlines() if l.strip() and not l.strip().startswith(("#", "//"))]
     r = {}
+    other = {}  # classical 里的端口 / 网络 / 来源地址 / 进程等条件：各自成条（sing-box 同一条规则里这些字段与域名 / IP 是「且」）
+    logic = []  # classical 里的 AND / OR / NOT：转成 headless 逻辑规则（规则集里各条规则之间是「或」）
     tr = SBRules({}, set(), {}, {})
     for x in items:
         x = x.strip().strip("'\\"")
@@ -4116,13 +4405,36 @@ def _rule_lines_to_source(text, behavior, fmt):
             k, v = _mh_domain(x)
             r.setdefault(k, []).append(v)
         else:
-            typ, _, val = x.partition(",")
-            c = tr.cond(typ, val.split(",")[0]) if val else None
-            if c:
-                for k, v in c.items():
-                    if isinstance(v, list):
-                        r.setdefault(k, []).extend(v)
-    return {"version": 3, "rules": [r] if r else []}
+            body = split_rule(x)[0] if LOGICAL_RX.match(x) else x  # 规则集里的逻辑规则没有策略
+            c = _headless(tr.match(body))
+            # 规则集文件里不能再引用规则集（GEOSITE / GEOIP / RULE-SET），sing-box 加载会报错：跳过并记下来提示
+            if c is None:
+                if skipped is not None and x and x.split(",")[0].strip().upper() not in ("MATCH",):
+                    skipped.append(x)
+                continue
+            if c.get("type") == "logical" or "invert" in c:
+                logic.append(c)
+                continue
+            # 以前所有条件合并成一条：DST-PORT,443 与 DOMAIN-SUFFIX,a.com 写在同一份列表里，变成「a.com 且 443 端口」才命中
+            dst = r if set(c) <= _DST_ADDR_KEYS else other.setdefault(tuple(sorted(c)), {})
+            for k, v in c.items():
+                dst.setdefault(k, []).extend(v)
+    rules = ([r] if r else []) + list(other.values()) + logic
+    return {"version": 3, "rules": rules}
+
+
+# sing-box 规则里属于同一组「或」的目标地址字段（同一条规则里可以合并）
+_DST_ADDR_KEYS = {"domain", "domain_suffix", "domain_keyword", "domain_regex", "ip_cidr"}
+
+
+def _skip_note(path):
+    """转换规则集时跳过的条目记录（{"n": 条数, "sample": [...]}，存在 <规则集文件>.skip）"""
+    try:
+        with open(path + ".skip") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) and j.get("n") else None
+    except (OSError, ValueError):
+        return None
 
 
 def sb_adblock_source(src):
@@ -4209,10 +4521,15 @@ def sb_sync_assets(d, force=False, need=None):
                     f.write(data)
                 os.replace(path + ".tmp", path)
             else:
-                src = _rule_lines_to_source(data.decode("utf-8", "ignore"), rsd["behavior"], rsd["format"])
+                skipped = []
+                src = _rule_lines_to_source(data.decode("utf-8", "ignore"), rsd["behavior"], rsd["format"], skipped)
                 if not src["rules"]:
                     raise ValueError("没有解析出任何规则")
                 write_json(path, src)
+                if skipped:  # 跳过的条目记下来，生成配置时在兼容提示里列出
+                    write_json(path + ".skip", {"n": len(skipped), "sample": [x[:60] for x in skipped[:3]]})
+                elif os.path.exists(path + ".skip"):
+                    os.remove(path + ".skip")
         except Exception as e:
             with bad_lock:
                 bad.append(f"{tag}：{e}")
@@ -7123,6 +7440,12 @@ def watchdog_tick():
     WD["last_check"] = int(time.time())
     if not d.get("watchdog", True):
         WD["status"] = "off"
+        # 以前：看门狗撤规则直连（tp_off）期间关掉看门狗，tp_off 再也没人清，局域网一直直连、之后保存设置也不再重载透明代理规则。
+        # 现在核心在跑时补开规则并清标志（核心没响应时保持直连，不把流量导向卡死的核心）
+        if WD["tp_off"] and not WD["manual_stop"] and core_alive():
+            WD["tp_off"] = False
+            if d.get("proxy_mode") != "off":
+                sh(TPROXY_SH + " apply")
         return
     if mass_testing():  # 全节点测速进行中：核心高负载，/version 可能超时，暂停故障判定
         return
@@ -7144,6 +7467,10 @@ def watchdog_tick():
                 msg += "，透明代理已重新开启" if code == 0 else "，但重新开启透明代理失败：" + out[-120:]
             WD["tp_off"] = False
             wd_event(msg, kind="recover")
+        elif WD["tp_off"]:  # 以前：撤规则直连期间核心被手动停止、又由用户启动（status 已不是 direct）时 tp_off 一直留着，
+            WD["tp_off"] = False  # 规则不再挂回、之后保存设置也不重载透明代理。现在补开规则并清标志
+            if redirecting:
+                sh(TPROXY_SH + " apply")
         WD["status"] = "ok"
         # 看门狗重启后核心要稳定运行 WD_STABLE 秒才把失败计数清零：以前一响应就清零，核心起来几十秒就崩溃（OOM、
         # 坏节点触发 panic）时会无限「重启 → 恢复 → 再崩」，每轮都推一条 Telegram；现在连续崩溃照样累计，第 3 次起改为直连 + 每 5 分钟重试
@@ -7171,7 +7498,9 @@ def watchdog_tick():
     if WD["status"] != "direct":
         WD["status"] = "direct"
         if redirecting:
-            sh(TPROXY_SH + " stop")  # TUN 模式下核心退出时 TUN 设备与路由随之消失，这里再撤掉 DNS 重定向
+            # 以前只 stop：核心崩溃 / 被 KILL 时 TUN 的 auto-route 策略路由（2022 表，strict_route 的 unreachable）留着，
+            # 说是「局域网直连」实际照样断网。现在顺带清残留（leftovers 只在没有核心进程时才动）
+            sh(TPROXY_SH + " stop leftovers")
             WD["tp_off"] = True
         wd_event(f"{cname} 核心重启 2 次仍无响应，已关闭透明代理，局域网暂时直连上网", kind="direct")
     elif WD["fails"] % 10 == 0:  # 直连状态下每 5 分钟再尝试拉起一次
@@ -7181,7 +7510,7 @@ def watchdog_tick():
             # rc 的 start_post 不管核心是否真的起来都会重新挂上规则（command_background 下启动总算成功）：
             # 一律撤掉，局域网保持直连；核心若已恢复，下一轮确认后再重新开启
             # TUN 模式下核心一启动就接管路由，无法“暂不接管”，下一轮检查会正常恢复
-            sh(TPROXY_SH + " stop")
+            sh(TPROXY_SH + " stop leftovers")  # 核心没起来又崩溃时清掉它留下的 TUN 策略路由（有核心进程时不动）
             WD["tp_off"] = True
 
 
@@ -7977,8 +8306,9 @@ def live_rule(host):
             pass
     threading.Thread(target=reader, daemon=True).start()
     time.sleep(0.3)
-    s = socket.create_connection(("127.0.0.1", MIXED), timeout=8)
-    try:
+    s = None
+    try:  # 以前连不上 mixed 端口（核心没在跑 / 端口被占）时直接抛出，日志线程没人停，每测一次就泄漏一个挂着的日志连接
+        s = socket.create_connection(("127.0.0.1", MIXED), timeout=8)
         hp = f"[{host}]:443" if ":" in host else f"{host}:443"
         port = str(s.getsockname()[1])
         s.sendall(f"CONNECT {hp} HTTP/1.1\\r\\nHost: {hp}\\r\\n\\r\\n".encode())
@@ -8015,7 +8345,8 @@ def live_rule(host):
             time.sleep(0.3)
         return {"error": "未捕获到连接（" + first + "）"}
     finally:
-        s.close()
+        if s is not None:
+            s.close()
         stop["stop"] = True
         try:
             stop["sock"].shutdown(socket.SHUT_RDWR)
@@ -8069,12 +8400,15 @@ def static_rule(host):
             hit = False
             for seg in re.split(r"[/,]", pl):
                 a, _, z = seg.partition("-")
-                if a.strip().isdigit() and int(a) <= 443 <= int(z or a):
+                z = z.strip() or a  # 以前「80-x」这类写法 int() 抛异常，规则测试整个 500
+                if a.strip().isdigit() and z.isdigit() and int(a) <= 443 <= int(z):
                     hit = True
         elif t == "match":
             hit = True
-        if hit is None or t in ("geosite", "geoip", "ruleset", "and", "or", "not", "srcipcidr", "processname",
-                                "processpath", "inport", "intype", "network", "srcport", "inname", "inuser"):
+        # 以前 GEOIP,private 按解析出的 IP 判断完又因为类型是 geoip 一律记成「无法确定」，私有地址永远测不出命中
+        geo_lan = t == "geoip" and pl.lower() in ("private", "lan")
+        if hit is None or (t in ("geosite", "geoip", "ruleset", "and", "or", "not", "srcipcidr", "processname",
+                                 "processpath", "inport", "intype", "network", "srcport", "inname", "inuser") and not geo_lan):
             if len(uncertain) < 8:
                 uncertain.append(f"{r.get('type')},{pl} → {r.get('proxy')}")
             continue
@@ -9751,7 +10085,8 @@ def leak_check(live=True):
          "geosite:cn / private → 直连 DNS，其余全部走代理 DNS（不再按 geolocation-!cn 白名单，未知域名也不会发给国内 DNS）"
          if dc["policy"] else "国内域名也走代理 DNS：不泄露，但国内 CDN 解析可能不是最近节点", "开启「国内域名走直连 DNS」")
     item("respect-rules", True if dc["respect_rules"] else "warn",
-         "DNS 查询连接遵循分流规则，节点域名用国内 DoH 解析（proxy-server-nameserver）" if dc["respect_rules"] else "未开启",
+         # 以前照抄 mihomo 的说明（且 v11.6.9 前 sing-box 配置根本不读这个开关，代理 DNS 直连发出，这里却显示正常）
+         f"sing-box：没写 #策略组 的代理 DNS / DNS 策略上游经 {G_SEL} 发出，国内 / 内网 DNS 直连" if dc["respect_rules"] else "未开启",
          "开启 respect-rules")
     item("fallback / 系统 hosts", True, "未使用 fallback（避免同时向国内外 DNS 发同一查询）；use-system-hosts 已关闭；prefer-h3 已关闭")
     lp = [pe["match"] for pe in dc["policies"] if leaky_policy(pe)]
@@ -10698,8 +11033,11 @@ SVC_NAMES = {"start": "启动", "stop": "停止", "restart": "重启"}
 
 def tp_apply():
     """按当前代理方式重载 nftables 规则。核心被手动停止时不挂规则：否则局域网流量会被导向不存在的核心端口
-    （init.d 的 start_post 会在下次启动核心时自动加载）"""
-    if WD["manual_stop"]:
+    （init.d 的 start_post 会在下次启动核心时自动加载）。
+    看门狗因核心无响应已撤掉规则、让局域网直连（WD.tp_off）时同样不挂：以前这时保存绕过设备 / IPv6 / DNS 防绕过、
+    恢复设置都会把规则重新挂上，流量导向卡死的核心，局域网断网直到看门狗下一次重试（最长约 5 分钟）；
+    现在核心恢复后由看门狗按当时的设置重新开启规则（切换代理方式会先清 tp_off，照常加载）"""
+    if WD["manual_stop"] or WD["tp_off"]:
         return 0, ""
     return sh(TPROXY_SH + " apply")
 
@@ -12412,6 +12750,8 @@ def tp_env():
     ips, ip6s = [], []
     for x in items:
         try:
+            if "%" in x:  # 带网卡的地址（fe80::1%eth0）nftables 不认，以前写进集合导致整份规则加载失败；Go 后端同样跳过
+                raise ValueError
             n = ipaddress.ip_network(x, strict=False)
             (ips if n.version == 4 else ip6s).append(n)
         except ValueError:

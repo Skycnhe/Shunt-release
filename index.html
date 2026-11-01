@@ -1300,7 +1300,7 @@ async function testNode(n,btn){btn.disabled=true;try{const r=await core(`/proxie
 // 规则
 async function loadRules(){try{await loadState()}catch(e){return toast(e.message)}
   $('#r-target').innerHTML=STATE.groups.concat(['DIRECT','REJECT']).map(g=>`<option>${esc(g)}</option>`).join('');
-  $('#myrules').innerHTML=STATE.rules.map((r,i)=>`<tr><td class="w">${esc(r)}</td><td style="text-align:right"><button class="btn r sm" onclick="delRule(${i})">删除</button></td></tr>`).join('')||'<tr><td class="mut">暂无自定义规则</td></tr>';
+  $('#myrules').innerHTML=STATE.rules.map((r,i)=>`<tr><td class="w">${esc(r)}</td><td style="text-align:right"><button class="btn r sm" onclick="delRule(${jsq(r)})">删除</button></td></tr>`).join('')||'<tr><td class="mut">暂无自定义规则</td></tr>';
   $('#r-bulk').value=STATE.rules.join('\n');
   renderRS();
   try{ACTIVE_RULES=(await core('/rules')).rules||[]}catch(e){ACTIVE_RULES=[]}renderActiveRules()}
@@ -1314,7 +1314,8 @@ async function saveRules(rules){if(rulesBusy())return;RULES_BUSY=true;try{toast(
   RULES_BUSY=false;loadRules()}
 function addRule(){if(rulesBusy())return;const t=$('#r-type').value,v=$('#r-val').value.trim(),g=$('#r-target').value;if(!v)return toast('请填写内容');
   let r=`${t},${v},${g}`;if(['IP-CIDR','GEOIP'].includes(t))r+=',no-resolve';$('#r-val').value='';saveRules(STATE.rules.concat([r]))}
-function delRule(i){const r=STATE.rules.slice();if(r[i]===undefined)return loadRules();if(!confirm('删除规则 '+r[i]+'？'))return;r.splice(i,1);saveRules(r)}
+// 以前按序号删除：STATE 每 15 秒在后台刷新而列表不重画，别的窗口改过规则后序号会指向另一条规则（删错）；现在按规则内容删除
+function delRule(v){const r=STATE.rules.slice(),i=r.indexOf(v);if(i<0){toast('该规则已不存在，列表已刷新');return loadRules()}if(!confirm('删除规则 '+v+'？'))return;r.splice(i,1);saveRules(r)}
 // 批量编辑是整体替换：清空文本框再保存会删掉全部自定义规则，先确认
 function saveBulk(){const r=$('#r-bulk').value.split('\n').filter(x=>x.trim());
   if(!r.length&&(STATE.rules||[]).length&&!confirm(`删除全部 ${STATE.rules.length} 条自定义规则？`))return;saveRules(r)}
@@ -1751,10 +1752,11 @@ async function addRS(){const name=$('#rs-name').value.trim(),url=$('#rs-url').va
   if(await saveRS(STATE.rulesets.filter(r=>r.name!==name).concat([{name,url,behavior:$('#rs-beh').value,format:$('#rs-fmt').value,target:$('#rs-target').value}]))){$('#rs-name').value='';$('#rs-url').value=''}}
 async function saveRS(rs){if(rulesBusy())return false;RULES_BUSY=true;let ok=false;
   try{toast('正在应用…');await api('/api/settings','PUT',{rulesets:rs});toast('规则集已生效');ok=true}catch(e){toast(e.message)}RULES_BUSY=false;loadRules();return ok}
-function delRS(i){const r=STATE.rulesets.slice();if(!r[i])return loadRules();if(!confirm('删除规则集 '+r[i].name+'？引用它的规则也要一并删掉，否则配置校验不过。'))return;r.splice(i,1);saveRS(r)}
+// 以前按序号删除：STATE 后台刷新后序号可能指向别的规则集（删错）；现在按名称删除
+function delRS(n){const r=STATE.rulesets.filter(x=>x.name!==n);if(r.length===STATE.rulesets.length){toast('该规则集已不存在，列表已刷新');return loadRules()}if(!confirm('删除规则集 '+n+'？引用它的规则也要一并删掉，否则配置校验不过。'))return;saveRS(r)}
 async function renderRS(){$('#rs-target').innerHTML=$('#r-target').innerHTML;let prov={};try{prov=(await core('/providers/rules')).providers||{}}catch(e){}
-  $('#rulesets').innerHTML=STATE.rulesets.map((r,i)=>{const p=prov[r.name]||{};return `<tr><td>${esc(r.name)}<div class="mut w" style="font-size:11px;max-width:360px">${esc(r.url)}</div></td><td>${esc(r.behavior)}/${esc(r.format)}</td><td>${esc(r.target)}</td>
-    <td>${p.ruleCount??'-'}</td><td><button class="btn g sm" onclick="updRS(${jsq(encodeURIComponent(r.name))})">更新</button></td><td><button class="btn r sm" onclick="delRS(${i})">删除</button></td></tr>`}).join('')||'<tr><td class="mut">暂无规则集</td></tr>'}
+  $('#rulesets').innerHTML=STATE.rulesets.map(r=>{const p=prov[r.name]||{};return `<tr><td>${esc(r.name)}<div class="mut w" style="font-size:11px;max-width:360px">${esc(r.url)}</div></td><td>${esc(r.behavior)}/${esc(r.format)}</td><td>${esc(r.target)}</td>
+    <td>${p.ruleCount??'-'}</td><td><button class="btn g sm" onclick="updRS(${jsq(encodeURIComponent(r.name))})">更新</button></td><td><button class="btn r sm" onclick="delRS(${jsq(r.name)})">删除</button></td></tr>`}).join('')||'<tr><td class="mut">暂无规则集</td></tr>'}
 async function updRS(n){try{await core('/providers/rules/'+n,'PUT');toast('已更新');renderRS()}catch(e){toast(e.message)}}
 
 // 设置扩展

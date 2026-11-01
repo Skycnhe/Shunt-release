@@ -22,5 +22,11 @@ error_log="/var/log/mihomo.log"
 depend() { need net; after firewall; }
 # 生成配置失败（如 data.json 有坏数据）时不阻止启动：配置是原子写入的，沿用上一次的配置照常启动
 start_pre() { [ -s /var/log/mihomo.log ] && { { echo "===== $(date '+%F %T') 启动前，上次运行的最后 200 行 ====="; tail -n 200 /var/log/mihomo.log; } >> /var/log/mihomo.log.prev; tail -n 600 /var/log/mihomo.log.prev > /var/log/mihomo.log.prev.t && mv -f /var/log/mihomo.log.prev.t /var/log/mihomo.log.prev; } 2>/dev/null; : > /var/log/mihomo.log; modprobe tun 2>/dev/null; mkdir -p /etc/sing-box; python3 /opt/mihomo-panel/server.py --gen >/dev/null || ewarn "生成配置失败，沿用上一次的配置启动"; return 0; }
-start_post() { sleep 1; /opt/mihomo-panel/tproxy.sh apply || ewarn "透明代理规则加载失败（内核缺少 nftables / TProxy 模块？），核心照常运行，可改用 TUN 模式"; return 0; }  # 按代理方式：TProxy 全量规则 / TUN 仅 DNS 重定向 / 关闭
-stop_post() { /opt/mihomo-panel/tproxy.sh stop; }
+# 按代理方式：TProxy 全量规则 / TUN 仅 DNS 重定向 / 关闭。以前固定 sleep 1 再挂规则：核心起不来（配置错误、崩溃）时规则照样挂上，
+# 局域网流量被导向不存在的端口而断网；加载大规则集超过 1 秒时也先挂上规则。现在 tproxy.sh 每 0.1 秒查一次端口（最多 10 秒），核心进程退出则不挂
+start_post() { WAIT_PID="$pidfile" /opt/mihomo-panel/tproxy.sh apply || ewarn "透明代理规则未加载（核心已退出，或内核缺少 nftables / TProxy 模块？），可改用 TUN 模式"; return 0; }
+# 以前没有 stop_pre：sing-box 正常退出最多要等 15 秒（写 Fake-IP 缓存），这段时间局域网流量仍被导向正在退出的核心。
+# 现在先只删 nftables 表（表名同 tproxy.sh 的 TABLE）：流量不再被打标记 / 重定向即恢复直连，策略路由等由 stop_post 收尾
+stop_pre() { nft delete table inet mihomo_panel 2>/dev/null; return 0; }
+# 以前只 stop：核心被 KILL 时残留的 TUN 策略路由（2022 表）/ auto-redirect 表让局域网和本机断网。现在顺带清残留（没有核心进程时才清）
+stop_post() { /opt/mihomo-panel/tproxy.sh stop leftovers; return 0; }  # 旧版 tproxy.sh 忽略第二个参数，只做 stop

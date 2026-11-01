@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # mihomo 旁路由透明代理规则 (nftables)。
 # 用法: tproxy.sh start|dns|stop|apply|status
+#          环境变量 WAIT_PID：核心 pid 文件。先等核心监听好端口再挂规则，核心已退出则不挂（init.d 的 start_post 用）
+#   leftovers  （或 stop leftovers）没有核心进程时清掉核心被 KILL 后残留的 TUN 策略路由与 auto-redirect 表（init.d 的 stop_post 用）
 #   start  TProxy 模式：TCP/UDP 打标记转发到 mihomo 的 7893，DNS 劫持到 1053
 #   dns    TUN 模式：只保留 “发往本机 53 端口的 DNS 重定向到 1053”（流量本身由 mihomo TUN 的 auto-route 接管）
 #   stop   删除本脚本创建的全部规则
@@ -112,7 +114,10 @@ start() {
     ip -6 rule add fwmark $MARK table $TABLE_ID
     ip -6 route replace local ::/0 dev lo table $TABLE_ID
     DNS_FAMILY=""
+    # Fake-IP 的 IPv6 段（sing-box fc00::/18；mihomo fdfe:dcba:9876::/64）都落在 reserved6 的 fc00::/7 里：
+    # 以前先被 return 掉、不进核心，客户端拿到 AAAA 假地址的连接全部不通（只能等回退 IPv4）。现在先把这两段交给核心
     V6_RULES="meta nfproto ipv6 ip6 saddr @bypass6 return
+    meta nfproto ipv6 ip6 daddr { fc00::/18, fdfe:dcba:9876::/64 } meta l4proto { tcp, udp } meta mark set $MARK tproxy ip6 to [::1]:$TPROXY_PORT accept
     meta nfproto ipv6 ip6 daddr @reserved6 return
     meta nfproto ipv6 ip6 daddr @local6 return
     meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set $MARK tproxy ip6 to [::1]:$TPROXY_PORT accept"
@@ -173,17 +178,69 @@ status() {
   else echo off; fi
 }
 
+port_up() {
+  # $1 = tcp | udp，$2 = 端口（4 位大写十六进制）。/proc/net 里 TCP 要处于 LISTEN（0A）；UDP 绑定即可（PROC_NET 供测试改目录）
+  for f in "${PROC_NET:-/proc/net}/$1" "${PROC_NET:-/proc/net}/${1}6"; do
+    [ -r "$f" ] || continue
+    awk -v p=":$2" -v t="$1" 'NR > 1 && substr($2, length($2) - 4) == p && (t == "udp" || $4 == "0A") { ok = 1; exit } END { exit !ok }' "$f" && return 0
+  done
+  return 1
+}
+
+wait_ready() {
+  # 等核心监听好 DNS（1053）及 TProxy（7893）端口再挂规则：以前 init.d 固定 sleep 1（从 Hk001 移植），核心早就绪也要白等，
+  # 大规则集加载超过 1 秒时又先挂上规则、流量被导向还没监听的端口。每 0.1 秒查一次，最多 10 秒（超时照常挂规则）；
+  # 核心进程已退出返回 1：不挂规则，局域网保持直连，不被导向不存在的端口
+  [ -n "$WAIT_PID" ] || return 0
+  case "$MODE" in tproxy|tun) ;; *) return 0 ;; esac
+  PID=$(cat "$WAIT_PID" 2>/dev/null)
+  END=$(( $(date +%s) + 10 ))
+  while :; do
+    if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then echo "核心进程已退出，未加载透明代理规则"; return 1; fi
+    if port_up udp 041D && { [ "$MODE" != tproxy ] || port_up tcp 1ED5; }; then return 0; fi
+    [ "$(date +%s)" -ge "$END" ] && { echo "等待核心监听端口超时（10 秒），照常加载规则"; return 0; }
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+}
+
+leftovers() {
+  # 以前没有这一步：核心 15 秒没正常退出被 KILL 时，来不及撤 TUN 的 auto-route 策略路由（指向 2022 路由表，strict_route 还有 unreachable）
+  # 与 auto-redirect 的 nftables 表，留着会让局域网和本机断网。正常退出的核心已自己撤掉：先用 3 条命令看有没有残留，没有就结束；
+  # 有残留也只在一个核心进程都没有时才清（有核心在跑，含不受服务管理的，一律不动）
+  T=$(nft list tables 2>/dev/null | grep -E "^table inet (sing-box|mihomo)$")
+  R4=$(ip -4 rule show 2>/dev/null | grep -c "lookup 2022"); R6=$(ip -6 rule show 2>/dev/null | grep -c "lookup 2022")
+  [ -z "$T" ] && [ "${R4:-0}" = 0 ] && [ "${R6:-0}" = 0 ] && return 0
+  command -v pidof >/dev/null 2>&1 || return 0
+  pidof mihomo mihomo-smart sing-box >/dev/null 2>&1 && return 0
+  echo "$T" | grep -q "inet sing-box" && nft delete table inet sing-box 2>/dev/null
+  # inet mihomo：mihomo auto-redirect 的表（本脚本旧版的同名表含 bypass_mac，由 drop_legacy 处理，这里不碰）
+  if echo "$T" | grep -q "inet mihomo" && ! nft list set inet mihomo bypass_mac >/dev/null 2>&1; then
+    nft delete table inet mihomo 2>/dev/null
+  fi
+  # 两个内核的默认值：iproute2 路由表 2022、策略路由优先级从 9000 起。只有确实有指向 2022 的规则才清 9000～9099 这一段
+  for v in 4 6; do
+    eval "n=\${R$v:-0}"
+    [ "$n" = 0 ] && continue
+    for p in $(ip -$v rule show 2>/dev/null | awk -F: '$1 >= 9000 && $1 < 9100 { print $1 }'); do
+      ip -$v rule del pref "$p" 2>/dev/null
+    done
+  done
+  return 0
+}
+
 case "$1" in
   start) start ;;
   dns) dns_only ;;
-  stop) stop ;;
+  stop) stop; [ "$2" != leftovers ] || leftovers ;;  # init.d 的 stop_post：stop leftovers 一次调用做完。以前写成 [ = ] && …，不带参数的 stop 退出码变成 1
+  leftovers) leftovers ;;
   status) status ;;
   apply)
     load_env
+    wait_ready || exit 1
     case "$MODE" in
       tproxy) start ;;
       tun) dns_only ;;
       *) stop ;;
     esac ;;
-  *) echo "usage: $0 start|dns|stop|apply|status"; exit 1 ;;
+  *) echo "usage: $0 start|dns|stop|apply|status|leftovers"; exit 1 ;;
 esac
