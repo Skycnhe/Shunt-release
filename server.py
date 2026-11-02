@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.15"
+PANEL_VERSION = "11.6.16"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.15"
+PANEL_VERSION = "11.6.16"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2472,7 +2472,7 @@ from .data import config_version, load, read_json, save
 from .groups import provider_nodes
 from .mihomo import build_config, check_config, write_config
 from .sb_common import SB_CONF, active_core
-from .sb_config import build_singbox, check_sb_config, sb_hot_reload, sb_log_error, sb_rule_need, sb_sync_assets, write_sb_config
+from .sb_config import build_singbox, check_sb_config, sb_hot_reload, sb_log_error, sb_rule_need, sb_running_current, sb_sync_assets, write_sb_config
 from .sysopt import svc_restart
 from .notify import WD, core_alive
 
@@ -2499,13 +2499,16 @@ def conns_snapshot(timeout=5, ttl=2):
     return c
 
 
-def reload_core(prev=None):
+def reload_core(prev=None, force=False):
     """写配置 → mihomo -t / sing-box check 校验 → 热重载。
 
     prev（修改前的 data.json）给出时，任何一步失败都回滚到它：校验失败、生成配置抛异常（如残缺的规则集）、
-    mihomo 热重载被拒、sing-box 重载后起不来。坏数据不会留在 data.json 里让 /api/state 一直 500"""
+    mihomo 热重载被拒、sing-box 重载后起不来。坏数据不会留在 data.json 里让 /api/state 一直 500。
+
+    force=False 时，sing-box 新生成的配置与正在运行的完全相同就不发 SIGHUP（见 _reload_core），
+    面板上的「重载核心」按钮传 force=True 照旧强制重载"""
     try:
-        return _reload_core(prev)
+        return _reload_core(prev, force)
     except Exception as e:
         log_err("重载核心配置", e, tb=True)  # 临时配置文件已由 _reload_core 清理
         if prev is None:
@@ -2546,10 +2549,14 @@ def _gen_config(d, sb, tmp):
     return write_config(d, tmp)
 
 
-def _reload_core(prev):
+def _reload_core(prev, force=False):
     """mihomo -t / sing-box check 最长 90 秒：以前整段持有全局 LOCK，期间所有 update()（设备备注、定时任务设置等）都被卡住。
     现在锁内只生成配置并记下 config_version，校验在锁外做；校验完再拿锁，版本没变才替换正式配置，变了就按最新数据重来"""
+    # 断流：sing-box 的 SIGHUP 重载会关掉旧实例，所有连接一起断开。定时更新广告规则、GEO / 规则集时配置文件
+    # 往往一个字节都没变，变的只是规则集文件，而 sing-box 1.10+ 会自动重新加载被修改的本地规则集文件。
+    # 新配置与磁盘上的完全相同、且运行中的进程加载的就是这份文件时，跳过重载，连接不断
     tmp = None
+    unchanged = False
     try:
         for i in range(RELOAD_TRIES):
             last = i == RELOAD_TRIES - 1
@@ -2574,6 +2581,11 @@ def _reload_core(prev):
                     os.remove(tmp)  # 校验期间 data.json 被改过：这份配置已过时，丢掉重来
                     tmp = None
                     continue
+                if sb and not force and _same_file(tmp, final) and sb_running_current():
+                    os.remove(tmp)  # 不替换：保留原文件的修改时间，sb_running_current 下次还能判断
+                    tmp = None
+                    unchanged = True
+                    break
                 os.replace(tmp, final)
                 tmp = None
                 break
@@ -2583,6 +2595,8 @@ def _reload_core(prev):
                 os.remove(tmp)
             except OSError:
                 pass
+    if unchanged:
+        return True, "配置无变化，规则集文件已由 sing-box 自动重新加载（连接不中断）"
     if WD["manual_stop"]:  # 用户手动停止了核心：只写配置，不替用户把核心拉起来（与 refresh_regions 一致）
         return True, "配置已保存；核心已手动停止，下次启动时生效"
     retest_soon()
@@ -2608,6 +2622,14 @@ def _reload_core(prev):
         core("PUT", "/configs?force=true", {"path": final}, timeout=30)
         return False, "mihomo 重载失败，已撤销本次修改：" + (text[:300] or str(code))
     return True, text or "配置已重载"
+
+
+def _same_file(a, b):
+    try:
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            return fa.read() == fb.read()
+    except OSError:
+        return False
 
 
 def group_sig(cfg):
@@ -4580,6 +4602,36 @@ def core_pid():
         return 0
 
 
+def _proc_start(pid):
+    """进程启动时刻（Unix 时间），取不到返回 None"""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/stat") as f:
+            btime = next(int(l.split()[1]) for l in f if l.startswith("btime "))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except Exception:
+        return None
+
+
+def sb_running_current():
+    """正在运行的 sing-box 加载的是不是磁盘上这份配置：进程在跑、控制端口应答，且配置文件在进程启动
+    （或这个进程上次成功热重载）之后没有再被改过。判断不了一律返回 False（照旧重载，宁可断一下也不跑旧配置）"""
+    pid = core_pid()
+    if not pid:
+        return False
+    try:
+        mt = os.path.getmtime(SB_CONF)
+    except OSError:
+        return False
+    start = _proc_start(pid)
+    if start is None:
+        return False
+    ok = SB_STATE.get("reload_ok")
+    loaded = max(start, ok[1] if ok and ok[0] == pid else 0)
+    return mt <= loaded and core_alive()
+
+
 def sb_log_error():
     """sing-box 日志里最后一条 FATAL / ERROR"""
     for line in reversed(log_tail(MIHOMO_LOG) or []):
@@ -4647,6 +4699,7 @@ def sb_hot_reload():
                     return False, "sing-box 拒绝了新配置：" + m.group(0)[-200:]
                 started = "sing-box started" in new
                 if (started or time.time() - t0 >= SB_RELOAD_NOMARK) and core_alive():
+                    SB_STATE["reload_ok"] = (pid, time.time())
                     wd_hold(5, "sing-box 重载配置", reset=True)  # 已确认恢复：缩短看门狗暂停期
                     return True, "配置已重载"
             return False, "sing-box 重载后未响应，请查看日志"
@@ -12009,7 +12062,7 @@ class H(BaseHTTPRequestHandler):
                 ok, msg = reload_core()
                 return self.send(204 if not bad and ok else 502, b"" if not bad and ok else {"message": "；".join(bad) or msg})
             if sub.startswith("/configs") and m == "PUT":
-                return self.reply(*reload_core())
+                return self.reply(*reload_core(force=True))
             if sub == "/upgrade":
                 return self.send(400, {"message": "请在 设置 → 核心 → 内核更新 里更新 sing-box"})
         if p.startswith("/api/core/"):
@@ -12642,7 +12695,7 @@ class H(BaseHTTPRequestHandler):
     def api_service_post(self, m, p, b, q):
         act = b.get("action")
         if act == "reload":
-            return self.reply(*reload_core())
+            return self.reply(*reload_core(force=True))
         if act in ("restart", "stop", "start"):
             if not _SVC_LOCK.acquire(blocking=False):  # 防连点 / 多标签页同时操作：两个 rc-service 并发会互相打断
                 return self.send(409, {**SVC_JOB, "message": f"正在{SVC_NAMES.get(SVC_JOB['act'], '')}核心，请稍候"})
