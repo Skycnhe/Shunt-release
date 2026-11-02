@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.13"
+PANEL_VERSION = "11.6.14"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.13"
+PANEL_VERSION = "11.6.14"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -12182,7 +12182,10 @@ class H(BaseHTTPRequestHandler):
 
     @api_route("/api/groups/refresh", "POST")
     def api_groups_refresh_post(self, m, p, b, q):
-        return self.reply(*refresh_regions())
+        ok, msg = refresh_regions()
+        if not ok and msg == "核心未运行":  # 与其他「核心未运行」一样返回 502
+            return self.send(502, {"message": msg})
+        return self.reply(ok, msg)
 
     @api_route("/api/config", "GET")
     def api_config_get(self, m, p, b, q):
@@ -12749,6 +12752,8 @@ class H(BaseHTTPRequestHandler):
     def api_backup_delete(self, m, p, b, q):
         from . import backup as backup_mod
         ok, msg = backup_mod.delete((b.get("name") or "").strip())
+        if not ok and msg in ("非法文件名", "不是有效的备份文件", "备份不存在"):  # 参数问题返回 400 / 404，不是 500
+            return self.send(404 if msg == "备份不存在" else 400, {"message": msg})
         return self.reply(ok, msg)
 
     @api_route("/api/health/status", "GET")
@@ -12772,7 +12777,9 @@ class H(BaseHTTPRequestHandler):
         from . import health as health_mod
         name = (b.get("node_id") or "").strip()
         ok = health_mod.unhide(name) if name else False
-        return self.reply(ok, "已取消隐藏" if ok else "节点不存在")
+        if not ok:  # 404 而不是 500：不是服务器内部错误
+            return self.send(404, {"message": "节点不存在"})
+        return self.reply(True, "已取消隐藏")
 
     @api_route("/api/health/cfg", "PUT")
     def api_health_cfg(self, m, p, b, q):
