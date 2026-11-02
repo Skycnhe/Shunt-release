@@ -212,8 +212,12 @@ pre{background:var(--pre);padding:12px;border-radius:14px;max-height:65vh;overfl
 .spk{display:block;width:100%;height:64px}
 .dtop{margin-top:6px}.dti{padding:4px 0;font-size:12.5px}.dti b{font-weight:600;font-variant-numeric:tabular-nums;margin-left:8px}
 .dtb{height:4px;border-radius:2px;background:var(--b2);margin-top:4px}.dtb i{display:block;height:100%;border-radius:2px;background:#ff9f0a;opacity:.75}
-.ovcols{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,540px),1fr));align-items:start}.ovcols>div>.card:last-child{margin-bottom:0}
 .qs-now{margin-top:4px}
+/* 概览宽屏两栏：IP 信息 | 实时流量，域名过滤 | 节点选择；手机仍是一栏（见 720px 断点） */
+.ovpair{display:grid;gap:16px;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;margin-bottom:16px}
+.ovpair>.card{margin:0;min-width:0;container-type:inline-size}
+.ovpair .iplist{margin-top:10px}
+@container (max-width:560px){.dft{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.dfc{padding:12px}.dfc .v{font-size:20px}.spk{height:52px}.qs .node{min-width:130px;flex-basis:130px}}
 .spd{display:flex;gap:18px;align-items:baseline;margin-top:6px;flex-wrap:wrap}.spd b{font-size:22px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .spd .k{font-size:12px;color:var(--sub);margin-right:4px}.spd .dn b{color:var(--pri)}.spd .upx b{color:var(--ok)}
 .empty{padding:14px 2px;color:var(--sub);font-size:13px}
@@ -235,7 +239,7 @@ nav .ico{display:none}nav .more{display:none}
 @media (max-width:720px){
   .monly{display:block}
   .hstats{grid-template-columns:repeat(4,minmax(0,1fr))}.hstats .chip:nth-child(n+3){display:none}.hstats>.chip,.vchips .chip{grid-column:auto}.vchips .chip{flex-direction:column;align-items:flex-start;justify-content:center;gap:0}
-  #ov{display:flex;flex-direction:column}#ov>.ovcols,#ov .ovcols>div{display:contents}
+  #ov{display:flex;flex-direction:column}#ov>.ovpair{display:contents}
   #ov .card,#ov .g4{margin:0 0 10px}
   #ov .o1{order:1}#ov .o2{order:2}#ov .o3{order:3}#ov .o4{order:4}#ov .o5{order:5}#ov .o6{order:6}#ov .o7{order:7}#ov .o8{order:8}
   .spd b{font-size:19px}
@@ -402,28 +406,26 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
       <div class="card stat" style="margin:0"><div class="k">活动连接</div><div class="v" id="s-conn">-</div><div class="s" id="s-devs"></div></div>
       <div class="card stat" style="margin:0"><div class="k">今日拦截广告</div><div class="v" id="s-ad">-</div><div class="s" id="s-ad2"></div></div>
     </div>
-    <div class="o1 card" style="margin-bottom:16px"><div class="row"><h3 class="sp" style="margin:0">IP 信息</h3><button class="btn g sm" id="ipmask-btn" onclick="toggleIpMask()">隐藏 IP</button></div>
-      <div class="iplist">
-        <div class="ipr"><span class="k">本地公网</span><b id="ip-direct">-</b><span class="mut small" id="loc-direct"></span></div>
-        <div class="ipr"><span class="k">代理出口</span><b id="ip-proxy">-</b><span class="mut small" id="loc-proxy"></span></div>
-      </div></div>
-    <div class="o3 card"><div class="row"><h3 class="sp" style="margin:0">实时流量（近 2 分钟）</h3><span class="small" style="color:var(--pri)">● 下载</span><span class="small" style="color:var(--ok)">● 上传</span></div>
-      <div class="spd"><span class="dn"><span class="k">↓</span><b id="ov-down">-</b></span><span class="upx"><span class="k">↑</span><b id="ov-up">-</b></span><span class="monly mut small" id="ov-tot" style="margin-left:auto"></span></div>
-      <canvas id="chart" height="110" style="width:100%;margin-top:8px;display:block"></canvas></div>
-    <div class="o5 card" id="ovab"><div class="row"><div class="sp"><h3 style="margin:0">域名过滤</h3><div class="mut small" style="margin-top:2px">最近 24 个小时段 · 核心日志统计的连接请求与广告拦截</div></div><a class="btn g sm" onclick="go('广告拦截')">管理</a><label class="sw sm"><input type="checkbox" id="ovab-on"><span></span></label></div>
-      <div id="ovab-body"></div></div>
-    <div class="ovcols">
-      <div>
-        <div class="o2 card" id="qs-card"><div class="row"><h3 class="sp" style="margin:0">🚀 节点选择</h3><button class="btn g sm" id="qs-btn" onclick="qsTest(this)">测速</button></div>
-          <div id="qs-now" class="mut small w qs-now"></div>
-          <div id="qs" class="qs"></div></div>
-      </div>
-      <div>
-        <div class="o8 card"><div class="row"><h3 class="sp" style="margin:0">故障自动直连（看门狗）</h3><span id="wd-status"></span></div>
-          <div class="mut small" style="margin:4px 0 8px">每 30 秒检查核心；无响应时自动重启，连续 2 次失败则关闭透明代理让局域网直连，核心恢复后自动重新接管</div>
-          <div id="wd-events"></div></div>
-      </div>
+    <div class="ovpair">
+      <div class="o1 card"><div class="row"><h3 class="sp" style="margin:0">IP 信息</h3><button class="btn g sm" id="ipmask-btn" onclick="toggleIpMask()">隐藏 IP</button></div>
+        <div class="iplist">
+          <div class="ipr"><span class="k">本地公网</span><b id="ip-direct">-</b><span class="mut small" id="loc-direct"></span></div>
+          <div class="ipr"><span class="k">代理出口</span><b id="ip-proxy">-</b><span class="mut small" id="loc-proxy"></span></div>
+        </div></div>
+      <div class="o3 card"><div class="row"><h3 class="sp" style="margin:0">实时流量（近 2 分钟）</h3><span class="small" style="color:var(--pri)">● 下载</span><span class="small" style="color:var(--ok)">● 上传</span></div>
+        <div class="spd"><span class="dn"><span class="k">↓</span><b id="ov-down">-</b></span><span class="upx"><span class="k">↑</span><b id="ov-up">-</b></span><span class="monly mut small" id="ov-tot" style="margin-left:auto"></span></div>
+        <canvas id="chart" height="110" style="width:100%;margin-top:8px;display:block"></canvas></div>
     </div>
+    <div class="ovpair">
+      <div class="o5 card" id="ovab"><div class="row"><div class="sp"><h3 style="margin:0">域名过滤</h3><div class="mut small" style="margin-top:2px">最近 24 个小时段 · 核心日志统计的连接请求与广告拦截</div></div><a class="btn g sm" onclick="go('广告拦截')">管理</a><label class="sw sm"><input type="checkbox" id="ovab-on"><span></span></label></div>
+        <div id="ovab-body"></div></div>
+      <div class="o2 card" id="qs-card"><div class="row"><h3 class="sp" style="margin:0">🚀 节点选择</h3><button class="btn g sm" id="qs-btn" onclick="qsTest(this)">测速</button></div>
+        <div id="qs-now" class="mut small w qs-now"></div>
+        <div id="qs" class="qs"></div></div>
+    </div>
+    <div class="o8 card"><div class="row"><h3 class="sp" style="margin:0">故障自动直连（看门狗）</h3><span id="wd-status"></span></div>
+      <div class="mut small" style="margin:4px 0 8px">每 30 秒检查核心；无响应时自动重启，连续 2 次失败则关闭透明代理让局域网直连，核心恢复后自动重新接管</div>
+      <div id="wd-events"></div></div>
    </div>
   </section>
   <!-- 节点 -->
