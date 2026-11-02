@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.14"
+PANEL_VERSION = "8.10.15"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.14"
+PANEL_VERSION = "8.10.15"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2811,7 +2811,7 @@ def core(method, path, body=None, timeout=10):
     except urllib.error.HTTPError as e:
         return e.code, e.read()
     except Exception as e:
-        return 502, json.dumps({"message": "mihomo 未运行或无法连接: %s" % e}).encode()
+        return 502, json.dumps({"message": "核心未运行或无法连接: %s" % e}).encode()
     finally:
         if tok is not None:
             mass_end(tok)
@@ -12565,7 +12565,7 @@ class NodesAPI:
         # 精简后的连接列表：只保留前端用到的字段（/connections 走 2 秒共享快照）
         c = conns_snapshot(timeout=5)
         if c is None:
-            return self.send(502, {"message": "mihomo 未运行或无法连接"})
+            return self.send(502, {"message": "核心未运行或无法连接"})
         keep = ("sourceIP", "host", "sniffHost", "destinationIP", "destinationPort", "network")
         out = [{"id": x.get("id"), "start": x.get("start"), "upload": x.get("upload", 0), "download": x.get("download", 0),
                 "rule": x.get("rule"), "rulePayload": x.get("rulePayload"), "chains": x.get("chains"),
@@ -12577,7 +12577,7 @@ class NodesAPI:
         """概览只要两个数字：连接数和来源设备数，不必把整份连接列表（几十到几百 KB）传给前端"""
         c = conns_snapshot(timeout=5)
         if c is None:
-            return self.send(502, {"message": "mihomo 未运行或无法连接"})
+            return self.send(502, {"message": "核心未运行或无法连接"})
         conns = c.get("connections") or []
         devs = {(x.get("metadata") or {}).get("sourceIP") for x in conns}
         devs.discard(None)
