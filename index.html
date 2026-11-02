@@ -699,9 +699,10 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
         <div id="sw-log" class="mut small mt" style="white-space:pre-line;max-height:120px;overflow:auto"></div></div>
       <div class="row mt"><span class="sp"></span><button class="btn" id="sw-btn" onclick="swSwitch()" disabled>切换版本</button></div>
       <div class="row mt" style="margin-top:14px"><h4 class="sp" style="margin:0">已下载的内核</h4><button class="btn g sm" id="sw-chk" onclick="swCheck()">检查更新</button><button class="btn g sm" onclick="swDl()">全部更新</button></div>
-      <div class="mut small" style="margin:4px 0">官方版（SagerNet）、reF1nd、reF1nd 预览版、MiChongs 各存一份，切换时直接使用，不用重新下载。从 GitHub 下载对应 CPU 架构的程序，使用「备份与更新 → 面板更新」里填写的 GitHub 加速地址。「全部更新」只下载有新版本的、没在使用的版本；正在使用的点它那一行的「更新」：新程序先校验能否运行、能否读取当前配置，通过后才替换并重启，30 秒内没响应自动换回旧版本。</div>
+      <div class="mut small" style="margin:4px 0">官方版（SagerNet）、reF1nd、reF1nd 预览版、MiChongs 各存一份，切换时直接使用，不用重新下载。从 GitHub 下载对应 CPU 架构的程序，使用「备份与更新 → 面板更新」里填写的 GitHub 加速地址。「全部更新」只更新已下载过、有新版本、没在使用的版本；正在使用的点它那一行的「更新」：新程序先校验能否运行、能否读取当前配置，通过后才替换并重启，30 秒内没响应自动换回旧版本。</div>
       <div id="sw-cache"></div>
-      <div class="row mt"><span class="sp small">自动下载全部内核（每 12 小时检查，有新版本才下载）</span><label class="sw"><input type="checkbox" id="sw-auto" onchange="swAuto(this.checked)"><span></span></label></div>
+      <div class="row mt"><span class="sp mut small" id="sw-usage"></span><button class="btn g sm" onclick="swClean()">清理旧内核</button></div>
+      <div class="row mt"><span class="sp small">自动更新已下载的内核（每 12 小时检查，有新版本才下载；没用过的版本不下载）</span><label class="sw"><input type="checkbox" id="sw-auto" onchange="swAuto(this.checked)"><span></span></label></div>
       <div id="sw-cache-log" class="mut small mt" style="white-space:pre-line;max-height:120px;overflow:auto"></div></div>
     <div data-sg="core" class="card"><h3>核心服务</h3><div class="row">
       <button class="btn" onclick="svc('reload')">重载配置</button><button class="btn g" onclick="svc('geo')">更新 GEO 数据库</button>
@@ -1700,6 +1701,7 @@ function swCache(c){const r=c.remote||{},cur=SW_J?SW_J.variant:'';
       st=!x.version?'<span class="mut">未下载</span>':esc(x.version)+' '+sbTag(x.version)+(x.variant===cur?' <span class="tag">使用中</span>':''),
       lt=!rv?'<span class="mut">—</span>':err?`<span class="bad" title="${esc(rv)}">获取失败</span>`:(rv===x.version?'<span class="ok">已是最新</span>':`<span class="warn">${esc(rv)}</span>`);
       return `<tr><td>${esc(x.label)}</td><td>${st}</td><td>${lt}</td><td style="text-align:right">${x.variant===cur?`<button class="btn g sm" onclick="swRb('${x.id}')">回滚</button> <button class="btn sm" onclick="swUpd('${x.id}',${rv===x.version})">${rv===x.version?'重新安装':'更新'}</button>`:`<button class="btn g sm" onclick="swDl('${x.id}',${x.version&&rv===x.version?'true':'false'})">${x.version?(rv&&rv===x.version?'重新下载':'下载最新'):'下载'}</button>`}</td></tr>`}).join('')+'</tbody></table></div>';
+  {const u=c.usage||{},mb=n=>(n/1048576).toFixed(1)+' MB';$('#sw-usage').textContent=`内核占用：缓存的其他版本 ${mb(u.cache||0)} · 旧版本备份(.bak) ${mb(u.bak||0)}`}
   $('#sw-cache-log').textContent=(c.log||[]).join('\n')+(c.last?`${(c.log||[]).length?'\n':''}上次检查 ${new Date(c.last*1000).toLocaleString()}`:'')}
 async function swCheck(){$('#sw-chk').disabled=true;try{const j=await api('/api/coreswitch','POST',{action:'check'});SW_J.cache.remote=j.remote;swCache(SW_J.cache);
     const a=SW_J.cache.items.find(x=>x.variant===SW_J.variant),rv=a&&j.remote[a.id];if(a&&a.version&&rv&&!rv.startsWith('✗'))verSave('core-singbox',a.version,rv,rv!==a.version)}catch(e){toast(e.message)}$('#sw-chk').disabled=false}
@@ -1725,7 +1727,7 @@ function corePoll(){$('#sw-prog').classList.remove('hide');$('#sw-btn').disabled
       $('#sw-log').textContent=(j.ok?'✓ ':'✗ ')+(j.message||'')+'\n'+(j.log||[]).slice(1).join('\n');await loadState().catch(()=>{});loadCoreSw()}};
   CORE_POLL=setInterval(tick,1500);tick()}
 async function rollbackPanel(){if(!confirm('回滚到上次更新前的面板版本？'))return;try{const j=await api('/api/selfupdate','POST',{action:'rollback'});toast(j.message);setTimeout(()=>location.reload(),5000)}catch(e){toast(e.message)}}
-
+async function swClean(){if(!confirm('只保留正在使用的内核：删除缓存的其他版本和内核更新留下的旧版本备份。之后切换到别的版本需要重新下载，也不能再一键回滚到旧版本。继续？'))return;try{const j=await api('/api/coreswitch','POST',{action:'clean'});toast(j.message)}catch(e){toast(e.message)}loadCoreSw()}
 // 网络诊断
 async function runDiag(){const b=$('#diag-btn');b.disabled=true;b.textContent='诊断中…';$('#diag').innerHTML='<span class="mut small">正在检查，约需 10 秒…</span>';
   try{const r=await api('/api/diag');const bad=r.filter(x=>x.ok!==true).length;

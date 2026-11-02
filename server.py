@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.11"
+PANEL_VERSION = "11.6.12"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.11"
+PANEL_VERSION = "11.6.12"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -6330,7 +6330,6 @@ def check_all(gh):
 def prefetch(gh, only=None, force=False):
     """下载 / 更新缓存。only 为 None 时处理全部版本，否则只处理 only 里的（sb_<变体>）。返回 (成功, 失败) 两个列表"""
     ok, bad = [], []
-    remember_current()
     items = ["sb_" + v for v in variants()]
     for it in items:
         if only and it not in only:
@@ -6338,6 +6337,8 @@ def prefetch(gh, only=None, force=False):
         try:
             var = it[3:]
             old = sb_version(cache_path(var))
+            if not only and not old:
+                continue  # 只更新用过（已下载）的版本，没用过的不下载，切换到它时再下载
             if var == current_variant():
                 continue  # 正在使用的版本由它那一行的「更新」替换（校验 + 重启），后台不动
             nv, changed = ensure_variant(var, gh, refresh=True) if not force else (sb_install(sb_channel(var), gh, force=True, dest=cache_path(var))[0], True)
@@ -6410,13 +6411,65 @@ def status():
         vs[cv] = sb_version()  # 正在使用的那个显示实际运行的程序版本
     return {"dir": CACHE_DIR, "enabled": prefetch_enabled(), "busy": STATE["busy"], "last": STATE["last"], "log": STATE["log"],
             "checked": STATE["checked"], "remote": STATE["remote"],
+            "usage": usage(),
             "items": [{"id": "sb_" + k, "variant": k, "label": SB_VARIANTS[k][0], "version": vs.get(k, "")} for k in variants()]}
+
+
+def _fsize(p):
+    try:
+        return os.path.getsize(p) if os.path.isfile(p) else 0
+    except OSError:
+        return 0
+
+
+def _bak_files():
+    return [b + ".bak" for b in BAK_BINS]
+
+
+def _extra_files():
+    return []  # shunt-singbox 只有 sing-box
+
+
+def usage():
+    """内核相关文件占用（字节）：cache 缓存的 sing-box 各版本、bak 内核更新留下的旧版本备份、extra 不在使用的其他内核"""
+    cache = sum(_fsize(cache_path(k)) for k in SB_VARIANTS)
+    bak = sum(_fsize(p) for p in _bak_files())
+    extra = sum(_fsize(p) for p in _extra_files())
+    return {"cache": cache, "bak": bak, "extra": extra, "total": cache + bak + extra}
+
+
+def clean():
+    """只保留正在用的最新内核：删除缓存里的 sing-box 各版本（含当前版本的副本）、各内核的 .bak 旧版本、不在使用的其他内核。
+    返回 (成功, 提示)。删除后切换到别的版本会重新下载，内核更新失败也不能再一键回滚到旧版本"""
+    with _JOB_LOCK:
+        if STATE["busy"] or CORE_UPD["busy"]:
+            return False, "内核正在下载、更新或切换，请稍后再试"
+        STATE["busy"] = True
+    freed, n, bad = 0, 0, []
+    try:
+        with CACHE_LOCK:
+            for p in [cache_path(k) for k in SB_VARIANTS] + _bak_files() + _extra_files():
+                sz = _fsize(p)
+                if not os.path.isfile(p):
+                    continue
+                try:
+                    os.remove(p)
+                    freed += sz
+                    n += 1
+                except OSError as e:
+                    bad.append(f"{p}: {e}")
+    finally:
+        STATE["busy"] = False
+    if bad:
+        return False, f"已删除 {n} 个文件、释放 {freed / 2**20:.1f} MB；以下文件删除失败：" + "；".join(bad)[:300]
+    return True, f"已删除 {n} 个文件、释放 {freed / 2**20:.1f} MB，只保留正在用的内核" if n else "没有可清理的旧内核"
 
 
 def set_enabled(on):
     update(lambda x: x.__setitem__("core_prefetch", bool(on)))
 
 
+BAK_BINS = (SB_BIN,)
 START = time.time()
 '''
 _SRC['shunt.sysopt'] = '''"""Alpine 系统优化"""
@@ -12239,14 +12292,17 @@ class H(BaseHTTPRequestHandler):
 
     @api_route("/api/coreswitch", "POST")
     def api_coreswitch_post(self, m, p, b, q):
-        """切换 sing-box 版本 / 内核缓存：variant 切换；action=check 检查更新、prefetch 全部更新、download 下载一个、prefetch_auto 自动下载开关"""
+        """切换 sing-box 版本 / 内核缓存：variant 切换；action=check 检查更新、prefetch 更新已下载的、clean 只保留正在用的内核、download 下载一个、prefetch_auto 自动下载开关"""
         from .core_cache import SB_VARIANTS, check_all, current_variant, prefetch_start, set_enabled, variants
         from .sb_switch import sb_switch_variant_job
         gh = load().get("gh_proxy") or ""
         act = b.get("action")
         if act == "prefetch_auto":
             set_enabled(bool(b.get("enabled")))
-            return self.reply(True, "已开启自动下载全部内核" if b.get("enabled") else "已关闭自动下载（切换到没下载过的版本时仍会自动下载）")
+            return self.reply(True, "已开启自动更新已下载的内核" if b.get("enabled") else "已关闭自动下载（切换到没下载过的版本时仍会自动下载）")
+        if act == "clean":
+            from .core_cache import clean
+            return self.reply(*clean())
         if act in ("prefetch", "download"):
             only = None
             if act == "download":
