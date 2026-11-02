@@ -57,6 +57,21 @@ clear_route() {
   return 0
 }
 
+rule_count() {
+  # $1 = -4 / -6：fwmark $MARK → table $TABLE_ID 的策略路由有几条
+  ip $1 rule show 2>/dev/null | awk -v m="$MARK" -v t="$TABLE_ID" '{f=0; g=0
+    for (i = 1; i < NF; i++) { if ($i == "fwmark" && $(i+1) == m) f=1; if (($i == "lookup" || $i == "table") && $(i+1) == t) g=1 }
+    if (f && g) c++} END {print c+0}'
+}
+
+ensure_rule() {
+  # 保证恰好一条策略路由：没有就加；多了（以前 start 中途失败重试留下的）删到只剩一条。不会出现一条都没有的瞬间
+  c=$(rule_count $1)
+  [ "$c" -ge 1 ] || { ip $1 rule add fwmark $MARK table $TABLE_ID; return; }
+  n=0; while [ $n -lt 20 ] && [ "$c" -gt 1 ]; do ip $1 rule del fwmark $MARK table $TABLE_ID 2>/dev/null; c=$((c-1)); n=$((n+1)); done
+  return 0
+}
+
 sets() {
   cat <<NFT
   set reserved {
@@ -107,8 +122,11 @@ start() {
   load_env
   sysctl -qw net.ipv4.ip_forward=1
   modprobe nft_tproxy 2>/dev/null; modprobe nf_tproxy_ipv4 2>/dev/null
-  drop_legacy; clear_route
-  ip rule add fwmark $MARK table $TABLE_ID
+  # 不再先 clear_route 再重加：保存设置 / 看门狗恢复时会执行 apply，删掉策略路由到重新加上之间（IPv6 开启时
+  # 中间还有 sysctl / modprobe）打了标记的包没有走本机，被直接转发出去，正在进行的代理连接收到 RST 断开。
+  # 现在已有就保留、只补缺和去重，route replace 本身是原子替换，nft 表在一个事务里整体替换，全程不出现空窗
+  drop_legacy
+  ensure_rule -4
   ip route replace local 0.0.0.0/0 dev lo table $TABLE_ID
 
   V6_RULES=""; DNS_FAMILY="meta nfproto ipv4"
@@ -116,7 +134,7 @@ start() {
   if [ "$IPV6" = 1 ]; then
     sysctl -qw net.ipv6.conf.all.forwarding=1
     modprobe nf_tproxy_ipv6 2>/dev/null
-    ip -6 rule add fwmark $MARK table $TABLE_ID
+    ensure_rule -6
     ip -6 route replace local ::/0 dev lo table $TABLE_ID
     DNS_FAMILY=""
     # Fake-IP 的 IPv6 段（sing-box fc00::/18、mihomo fdfe:dcba:9876::/64）都落在 reserved6 的 fc00::/7 里：
@@ -126,6 +144,9 @@ start() {
     meta nfproto ipv6 ip6 daddr @reserved6 return
     meta nfproto ipv6 ip6 daddr @local6 return
     meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set $MARK tproxy ip6 to [::1]:$TPROXY_PORT accept"
+  else  # 关掉了 IPv6：撤掉之前留下的 IPv6 策略路由
+    n=0; while [ $n -lt 20 ] && ip -6 rule del fwmark $MARK table $TABLE_ID 2>/dev/null; do n=$((n+1)); done
+    ip -6 route flush table $TABLE_ID 2>/dev/null
   fi
 
   nft -f - <<NFT
