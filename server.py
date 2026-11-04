@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.18"
+PANEL_VERSION = "8.10.19"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.18"
+PANEL_VERSION = "8.10.19"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1724,6 +1724,20 @@ def drop_provider_cache(name):
         return False
 
 
+def drop_ruleset_cache(name):
+    """删掉规则集在 mihomo 里的本地缓存 ./rules/<名>.<yaml|mrs|list>。与 drop_provider_cache 同理：mihomo 加载 rule-provider 时
+    只要本地文件存在就先用它，满一个更新间隔（24 小时）才去下载，不看地址变没变。同名替换规则集（换了地址 / 类型 / 格式）后
+    以前最长 24 小时仍按旧地址的列表分流"""
+    n = 0
+    for ext in ("yaml", "mrs", "list"):
+        try:
+            os.remove(os.path.join(CONF_DIR, "rules", f"{safe(name)}.{ext}"))
+            n += 1
+        except OSError:
+            pass
+    return n > 0
+
+
 def build_config(d, strict=False):
     providers = {}
     for s in d["subs"]:
@@ -2135,6 +2149,35 @@ def check_host_entry(h):
     return ""
 
 
+def dns_port_ok(s):
+    """DNS 地址里的端口是 1–65535 的数字、IPv6 方括号成对。DNS_RX 对带协议的地址只要求「非空白」：
+    以前 1.1.1.1:99999、udp://1.1.1.1:abc、tls://[::1 都能保存，生成 sing-box 配置时 urlsplit 抛 ValueError（Go 生成坏端口），
+    核心起不来、修改被回滚却只提示「生成配置失败」"""
+    base = s.split("#", 1)[0].strip()
+    if base.startswith(("system", "dhcp://", "rcode://")):
+        return True
+    host = re.sub(r"^[a-z0-9]+://", "", base).split("/", 1)[0]
+    if host.startswith("["):
+        end = host.find("]")
+        if end < 0:
+            return False
+        tail = host[end + 1:]
+        if not tail:
+            return True
+        if not tail.startswith(":"):
+            return False
+        port = tail[1:]
+    elif ":" in host:
+        if is_ip_addr(host):  # 裸 IPv6，不带端口
+            return True
+        h, _, port = host.rpartition(":")
+        if ":" in h:
+            return False
+    else:
+        return True
+    return bool(re.fullmatch(r"[0-9]{1,5}", port)) and 0 < int(port) < 65536
+
+
 def validate_dns(dc, d):
     pol = {g["name"] for g in build_config(dict(d, rules=[]))["proxy-groups"]} | BUILTIN_POLICIES | {n["proxy"]["name"] for n in d["nodes"]}
     errs = []
@@ -2142,6 +2185,8 @@ def validate_dns(dc, d):
         for s in dc.get(key) or []:
             if not DNS_RX.match(s) or s.startswith("rcode://"):
                 errs.append(f"{label} 格式无效：{s}")
+            elif not dns_port_ok(s):
+                errs.append(f"{label} 端口无效（应为 1–65535）：{s}")
             elif key == "default" and not re.match(r"^(?:(?:udp|tcp|tls|https)://)?\\[?[0-9a-fA-F:.]+\\]?(?::\\d+)?(?:/|$)", s):
                 errs.append(f"默认 DNS 必须是 IP（用于解析 DoH 域名）：{s}")
             elif key in ("default", "pserver") and dns_policy_of(s):
@@ -2170,6 +2215,8 @@ def validate_dns(dc, d):
         for s in pe.get("servers") or []:
             if not DNS_RX.match(s):
                 errs.append(f"nameserver-policy「{m}」的 DNS 格式无效：{s}")
+            elif not dns_port_ok(s):
+                errs.append(f"nameserver-policy「{m}」的 DNS 端口无效（应为 1–65535）：{s}")
             elif dns_policy_of(s) and dns_policy_of(s) not in pol:
                 errs.append(f"nameserver-policy「{m}」引用的策略组不存在：{s}")
     if not dc.get("direct"):
@@ -3484,6 +3531,9 @@ def _yaml_items(sec):
     return out
 
 
+_ALIAS_RX = re.compile(r"(?:^|[\\s\\[{,:])\\*[^\\s{}\\[\\],]+")  # YAML 别名 *a
+
+
 def sub_yaml(text):
     """Clash/mihomo 订阅 → {"proxies": [...], "proxy-providers": {...}}，尽量容错"""
     y = _yaml_full(text)
@@ -3499,6 +3549,15 @@ def sub_yaml(text):
             v = (yaml_lite(sec) or {}).get(key)
         except Exception:
             v = None
+        if key == "proxies" and _ALIAS_RX.search(sec):
+            # 节点引用了别名 *a：锚点常定义在 proxies 之外的顶层键里（x-common: &c …），只解析 proxies 段落时
+            # 别名解析不出来，节点缺 type / server 被整条丢掉。这时按整份文本再解析一次，节点不少于段落解析的就用它
+            try:
+                vf = (yaml_lite(text) or {}).get(key)
+            except Exception:
+                vf = None
+            if isinstance(vf, list) and len(vf) >= (len(v) if isinstance(v, list) else 0):
+                v = vf
         if key == "proxies":
             n_items = sum(1 for x in sec.splitlines() if re.match(r"^\\s*-\\s", x))
             if not isinstance(v, list) or len(v) < n_items:
@@ -4145,7 +4204,7 @@ from urllib.parse import urlsplit
 
 from .base import CN_DNS, DNS_DEFAULT, G_SEL
 from .mihomo import dns_cfg, fix_dns_policy, is_ip_addr, policy_parts
-from .ruleutil import _mh_domain, dns_policy_of
+from .ruleutil import _mh_domain, adblock_scopes, dns_policy_of
 def _sb_dns_server(addr, tag, boot, warn, via=None):
     """mihomo DNS 地址（含 #策略组）→ sing-box DNS server。
     via：没写 #策略组 时经哪个出站发出（respect-rules 开启时的代理 DNS）；不传就是直连"""
@@ -4270,7 +4329,10 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
     if ab.get("enabled") and ab.get("dns") and ab_sets:
         if "ad-allow" in ab_sets:
             add_route({"rule_set": ["ad-allow"]}, {"action": "route", "server": t_direct})
-        bl = [k for k in ab_sets if k != "ad-allow"]
+        # 与 mihomo 一致：限定国内直连 / 国外代理的列表只在路由层拦。以前 sing-box 在 DNS 层把它们一律拦成 NXDOMAIN，
+        # 「只拦国内直连」的列表连走代理的国外域名也拦了（反之亦然），切换内核后拦截范围不同
+        scoped = adblock_scopes(d)
+        bl = [k for k in ab_sets if k != "ad-allow" and k not in scoped]
         if bl:
             rules.append({"rule_set": bl, "action": "predefined", "rcode": "NXDOMAIN"})
 
@@ -4307,7 +4369,9 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
         if h["domain"].startswith(("+.", "*.")) or not ips:
             warn.append(f"hosts「{h['domain']}」sing-box 只支持精确域名 → IP，已跳过")
             continue
-        exact[h["domain"]] = ips
+        # 同一域名写了多条（如一条 IPv4、一条 IPv6）：与 mihomo_hosts 一样合并去重。以前后一条覆盖前一条，sing-box 下丢记录
+        vals = exact.setdefault(h["domain"], [])
+        vals += [v for v in ips if v not in vals]
     if exact:
         servers.append({"type": "hosts", "tag": "dns-hosts", "predefined": exact})
         # 放在最前：mihomo 的 hosts 先于 nameserver-policy / 广告拦截生效；以前排在 DNS 策略之后，
@@ -5082,6 +5146,35 @@ def sb_sync_assets(d, force=False, need=None, wait=None):
     late.set()
     with bad_lock:  # 返回快照：超时线程之后的结果不影响这里
         return list(bad) + [f"{tag}：下载超时" for (tag, _), t in zip(items, ths) if t.is_alive()]
+
+
+def rs_changed(prev, d):
+    """/api/settings 保存规则集：新增的、或地址 / 类型 / 格式变了（同名替换）的规则集名"""
+    def sig(r):
+        return r.get("url"), r.get("behavior", "domain"), r.get("format", "yaml")
+    old = {r.get("name"): sig(r) for r in (prev or {}).get("rulesets") or [] if isinstance(r, dict)}
+    return [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and old.get(r.get("name")) != sig(r)]
+
+
+def sb_refresh_rulesets(d, names):
+    """新增 / 换了地址、类型、格式的规则集立即（强制）下载转换；返回失败列表。
+    以前本地已有同名文件（rs-<名>.json）就一直沿用旧地址、旧类型转换出的内容（sb_fetch_missing 只补缺失的文件），
+    要等定时更新或手动「更新」才换"""
+    want = set(names)
+    need = {k: v for k, v in sb_rule_need(d).items() if k in want and v.get("kind") != "adblock"}
+    return sb_sync_assets(d, force=True, need=need, wait=MISSING_WAIT) if need else []
+
+
+def sb_drop_ruleset_files(d, names):
+    """当前不是 sing-box 时：删掉这些规则集已转换好的 sing-box 文件，切换到 sing-box 时按新地址重新下载（否则沿用旧内容）"""
+    want = set(names)
+    for tag, rsd in sb_rule_need(d).items():
+        if tag in want and rsd.get("kind") != "adblock":
+            for p in (rsd["path"], rsd["path"] + ".skip"):
+                try:
+                    os.remove(os.path.join(SB_RULE_DIR, p))
+                except OSError:
+                    pass
 
 
 MISSING_WAIT = 45  # 保存设置时补下缺失规则集：整体最多等这么多秒（不阻塞太久，下不来的规则照旧跳过并提示）
@@ -6790,7 +6883,9 @@ def mh_fetch(kind, channel, gh, prog=None):
         _cu("下载", None, "拿不到 GitHub 校验值，不使用加速镜像（避免下载到被篡改的文件）")
         gh = ""
     _cu("下载", None, f"下载 {name}")
-    tmp = B + ".new"
+    # 后台预下载（core_cache，QUIET.on）与前台「内核更新 / 切换」可能同时下载同一个内核：以前都写 <程序>.new，
+    # 两边交错写坏同一个文件，一方失败时的清理还会删掉另一方正在写的文件。后台用自己的临时文件
+    tmp = B + (".prefetch" if getattr(QUIET, "on", False) else ".new")
     try:
         with open_url(url, gh, timeout=30) as r:
             hr = HashReader(r, prog, int(r.headers.get("Content-Length") or 0))
@@ -9659,7 +9754,7 @@ def download(url, timeout=60, limit=40 << 20, gh=None):
     raise IOError("；".join(errs)[:300] or "下载失败")
 
 
-def ab_fetch(lst, late=None):
+def ab_fetch(lst, late=None, sfx=".new"):
     """下载并转换一个列表，写入 <id>.txt / <id>.allow.txt，返回 meta。late 置位（整体超时）后不再写文件"""
     text = download(lst["url"])
     bs, be, as_, ae, skipped = parse_filter(text)
@@ -9669,7 +9764,7 @@ def ab_fetch(lst, late=None):
         raise ValueError("没有解析出任何域名，确认是 AdGuard / hosts / 域名列表格式")
     if late is not None and late.is_set():
         raise IOError("下载超时")
-    sfx = ".new" if late is not None else ""  # 并发更新：先写 .new，由调用方在锁内确认没超时再换上
+    sfx = sfx if late is not None else ""  # 并发更新：先写 .new，由调用方在锁内确认没超时再换上
     write_lines(os.path.join(AB_DIR, lst["id"] + ".txt" + sfx), lines)
     write_lines(os.path.join(AB_DIR, lst["id"] + ".allow.txt" + sfx), alines)
     return {"count": n, "allow": na, "skipped": skipped, "updated": int(time.time()), "error": "", "parser": AB_PARSER}
@@ -9746,6 +9841,9 @@ def adblock_update(ids=None, apply=True):
         res = {}
         res_lock = threading.Lock()
         late = threading.Event()
+        # 临时文件带本次更新的随机后缀：上一轮超时还卡着的线程迟到后清理半成品时，以前会删掉这一轮同名的 .new，
+        # 这一轮就换不上新列表（meta 却记成已更新），或只换上 .txt 没换上 .allow.txt
+        tag = ".new." + secrets.token_hex(4)
 
         def fail(l, err):
             m = dict(meta.get(l["id"]) or {})
@@ -9754,7 +9852,7 @@ def adblock_update(ids=None, apply=True):
 
         def one(l):
             try:
-                r = ab_fetch(l, late)
+                r = ab_fetch(l, late, tag)
             except Exception as e:
                 r = fail(l, str(e)[:200])
             with res_lock:
@@ -9762,12 +9860,12 @@ def adblock_update(ids=None, apply=True):
                 if not late.is_set():
                     if not r.get("error"):
                         for p in new:
-                            if os.path.exists(p + ".new"):
-                                os.replace(p + ".new", p)
+                            if os.path.exists(p + tag):
+                                os.replace(p + tag, p)
                     res[l["id"]] = r
                 for p in new:  # 迟到 / 失败留下的半成品
-                    if os.path.exists(p + ".new"):
-                        os.remove(p + ".new")
+                    if os.path.exists(p + tag):
+                        os.remove(p + tag)
         ths = [threading.Thread(target=one, args=(l,), daemon=True) for l in lists]
         [t.start() for t in ths]
         end = time.time() + AB_WAIT  # 整体最多等 AB_WAIT 秒（以前逐个 join(150)，几个列表都卡住时要等 N×150 秒）
@@ -12986,7 +13084,11 @@ class RulesAPI:
 
     @api_route("/api/rules", "PUT")
     def api_rules_put(self, m, p, b, q):
-        rules = [complete_rule(norm_rule(r.strip()), G_SEL) for r in b.get("rules", []) if isinstance(r, str) and r.strip()]
+        rules_in = b.get("rules")
+        # 必须是文本列表：以前缺省 / 传成数字时 500，[1] 这类非文本条目被跳过后当成空列表，把全部规则清空
+        if not isinstance(rules_in, list) or not all(isinstance(r, str) for r in rules_in):
+            return self.send(400, {"message": "rules 必须是规则文本列表"})
+        rules = [complete_rule(norm_rule(r.strip()), G_SEL) for r in rules_in if r.strip()]
         bad = bad_rule_policies([r for r in rules if not r.startswith("#")], load())
         if bad:
             return self.send(400, {"message": "以下规则的策略不存在：" + "；".join(bad[:5])})
@@ -13109,11 +13211,11 @@ from .base import (
 from .data import config_version, load, migrate_names, normalize, save, update
 from .links import q1
 from .groups import provider_rev
-from .mihomo import dns_cfg, safe_dev
+from .mihomo import dns_cfg, drop_ruleset_cache, safe_dev
 from .core import reload_core
 from .corehttp import core
 from .sb_common import CORES, SB_STATE, active_core, core_conf_path
-from .sb_config import build_singbox, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, sb_version
+from .sb_config import build_singbox, rs_changed, sb_drop_ruleset_files, sb_has_gvisor, sb_refresh_rulesets, sb_is_fork, sb_tun_native, tun_stack_tip, sb_version
 from .sb_switch import core_switch_job
 from .panel_update import self_rollback, self_update
 from .core_update import (
@@ -13359,6 +13461,8 @@ class SysAPI:
         from .core_cache import SB_VARIANTS, current_variant, prefetch_start, set_enabled, variants
         gh = load().get("gh_proxy") or ""
         act = b.get("action")
+        if any(not isinstance(b.get(k), (str, type(None))) for k in ("action", "core", "variant")):
+            return self.send(400, {"message": "参数无效"})  # 以前传成列表、对象时 `in` / 字典查找抛 TypeError 回 500
         if act == "prefetch_auto":  # 自动更新已下载的内核 开 / 关
             set_enabled(bool(b.get("enabled")))
             return self.reply(True, "已开启自动更新已下载的内核" if b.get("enabled") else "已关闭自动下载（切换到没下载过的内核时仍会自动下载）")
@@ -13539,6 +13643,14 @@ class SysAPI:
         prev = update(lambda d: d.update(new))
         d = load()
         msg = "已保存"
+        if "rulesets" in new:  # 新增 / 同名替换（换了地址、类型、格式）的规则集：不再沿用旧地址的缓存文件
+            changed = rs_changed(prev, d)
+            for n in changed:
+                drop_ruleset_cache(n)
+            if changed and active_core(d) == "singbox":
+                sb_refresh_rulesets(d, changed)
+            elif changed:
+                sb_drop_ruleset_files(d, changed)
         if set(b) & {"rulesets", "sub_interval", "region_groups", "ipv6", "sniffer"} or ("bypass" in b and d["proxy_mode"] == "tun"):
             ok, msg = reload_core(prev)
             if not ok:
