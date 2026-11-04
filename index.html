@@ -961,9 +961,10 @@ async function loadQS(){let px;try{px=await loadPX()}catch(e){$('#qs-card').clas
   const g=px[SEL];$('#qs-card').classList.toggle('hide',!g);if(!g)return;PROXIES=px;
   const ch=nowChain(SEL);$('#qs-now').textContent=ch.length?'当前：'+ch.join(' → '):'';
   const tested=grpTested(g.all);
-  $('#qs').innerHTML=g.all.map((n,j)=>{if(HIDEDEAD&&isHideable(n,g.now,tested))return '';const d=lastDelay(n),p=px[n]||{},sub=p.type==='Smart'?'智能竞技':p.now?'→ '+p.now:(p.type==='LoadBalance'?'负载均衡':'');
-    return `<div class="node ${n===g.now?'sel':''}" onclick="qsPick(${j})" title="${esc(n)}"><div class="n">${esc(n)}</div><div class="d"><span class="mut" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub)}</span><span class="${dcls(d)}">${dtxt(d)}</span></div></div>`}).join('')}
-async function qsPick(j){const n=PROXIES[SEL].all[j];try{await core('/proxies/'+encodeURIComponent(SEL),'PUT',{name:n});toast(SEL+' → '+n);loadQS()}catch(e){toast(e.message)}}
+  $('#qs').innerHTML=g.all.map(n=>{if(HIDEDEAD&&isHideable(n,g.now,tested))return '';const d=lastDelay(n),p=px[n]||{},sub=p.type==='Smart'?'智能竞技':p.now?'→ '+p.now:(p.type==='LoadBalance'?'负载均衡':'');
+    return `<div class="node ${n===g.now?'sel':''}" onclick="qsPick(${jsq(n)})" title="${esc(n)}"><div class="n">${esc(n)}</div><div class="d"><span class="mut" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub)}</span><span class="${dcls(d)}">${dtxt(d)}</span></div></div>`}).join('')}
+// 按名字切换（不按序号）：从节点页切回概览时 PROXIES 已被节点页换成新数据、这里的列表还没重画，序号会指到别的组
+async function qsPick(n){if(typeof n!=='string'||!n)return;try{await core('/proxies/'+encodeURIComponent(SEL),'PUT',{name:n});toast(SEL+' → '+n);loadQS()}catch(e){toast(e.message)}}
 async function qsTest(b){b.disabled=true;b.textContent='测速中…';
   const gs=[SEL].concat((PROXIES[SEL]?.all||[]).filter(n=>PROXIES[n]?.all));
   await Promise.all(gs.map(testGroupKeep));
@@ -1026,7 +1027,7 @@ async function loadIpInfo(){let j;try{j=await api('/api/ipinfo')}catch(e){IP_FAI
   $('#ipmask-btn').textContent=IPMASK?'显示 IP':'隐藏 IP'}
 function toggleIpMask(){IPMASK=!IPMASK;localStorage.setItem('ipmask',IPMASK?'1':'0');loadIpInfo()}
 // 每秒：/api/live（速率、累计、内存）；概览 / 连接页额外拉取连接列表
-// 页面不可见时全部暂停；连续失败按 2、4、8…最多 30 秒退避；连接页每秒拉完整连接列表（暂停时不拉），概览每 3 秒只拉连接数 / 设备数
+// 页面不可见时全部暂停；连续失败按 2、4、8…最多 30 秒退避；连接页每 2 秒拉完整连接列表（暂停时不拉），概览每 3 秒只拉连接数 / 设备数
 let _cn=0,_busy=false,_fail=0,_skip=0;
 async function tick(){
   if(document.hidden||_busy)return;if(_skip>0){_skip--;return}_busy=true;
@@ -1035,7 +1036,9 @@ async function tickOnce(){
   try{LIVE=await api('/api/live');renderHdr(LIVE);pushHist(LIVE.up||0,LIVE.down||0);_fail=0}
   catch(e){['#h-up','#h-down','#h-mem'].forEach(k=>$(k).textContent='-');_fail++;_skip=Math.min(30,2**_fail);return}
   _cn++;
-  if(TAB==='连接'&&!$('#c-pause').checked){
+  // 连接页每 2 秒拉一次：后端 /connections 快照本来就是 2 秒共享（1 秒拉一次有一半拿到同一份，速率一会 0 一会翻倍），
+  // 表格也是 2 秒重绘一次；减半后路由器上省掉一半的连接列表整理 + JSON 序列化 + gzip
+  if(TAB==='连接'&&!$('#c-pause').checked&&(_cn%2===0||!CONNS.length)){
     try{const c=await api('/api/conns');CONNS=c.connections||[];showConnStat(CONNS.length,new Set(CONNS.map(x=>x.metadata?.sourceIP).filter(Boolean)).size);
       renderConns(CONNS)}catch(e){$('#s-conn').textContent='-'}}
   else if(TAB==='概览'&&_cn%3===0){ // 概览只要两个数字：走轻量的 /api/conns/stats，不再拉完整连接列表
@@ -1232,10 +1235,10 @@ function renderCGList(){$('#cg-list').innerHTML=(GI.custom||[]).map((g,i)=>{cons
     ||'<tr><td colspan="5" class="mut">还没有自定义策略组。例如：把美国和日本节点合成一个「🎯 美日均衡」负载均衡组，或建一个「🎮 游戏」组给规则引用</td></tr>'}
 function newCG(){CGF={orig:'',name:'',icon:'',type:'select',proxies:[],filter:'',subs:true,expose:true,strategy:'consistent-hashing',interval:'',tolerance:''};openCG('新建策略组')}
 function editCG(i){const g=GI.custom[i];CGF=JSON.parse(JSON.stringify(Object.assign({strategy:'consistent-hashing',interval:'',tolerance:''},g,{orig:g.name})));
-  if(!CGF.interval)CGF.interval='';if(!CGF.tolerance)CGF.tolerance='';openCG('编辑策略组：'+g.name)}
+  if(!CGF.interval)CGF.interval='';if(CGF.tolerance==null)CGF.tolerance='';openCG('编辑策略组：'+g.name)}
 function openCG(t){$('#cg-title').textContent=t;$('#cg-form').classList.remove('hide');$('#cg-name').value=CGF.name;$('#cg-icon').value=CGF.icon||'';
   $('#cg-filter').value=CGF.filter||'';$('#cg-subs').checked=CGF.subs!==false;$('#cg-expose').checked=CGF.expose!==false;$('#cg-search').value='';
-  $('#cg-st').value=CGF.strategy==='round-robin'?'round-robin':'consistent-hashing';$('#cg-int').value=CGF.interval||'';$('#cg-tol').value=CGF.tolerance||'';
+  $('#cg-st').value=CGF.strategy==='round-robin'?'round-robin':'consistent-hashing';$('#cg-int').value=CGF.interval||'';$('#cg-tol').value=CGF.tolerance==null?'':CGF.tolerance;
   cgType();renderCGChosen();previewCG();$('#cg-form').scrollIntoView({behavior:'smooth',block:'start'})}
 function cgType(){$('#cg-lb-btn').classList.toggle('hide',!(GI.fork||CGF.type==='load-balance'));segv('#cg-type',CGF.type,v=>{CGF.type=v;cgType()});const t=CGF.type;$('#cg-adv').classList.toggle('hide',t==='select');
   $('#cg-tol').classList.toggle('hide',t!=='url-test');$('#cg-st').classList.toggle('hide',t!=='load-balance')}
@@ -1252,7 +1255,7 @@ function previewCG(){clearTimeout(_pv);_pv=setTimeout(async()=>{const f=$('#cg-f
     $('#cg-prev').innerHTML=`匹配 <b>${r.total}</b> / ${r.of} 个节点`+(r.matched.length?'：'+r.matched.slice(0,12).map(esc).join('、')+(r.total>12?' …':''):'')}
   catch(e){$('#cg-prev').innerHTML=`<span class="bad">${esc(e.message)}</span>`}},300)}
 async function saveCG(){const b=Object.assign({},CGF,{name:$('#cg-name').value.trim(),icon:$('#cg-icon').value.trim(),filter:$('#cg-filter').value.trim(),
-    subs:$('#cg-subs').checked,expose:$('#cg-expose').checked,strategy:$('#cg-st').value,interval:+$('#cg-int').value||0,tolerance:+$('#cg-tol').value||0});
+    subs:$('#cg-subs').checked,expose:$('#cg-expose').checked,strategy:$('#cg-st').value,interval:+$('#cg-int').value||0,tolerance:$('#cg-tol').value===''?null:+$('#cg-tol').value});
   if(!b.name)return toast('请填写名称');const btn=$('#cg-save');btn.disabled=true;
   try{toast('正在校验并应用…');const j=await api('/api/groups','POST',b);toast(j.message);closeCG();await loadGroupsPage()}catch(e){toast(e.message)}btn.disabled=false}
 async function delCG(i){const n=GI.custom[i].name;const refs=cgRefs(n);
@@ -1333,7 +1336,7 @@ async function ruleTest(){const t=$('#rt-target').value.trim();if(!t)return toas
     $('#rt-result').innerHTML=h}catch(e){$('#rt-result').innerHTML=`<span class="bad">${esc(e.message)}</span>`}b.disabled=false}
 
 // 广告拦截
-let AB=null,_abt=0;
+let AB=null,_abt=0,AB_SAVING=false;
 async function loadAB(){clearTimeout(_abt);try{AB=await api('/api/adblock')}catch(e){if(AB?.updating){_abt=setTimeout(loadAB,5000);return}return toast(e.message)}renderAB();if(AB.updating)_abt=setTimeout(loadAB,2500)}
 // 页面切回前台时重新拉一次状态（手机后台时轮询会被暂停或失败）
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&typeof TAB!=='undefined'&&TAB==='广告拦截')loadAB()})
@@ -1368,14 +1371,18 @@ function renderAB(){const a=AB;$('#ab-on').checked=a.enabled;$('#ab-on').onchang
   if(document.activeElement!==$('#ab-white'))$('#ab-white').value=a.white.join('\n');
   const top=a.stats.top||[],mx=top.length?top[0][1]:1;
   $('#ab-top').innerHTML=top.map(([d,n])=>`<tr><td class="w">${esc(d)}</td><td><div class="bar" style="width:${Math.max(2,n/mx*100)}%"></div></td><td>${n}</td></tr>`).join('')||'<tr><td class="mut" colspan="3">今天还没有拦截记录</td></tr>'}
-async function abSave(patch,msg){let ok=false;try{toast('正在应用…');const j=await api('/api/adblock','PUT',patch);toast(msg&&!/下载/.test(j.message||'')?msg:j.message);ok=true}catch(e){toast(e.message)}loadAB();return ok}
-function abPreset(i){const p=AB.presets[i];abSave({lists:abLists().concat([{name:p.name,url:p.url,enabled:true}]),enabled:true},'已添加 '+p.name)}
+async function abSave(patch,msg){AB_SAVING=true;let ok=false;try{toast('正在应用…');const j=await api('/api/adblock','PUT',patch);toast(msg&&!/下载/.test(j.message||'')?msg:j.message);ok=true}catch(e){toast(e.message)}
+  try{await loadAB()}finally{AB_SAVING=false}return ok}
+// 列表的增删 / 开关都提交整份列表（按当前 AB 拼出来）：上一次保存（含重载核心，要几秒）还没完成时再改，
+// 拼出来的列表里还是旧状态，会把上一次的修改覆盖回去（连点两个开关，第一个又被关回去）。保存期间先拦住
+function abBusy(){if(!AB_SAVING)return false;toast('正在应用上一次修改，请稍候再试');renderAB();return true}
+function abPreset(i){if(abBusy())return;const p=AB.presets[i];abSave({lists:abLists().concat([{name:p.name,url:p.url,enabled:true}]),enabled:true},'已添加 '+p.name)}
 // 保存成功后才清空输入框（以前先清空，失败时填的地址就没了）
-async function abAdd(){const url=$('#ab-url').value.trim(),name=$('#ab-name').value.trim();if(!/^https?:\/\//.test(url))return toast('请填写列表地址');
+async function abAdd(){if(abBusy())return;const url=$('#ab-url').value.trim(),name=$('#ab-name').value.trim();if(!/^https?:\/\//.test(url))return toast('请填写列表地址');
   if(AB.lists.some(l=>l.url===url))return toast('这个列表已经添加过了');
   if(await abSave({lists:abLists().concat([{name,url,enabled:true}])})){$('#ab-url').value='';$('#ab-name').value=''}}
-function abDel(i){if(!confirm('删除列表 '+AB.lists[i].name+'？'))return;const l=abLists();l.splice(i,1);abSave({lists:l},'已删除')}
-function abToggle(i,v){const l=abLists();l[i].enabled=v;abSave({lists:l},v?'已启用':'已停用')}
+function abDel(i){if(abBusy())return;if(!confirm('删除列表 '+AB.lists[i].name+'？'))return;const l=abLists();l.splice(i,1);abSave({lists:l},'已删除')}
+function abToggle(i,v){if(abBusy())return;const l=abLists();l[i].enabled=v;abSave({lists:l},v?'已启用':'已停用')}
 async function abUpdate(id){try{const j=await api('/api/adblock/update','POST',id?{ids:[id]}:{});toast(j.message)}catch(e){toast(e.message)}setTimeout(loadAB,800)}
 function abSaveBW(){abSave({black:lines($('#ab-black').value),black_cn:lines($('#ab-black-cn').value),black_proxy:lines($('#ab-black-proxy').value),white:lines($('#ab-white').value)},'自定义规则已生效')}
 async function abCheck(){const d=$('#ab-check').value.trim();if(!d)return toast('请输入域名');
@@ -1397,7 +1404,7 @@ function renderConns(list){const f=$('#c-filter').value.toLowerCase();const now=
   const rates=new Map(),next=new Map(),dt=_prevConnT?Math.max(1,(now-_prevConnT)/1000):1;
   for(const c of list){const p=prevConn.get(c.id);rates.set(c.id,p?[Math.max(0,c.download-p.d)/dt,Math.max(0,c.upload-p.u)/dt]:[0,0]);next.set(c.id,{d:c.download,u:c.upload})}
   prevConn=next;_prevConnT=now;
-  if(now-_lastConnRender<2000)return;
+  if(now-_lastConnRender<1500)return;  // 每 2 秒拉一次，阈值留出计时抖动（2000 会因为早到几毫秒隔一次跳过，变成 4 秒一画）
   _lastConnRender=now;
   $('#conns').innerHTML=list.filter(c=>!f||(JSON.stringify(c)+dname(c.metadata?.sourceIP)).toLowerCase().includes(f)).slice(0,300).map(c=>{const m=c.metadata||{};
     const r=rates.get(c.id),ds=r[0],us=r[1];
@@ -1883,13 +1890,15 @@ async function createBackup(btn){
   }catch(e){toast(e.message||"备份失败")}finally{if(btn)btn.disabled=false}
 }
 
+// 恢复后页面已换成备份里的 index.html（Python 后端还会自动重启面板）：等几秒刷新页面。
+// 以前判断后端从不返回的 j.ok，重启提示从来不出现；失败时只显示「恢复失败」，看不到原因
 async function restoreBackup(name){
-  if(!confirm("恢复到 "+name+"？\n\n会先自动备份当前版本，恢复后需重启面板生效。"))return;
-  try{
-    var j=await api("/api/backup/restore","POST",{name:name});
-    toast(j.message||"");
-    if(j.ok&&confirm("已恢复。是否现在重启面板？"))location.reload();
-  }catch(e){toast("恢复失败")}
+  if(!confirm("恢复到 "+name+"？\n\n会先自动备份当前版本，恢复后面板自动重启。"))return;
+  var j;
+  try{j=await api("/api/backup/restore","POST",{name:name})}
+  catch(e){toast("恢复失败："+e.message);loadBackups();return}
+  toast(j.message||"已恢复");
+  if(j.restart)setTimeout(function(){location.reload()},5000);else loadBackups();
 }
 
 async function delBackup(name){

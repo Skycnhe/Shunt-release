@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.16"
+PANEL_VERSION = "11.6.17"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.16"
+PANEL_VERSION = "11.6.17"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -407,6 +407,17 @@ def dl_check(url, via_proxy=False):
     """下载入口统一校验：目标非公网地址时抛 IOError（调用方已有通用异常处理）"""
     if url_host_forbidden(url, via_proxy=via_proxy):
         raise IOError(f"目标地址非公网，已拦截（SSRF 防护）：{urlsplit(url).hostname}")
+
+
+def read_full(r, limit):
+    """读 urllib 响应体，最多 limit 字节；连接提前断开（Content-Length 没收满）时抛 IOError。
+    http.client 的 read(n) 在对方中途断开时不报错，只返回已收到的部分：以前背景图只存下半张（浏览器只画出上半截），
+    订阅 / 规则集 / 广告列表只解析出前面一部分，节点或规则悄悄变少"""
+    data = r.read(limit)
+    left = getattr(r, "length", None)
+    if left and len(data) < limit:
+        raise IOError(f"下载不完整：连接中途断开（收到 {len(data)} 字节，还差 {left} 字节）")
+    return data
 
 
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -1339,7 +1350,7 @@ def provider_nodes(fresh=False):
     data = None
     if active_core() == "singbox":  # sing-box 的订阅由面板下载解析，节点名直接取缓存
         data = sb_provider_nodes(load())
-        _prov_set(now, data)
+        prov_set(now, data)
         return data
     j = None if os.environ.get("PANEL_OFFLINE") else core_json("/providers/proxies", timeout=3)
     if j is not None:
@@ -1354,11 +1365,12 @@ def provider_nodes(fresh=False):
                 log_err("保存订阅节点列表", e)
     if data is None:
         data = read_json(PROV_FILE, {})
-    _prov_set(now, data)
+    prov_set(now, data)
     return data
 
 
-def _prov_set(now, data):
+def prov_set(now, data):
+    """更新订阅节点名单缓存；名单有变化时 rev 加一。直接 PROV.update 不会推进 rev（与 Go groups.ProvUpdate 一致）"""
     if PROV["data"] is not None and data != PROV["data"]:
         PROV["rev"] += 1
     PROV.update(t=now, data=data)
@@ -1454,12 +1466,13 @@ def clean_custom_group(b):
     if t != "select":
         try:
             iv = int(b.get("interval") or 0)
-            tol = int(b.get("tolerance") or 0)
+            # 容差留空 = 跟随全局（策略组设置里的容差）；以前留空存成 0，全局改成 50 后自定义组仍按 0 频繁切换节点（同步 shunt v8.4.4）
+            tol = None if b.get("tolerance") in (None, "") else int(b.get("tolerance"))
         except (TypeError, ValueError):
             raise ValueError("测速间隔 / 容差必须是数字")
         if iv and not 30 <= iv <= 86400:
             raise ValueError("测速间隔应在 30–86400 秒之间")
-        if not 0 <= tol <= 1000:
+        if tol is not None and not 0 <= tol <= 1000:
             raise ValueError("容差应在 0–1000 ms 之间")
         g.update(interval=iv, tolerance=tol)
         if t == "load-balance":
@@ -2082,6 +2095,35 @@ def check_host_entry(h):
     return ""
 
 
+def dns_port_ok(s):
+    """DNS 地址里的端口是 1–65535 的数字、IPv6 方括号成对。DNS_RX 对带协议的地址只要求「非空白」：
+    以前 1.1.1.1:99999、udp://1.1.1.1:abc、tls://[::1 都能保存，生成 sing-box 配置时 urlsplit 抛 ValueError（Go 生成坏端口），
+    核心起不来、修改被回滚却只提示「生成配置失败」"""
+    base = s.split("#", 1)[0].strip()
+    if base.startswith(("system", "dhcp://", "rcode://")):
+        return True
+    host = re.sub(r"^[a-z0-9]+://", "", base).split("/", 1)[0]
+    if host.startswith("["):
+        end = host.find("]")
+        if end < 0:
+            return False
+        tail = host[end + 1:]
+        if not tail:
+            return True
+        if not tail.startswith(":"):
+            return False
+        port = tail[1:]
+    elif ":" in host:
+        if is_ip_addr(host):  # 裸 IPv6，不带端口
+            return True
+        h, _, port = host.rpartition(":")
+        if ":" in h:
+            return False
+    else:
+        return True
+    return bool(re.fullmatch(r"[0-9]{1,5}", port)) and 0 < int(port) < 65536
+
+
 def validate_dns(dc, d):
     pol = {g["name"] for g in build_config(dict(d, rules=[]))["proxy-groups"]} | BUILTIN_POLICIES | {n["proxy"]["name"] for n in d["nodes"]}
     errs = []
@@ -2089,6 +2131,8 @@ def validate_dns(dc, d):
         for s in dc.get(key) or []:
             if not DNS_RX.match(s) or s.startswith("rcode://"):
                 errs.append(f"{label} 格式无效：{s}")
+            elif not dns_port_ok(s):
+                errs.append(f"{label} 端口无效（应为 1–65535）：{s}")
             elif key == "default" and not re.match(r"^(?:(?:udp|tcp|tls|https)://)?\\[?[0-9a-fA-F:.]+\\]?(?::\\d+)?(?:/|$)", s):
                 errs.append(f"默认 DNS 必须是 IP（用于解析 DoH 域名）：{s}")
             elif key in ("default", "pserver") and dns_policy_of(s):
@@ -2117,6 +2161,8 @@ def validate_dns(dc, d):
         for s in pe.get("servers") or []:
             if not DNS_RX.match(s):
                 errs.append(f"nameserver-policy「{m}」的 DNS 格式无效：{s}")
+            elif not dns_port_ok(s):
+                errs.append(f"nameserver-policy「{m}」的 DNS 端口无效（应为 1–65535）：{s}")
             elif dns_policy_of(s) and dns_policy_of(s) not in pol:
                 errs.append(f"nameserver-policy「{m}」引用的策略组不存在：{s}")
     if not dc.get("direct"):
@@ -2463,7 +2509,7 @@ def clean_fields(b, keys):
     return out
 '''
 _SRC['shunt.core'] = '''"""核心交互"""
-import itertools, os, threading, time
+import itertools, json, os, threading, time
 
 from .base import CONF_DIR, LOCK, wd_hold
 from .errlog import log_err
@@ -2644,9 +2690,12 @@ def refresh_regions():
     if active_core() == "singbox":
         cur = read_json(SB_CONF, None)
         new = build_singbox(load())[0]
-        sig = lambda c: [(o["tag"], tuple(o.get("outbounds") or [])) for o in (c or {}).get("outbounds") or [] if o.get("outbounds")]
+        # 比较全部出站（节点参数 + 策略组成员），按 JSON 往返后的形式比：sing-box 的订阅由面板下载后写进配置，
+        # 机场换了节点的密码 / 服务器 / 端口但名字不变时，以前只比策略组成员，判定「无变化」不重载，
+        # 核心一直用旧参数连接（手动「更新」订阅也一样），节点全部不通（同步 shunt v8.4.2）
+        sig = lambda c: json.dumps((c or {}).get("outbounds") or [], ensure_ascii=False, sort_keys=True)
         if cur and sig(cur) == sig(new):
-            return True, "地区分组无变化"
+            return True, "节点与地区分组无变化"
         ok, msg = reload_core()
         return ok, "地区分组已按最新订阅节点更新" if ok else msg
     cur = read_json(os.path.join(CONF_DIR, "config.yaml"), None)
@@ -2792,7 +2841,7 @@ def write_core_file(kind):
 
 '''
 _SRC['shunt.sb_yaml'] = '''"""极简 YAML 读取（只为解析 Clash 订阅里的 proxies 列表；面板保持零依赖）"""
-import json, re
+import copy, json, re
 def _y_strip_comment(s):
     q = None
     for i, ch in enumerate(s):
@@ -2941,7 +2990,8 @@ def _y_depth(s):
     return n
 
 
-_FLOW_KEY = re.compile(r"""^\\s*(?:-\\s+)*(?:(?:"(?:[^"\\\\]|\\\\.)*"|'[^']*'|[^\\s'"{}\\[\\],:#-][^:#]*?|-[^\\s:#][^:#]*?)\\s*:\\s+)?""")
+_FLOW_KEY = re.compile(r"""^\\s*(?:-\\s+)*(?:(?:"(?:[^"\\\\]|\\\\.)*"|'[^']*'|[^\\s'"{}\\[\\],:#&*-][^:#]*?|-[^\\s:#][^:#]*?)\\s*:\\s+)?(?:&[^\\s{}\\[\\],]+\\s+)?""")
+_ANCHOR = re.compile(r"^&([^\\s{}\\[\\],]+)(?:\\s+|$)")
 
 
 def _y_flow_start(c):
@@ -2952,7 +3002,8 @@ def _y_flow_start(c):
 
 
 def yaml_lite(text):
-    """块状 / 流式映射与列表、引号字符串、注释；不支持锚点等高级语法"""
+    """块状 / 流式映射与列表、引号字符串、注释、锚点 &a / 别名 *a / 合并键 <<: *a（机场常用来复用节点参数）。
+    以前不认锚点：「- &a {name: …}」整条被当成一个字符串、「- &a」后面的块状节点整段丢掉，没有 PyYAML 的设备上这些节点静默消失"""
     raw = []
     for line in text.replace("\\t", "  ").splitlines():
         if line.strip() in ("---", "...") or not line.strip() or line.lstrip().startswith("#"):
@@ -2991,12 +3042,47 @@ def yaml_lite(text):
         m = re.match(r"^([^:{}\\[\\],]+?)\\s*:(?:\\s+(.*)|$)", t)
         return (m.group(1).strip(), (m.group(2) or "").strip()) if m else None
 
+    anchors = {}
+
+    def anchor(v):
+        """去掉值开头的锚点 &a，返回 (锚点名或 None, 剩下的值)"""
+        m = _ANCHOR.match(v)
+        return (m.group(1), v[m.end():].strip()) if m else (None, v)
+
+    def alias(v):
+        if isinstance(v, str) and re.fullmatch(r"\\*[^\\s{}\\[\\],]+", v):
+            return copy.deepcopy(anchors[v[1:]]) if v[1:] in anchors else v
+        if isinstance(v, dict):
+            return merge({k: alias(x) for k, x in v.items()})
+        if isinstance(v, list):
+            return [alias(x) for x in v]
+        return v
+
+    def merge(m):
+        """<<: *a / <<: [*a, *b]：合并进来，自己写的键优先"""
+        if "<<" not in m:
+            return m
+        src = m.pop("<<")
+        out = {}
+        for x in (src if isinstance(src, list) else [src]):
+            if isinstance(x, dict):
+                out.update({k: v for k, v in x.items() if k not in out})
+        out.update(m)
+        return out
+
     def inline(v, raw=False):
+        name, v = anchor(v)
         if v.startswith(("{", "[")):
-            return _y_flow(v)[0]
-        if v in ("|", ">", "|-", ">-"):
-            return ""
-        return _y_raw(v) if raw else _y_scalar(v)
+            r = alias(_y_flow(v)[0])
+        elif v in ("|", ">", "|-", ">-"):
+            r = ""
+        elif raw and v and not v.startswith("*"):
+            r = _y_raw(v)
+        else:
+            r = alias(_y_scalar(v)) if v else None
+        if name:
+            anchors[name] = r
+        return r
 
     def block(i, ind):
         if i >= len(lines):
@@ -3005,6 +3091,19 @@ def yaml_lite(text):
             out = []
             while i < len(lines) and lines[i][0] == ind and (lines[i][1].startswith("- ") or lines[i][1] == "-"):
                 rest = lines[i][1][1:].strip()
+                name, rest = anchor(rest)
+                if name and not rest:  # 「- &a」后面跟块状映射
+                    if i + 1 < len(lines) and lines[i + 1][0] > ind:
+                        v, i = block(i + 1, lines[i + 1][0])
+                    else:
+                        v, i = None, i + 1
+                    anchors[name] = v
+                    out.append(v)
+                    continue
+                if name:
+                    rest = "&" + name + " " + rest  # 行内值：交给 inline 记录锚点
+                    if not rest[len(name) + 2:].startswith(("{", "[")) and split_kv(rest[len(name) + 2:]) is not None:
+                        rest = rest[len(name) + 2:]  # 「- &a key: v」锚点给整个映射：少见，按普通映射解析（锚点不记录）
                 if not rest:
                     if i + 1 < len(lines) and lines[i + 1][0] > ind:
                         v, i = block(i + 1, lines[i + 1][0])
@@ -3012,7 +3111,7 @@ def yaml_lite(text):
                         v, i = None, i + 1
                     out.append(v)
                     continue
-                kv = None if rest.startswith(("{", "[")) else split_kv(rest)
+                kv = None if rest.startswith(("{", "[", "&")) else split_kv(rest)
                 if kv is None:
                     out.append(inline(rest))
                     i += 1
@@ -3030,7 +3129,14 @@ def yaml_lite(text):
                 continue
             k, v = kv
             i += 1
-            if v and v not in ("|", ">", "|-", ">-"):
+            name, rest = anchor(v) if v else (None, v)
+            if name and not rest:  # 「key: &a」后面跟块状值
+                if i < len(lines) and (lines[i][0] > ind or (lines[i][0] == ind and lines[i][1].startswith("- "))):
+                    out[str(k)], i = block(i, lines[i][0])
+                else:
+                    out[str(k)] = None
+                anchors[name] = out[str(k)]
+            elif v and v not in ("|", ">", "|-", ">-"):
                 out[str(k)] = inline(v, raw_key(k))
             elif i < len(lines) and (lines[i][0] > ind or (lines[i][0] == ind and lines[i][1].startswith("- "))):
                 if v in ("|", ">", "|-", ">-"):
@@ -3043,7 +3149,7 @@ def yaml_lite(text):
                     out[str(k)], i = block(i, lines[i][0])
             else:
                 out[str(k)] = None
-        return out, i
+        return merge(out), i
 
     if not lines:
         return None
@@ -3146,6 +3252,9 @@ def _yaml_items(sec):
     return out
 
 
+_ALIAS_RX = re.compile(r"(?:^|[\\s\\[{,:])\\*[^\\s{}\\[\\],]+")  # YAML 别名 *a
+
+
 def sub_yaml(text):
     """Clash/mihomo 订阅 → {"proxies": [...], "proxy-providers": {...}}，尽量容错"""
     y = _yaml_full(text)
@@ -3161,6 +3270,15 @@ def sub_yaml(text):
             v = (yaml_lite(sec) or {}).get(key)
         except Exception:
             v = None
+        if key == "proxies" and _ALIAS_RX.search(sec):
+            # 节点引用了别名 *a：锚点常定义在 proxies 之外的顶层键里（x-common: &c …），只解析 proxies 段落时
+            # 别名解析不出来，节点缺 type / server 被整条丢掉。这时按整份文本再解析一次，节点不少于段落解析的就用它
+            try:
+                vf = (yaml_lite(text) or {}).get(key)
+            except Exception:
+                vf = None
+            if isinstance(vf, list) and len(vf) >= (len(v) if isinstance(v, list) else 0):
+                v = vf
         if key == "proxies":
             n_items = sum(1 for x in sec.splitlines() if re.match(r"^\\s*-\\s", x))
             if not isinstance(v, list) or len(v) < n_items:
@@ -3245,8 +3363,48 @@ def _sub_get(url, ua):
     raise IOError(str(last)[:120])
 
 
+def _sub_nodes_save(s, nodes, errs, info, ua, note=""):
+    """按订阅的筛选 / 排除过滤后写入面板缓存；返回 (节点数, 消息)"""
+    flt, exc = s.get("filter") or "", s.get("exclude", DEFAULT_EXCLUDE) or ""
+    rf, re_ = rx(flt) if flt else None, rx(exc) if exc else None
+    nodes = [p for p in nodes if (not rf or rf.search(p["name"])) and not (re_ and re_.search(p["name"]))]
+    ui = {}
+    for part in info.split(";"):
+        k, _, v = part.strip().partition("=")
+        if k in ("upload", "download", "total", "expire") and v.strip().isdigit():
+            ui[k.capitalize()] = int(v)
+    write_json(sub_cache_path(s["name"]), {"name": s["name"], "updated": int(time.time()), "nodes": nodes,
+                                           "info": ui, "skipped": len(errs), "ua": ua})
+    return len(nodes), note + f"{len(nodes)} 个节点" + (f"（{len(errs)} 条无法识别已跳过）" if errs else "")
+
+
+def _mihomo_cache_fallback(s, ua):
+    """所有 UA 都没解析出节点时，用 mihomo 以前下载的 ./providers/<名>.yaml 兜底（刚从 mihomo 切到 sing-box 时用得上）。
+    只在面板还没有这个订阅的缓存、或 mihomo 的缓存比面板缓存新时才用：以前只要第一个 UA 没解析出节点就直接读它，
+    不再试下一个 UA，并照常报「N 个节点」——mihomo 缓存往往是切换内核前的旧文件，订阅明明换了节点，
+    「更新」一直显示成功、节点却一直是旧的。返回 (节点, 错误) 或 None"""
+    cache = os.path.join(CONF_DIR, "providers", safe(s["name"]) + ".yaml")
+    try:
+        mt = os.path.getmtime(cache)
+    except OSError:
+        return None
+    try:
+        if os.path.getmtime(sub_cache_path(s["name"])) >= mt:
+            return None
+    except OSError:
+        pass
+    try:
+        with open(cache, encoding="utf-8", errors="ignore") as f:
+            nodes, errs = parse_sub_text(f.read(), lambda u, _ua=ua: _sub_get(u, _ua))
+    except (OSError, ValueError):
+        return None
+    return (nodes, errs) if nodes else None
+
+
 def sb_fetch_sub(s, gh=""):
-    """下载并解析一个订阅，写入缓存；返回 (节点数, 消息)"""
+    """下载并解析一个订阅，写入缓存；返回 (节点数, 消息)。
+    依次试 SB_UA 里的每个 UA（每个 UA 先代理后直连），第一个解析出节点的结果写入缓存；
+    全部失败时抛 IOError，面板缓存里上次的节点保持不变（不会把旧节点当成这次更新的结果报成功）"""
     last = ""
     for ua in SB_UA:
         try:
@@ -3279,27 +3437,14 @@ def sb_fetch_sub(s, gh=""):
                         os.chmod(dbg, 0o600)
                 except OSError:
                     pass
-                # mihomo 已下载过这个订阅时，用它的缓存兜底
-                cache = os.path.join(CONF_DIR, "providers", safe(s["name"]) + ".yaml")
-                if os.path.isfile(cache):
-                    with open(cache, encoding="utf-8", errors="ignore") as f:
-                        nodes, errs = parse_sub_text(f.read(), lambda u, _ua=ua: _sub_get(u, _ua))
-                if not nodes:
-                    continue
-            flt, exc = s.get("filter") or "", s.get("exclude", DEFAULT_EXCLUDE) or ""
-            rf, re_ = rx(flt) if flt else None, rx(exc) if exc else None
-            nodes = [p for p in nodes if (not rf or rf.search(p["name"])) and not (re_ and re_.search(p["name"]))]
-            ui = {}
-            for part in info.split(";"):
-                k, _, v = part.strip().partition("=")
-                if k in ("upload", "download", "total", "expire") and v.strip().isdigit():
-                    ui[k.capitalize()] = int(v)
-            write_json(sub_cache_path(s["name"]), {"name": s["name"], "updated": int(time.time()), "nodes": nodes,
-                                                   "info": ui, "skipped": len(errs), "ua": ua})
-            return len(nodes), f"{len(nodes)} 个节点" + (f"（{len(errs)} 条无法识别已跳过）" if errs else "")
+                continue  # 换下一个 UA 再试（机场常按 UA 返回不同格式）
+            return _sub_nodes_save(s, nodes, errs, info, ua)
         except Exception as e:
             last = str(e)[:150]
-    raise IOError(last or "下载失败")
+    fb = _mihomo_cache_fallback(s, SB_UA[0])
+    if fb is not None:
+        return _sub_nodes_save(s, fb[0], fb[1], "", "", f"订阅这次没有解析出节点（{(last or '下载失败')[:80]}），暂用 mihomo 之前下载的缓存：")
+    raise IOError((last or "下载失败") + ("（已保留上次的节点）" if os.path.isfile(sub_cache_path(s["name"])) else ""))
 
 
 def sb_update_subs(names=None, d=None):
@@ -3328,7 +3473,10 @@ def sb_update_subs(names=None, d=None):
     with res_lock:  # 超时还没结束的线程之后再写结果也不影响这里返回的快照
         ok_out = list(ok)
         bad_out = list(bad) + [f"{s['name']}：下载超时" for s, t in zip(subs, ths) if t.is_alive()]
-    PROV.update(t=0, data=None)
+    # 只让缓存过期、保留旧名单：下次 provider_nodes 拿新名单与它比较，有变化才能推进 provider_rev()。
+    # 以前把 data 清成 None，比较时没有旧名单，rev 永远不变：sing-box 下订阅更新出新地区后，/api/state 的策略组名单
+    # （策略下拉框、按设备分流目标）一直按旧缓存返回，直到下次改设置（同步 shunt）
+    PROV["t"] = 0
     return ok_out, bad_out
 
 
@@ -3925,7 +4073,9 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
         if h["domain"].startswith(("+.", "*.")) or not ips:
             warn.append(f"hosts「{h['domain']}」sing-box 只支持精确域名 → IP，已跳过")
             continue
-        exact[h["domain"]] = ips
+        # 同一域名写了多条（如一条 IPv4、一条 IPv6）：与 mihomo_hosts 一样合并去重。以前后一条覆盖前一条，sing-box 下丢记录
+        vals = exact.setdefault(h["domain"], [])
+        vals += [v for v in ips if v not in vals]
     if exact:
         servers.append({"type": "hosts", "tag": "dns-hosts", "predefined": exact})
         # 放在最前：mihomo 的 hosts 先于 nameserver-policy / 广告拦截生效；以前排在 DNS 策略之后，
@@ -3981,7 +4131,7 @@ from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, wd_hold)
 from .errlog import log_tail
 from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, safe, write_json
-from .groups import PROV, gcfg, rx
+from .groups import gcfg, prov_set, rx
 from .mihomo import BUILTIN_GEO, build_config, build_rule_providers, dns_cfg, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .devroute import mark_applied
@@ -3997,7 +4147,8 @@ from .notify import core_alive
 def build_singbox(d):
     """把 build_config 生成的 mihomo 结构翻译成 sing-box 配置；返回 (配置, 警告列表, 需要的规则集文件)"""
     sub_out = sb_sub_outbounds(d)
-    PROV.update(t=time.time(), data={k: [n for n, _ in v] for k, v in sub_out.items()})
+    # 经 prov_set 写入：名单变了要推进 provider_rev()，/api/state 的策略组缓存和 /api/ping 版本号才会更新（与 Go 一致）
+    prov_set(time.time(), {k: [n for n, _ in v] for k, v in sub_out.items()})
     cfg = build_config(d)
     v6 = bool(d.get("ipv6"))
     gc = gcfg(d)
@@ -4564,6 +4715,23 @@ def sb_sync_assets(d, force=False, need=None):
     return bad
 
 
+def rs_changed(prev, d):
+    """/api/settings 保存规则集：新增的、或地址 / 类型 / 格式变了（同名替换）的规则集名"""
+    def sig(r):
+        return r.get("url"), r.get("behavior", "domain"), r.get("format", "yaml")
+    old = {r.get("name"): sig(r) for r in (prev or {}).get("rulesets") or [] if isinstance(r, dict)}
+    return [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and old.get(r.get("name")) != sig(r)]
+
+
+def sb_refresh_rulesets(d, names):
+    """新增 / 换了地址、类型、格式的规则集立即（强制）下载转换；返回失败列表。
+    以前本地已有同名文件（rs-<名>.json）就一直沿用旧地址、旧类型转换出的内容，要等定时更新或手动「更新」才换；
+    新加的规则集也要等到那时才下载，这期间引用它的规则被当成「尚未下载」跳过"""
+    want = set(names)
+    need = {k: v for k, v in sb_rule_need(d).items() if k in want and v.get("kind") != "adblock"}
+    return sb_sync_assets(d, force=True, need=need) if need else []
+
+
 def write_sb_config(d, path=None):
     os.makedirs(SB_DIR, exist_ok=True)
     conf, warn, _ = build_singbox(d)
@@ -4855,7 +5023,7 @@ from .sb_subs import sb_update_subs
 from .sb_config import check_sb_config, sb_is_fork, sb_sync_assets, sb_version, write_sb_config
 from .core_update import QUIET, CORE_FAIL_LOG, _cu, copy_replace, core_fail_log, gh_atom_tags, gh_get, open_url, pick_tag, release_digest
 from .sysopt import sh, svc_restart
-from .notify import core_alive
+from .notify import WD, core_alive
 def sb_arch():
     m = os.uname().machine
     return {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64", "armv7l": "armv7", "armv8l": "armv7", "armv6l": "armv6",
@@ -5108,14 +5276,14 @@ def sb_update_job(channel, gh, force=False):
         if not changed:
             CORE_UPD.update(ok=True, message=f"已是最新版本 {nv}，无需更新")
             return
-        sb_apply_new(nv)
+        note = sb_apply_new(nv)
         try:
             from .core_cache import remember_current
             remember_current()  # 新程序也存进对应版本的缓存，切走再切回来不用重新下载
         except Exception as e:
             print("cache sing-box error", e, flush=True)
         kind = fork_name(sb_version()) + "，已开启多节点聚合" if sb_is_fork() else "官方版"
-        CORE_UPD.update(ok=True, message=f"sing-box 已从 {cur or '未安装'} 更新到 {nv}（{kind}）" + ("，旧版本已备份" if cur else ""))
+        CORE_UPD.update(ok=True, message=f"sing-box 已从 {cur or '未安装'} 更新到 {nv}（{kind}）" + ("，旧版本已备份" if cur else "") + (f"（{note}）" if note else ""))
     except Exception as e:
         CORE_UPD.update(ok=False, message=str(e))
     finally:
@@ -5140,8 +5308,8 @@ def sb_switch_variant_job(var, gh):
             cv, _ = CC.ensure_variant(var, gh)
             _cu("下载 " + label, 62, f"已下载 {label} {cv}")
         CC.activate_variant(var)
-        sb_apply_new(cv)
-        CORE_UPD.update(ok=True, message=f"已切换：{old} {cur or ''} → {label} {cv}".replace("  ", " "))
+        note = sb_apply_new(cv)
+        CORE_UPD.update(ok=True, message=f"已切换：{old} {cur or ''} → {label} {cv}".replace("  ", " ") + (f"（{note}）" if note else ""))
     except Exception as e:
         CORE_UPD.update(ok=False, message=str(e))
     finally:
@@ -5150,8 +5318,12 @@ def sb_switch_variant_job(var, gh):
         CORE_UPD["busy"] = False
 
 
+MANUAL_NOTE = "核心已手动停止，没有替你启动；下次启动核心时使用新程序"
+
+
 def sb_apply_new(nv):
-    """SB_BIN 已换成新程序（旧的在 .bak）：按新内核重新生成并校验配置、重启核心；不兼容或 30 秒内没响应时换回 .bak 并抛错"""
+    """SB_BIN 已换成新程序（旧的在 .bak）：按新内核重新生成并校验配置、重启核心；不兼容或 30 秒内没响应时换回 .bak 并抛错。
+    返回提示：非空表示核心被手动停止，只替换了程序、没有替用户把核心拉起来"""
     _cu("校验", 70, f"用 sing-box {nv} 检查当前配置")
     if active_core() == "singbox":
         write_sb_config(load())  # 官方版 ↔ 魔改版：负载均衡组（loadbalance / urltest）按新内核重新生成
@@ -5160,6 +5332,9 @@ def sb_apply_new(nv):
             copy_replace(SB_BIN + ".bak", SB_BIN)
             write_sb_config(load())
             raise ValueError(f"sing-box {nv} 不兼容当前配置，已恢复原版本：" + err)
+        if WD["manual_stop"]:  # 用户手动停止了核心：只替换程序，不替用户把核心拉起来（与定时重启、保存设置一致）
+            _cu("完成", 95, f"已替换为 sing-box {nv}（{MANUAL_NOTE}）")
+            return MANUAL_NOTE
         _cu("重启核心", 85, "正在重启核心")
         svc_restart(timeout=90)
         for _ in range(30):
@@ -5172,6 +5347,7 @@ def sb_apply_new(nv):
             write_sb_config(load())
             svc_restart(timeout=90)
             raise ValueError(f"sing-box {nv} 30 秒内未响应，已恢复原版本。" + ("报错：" + log if log else "完整日志见 " + CORE_FAIL_LOG))
+    return ""
 
 
 '''
@@ -5600,7 +5776,7 @@ def restore(name):
                     keep_password(pw)
             finally:
                 shutil.rmtree(tmpd, ignore_errors=True)
-        return True, "已恢复到 %s（已自动备份当前版本 %s）。恢复 server.py 后需重启面板生效。" % (name, cur)
+        return True, "已恢复到 %s（已自动备份当前版本 %s）。" % (name, cur)
     except Exception as e:
         return False, "恢复失败：%s" % e
 '''
@@ -7437,7 +7613,8 @@ def set_manual_stop(on):
 def wd_counts(events=None):
     """记录里的自动重启 / 切换直连 / 恢复次数"""
     c = {"restart": 0, "direct": 0, "recover": 0}
-    for e in (WD["events"] if events is None else events):
+    # list() 在 C 层一次拷完：直接遍历 deque 时看门狗线程 appendleft 会抛「deque mutated during iteration」，/api/state 偶发 500
+    for e in list(WD["events"] if events is None else events):
         k = e.get("kind")
         if k in c:
             c[k] += 1
@@ -7614,6 +7791,29 @@ def watchdog_tick():
     if WD["manual_stop"]:
         WD["status"] = "stopped"
         return
+    # core_alive_confirmed 最长要二十多秒，这期间可能开始了热重载（SIGHUP，设置 WD_HOLD）/ 内核更新 / 用户点了停止：
+    # 只在 tick 开头查一次的话，会把重载中短暂不通的核心当成卡死，SIGQUIT 杀掉（Fake-IP 映射来不及写进 cache.db）再重启
+    if _wd_yield():
+        return
+    # 拿服务锁再动手（重启、SIGQUIT 现场、撤透明代理）：拿不到说明面板 / 定时任务正在启停核心，这一轮跳过
+    if not SVC_OP.acquire(blocking=False):
+        return
+    try:
+        if _wd_yield():  # 拿锁前的瞬间可能刚开始重载 / 刚被手动停止
+            return
+        _wd_fail(d, cname)
+    finally:
+        SVC_OP.release()
+
+
+def _wd_yield():
+    """看门狗该让路：内核更新中、面板正在重启 / 重载核心（WD_HOLD）、核心被手动停止"""
+    return bool(CORE_UPD["busy"]) or time.time() < WD_HOLD["until"] or bool(WD["manual_stop"])
+
+
+def _wd_fail(d, cname):
+    """确认核心无响应后的处理（调用方已持有 SVC_OP）：前 2 次自动重启，之后撤透明代理直连，每 5 分钟再试一次"""
+    redirecting = d["proxy_mode"] != "off"
     WD["fails"] += 1
     if WD["fails"] <= 2:
         WD["status"] = "restarting"
@@ -7662,10 +7862,16 @@ def check_nodes():
     if not pg:
         return
     code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=30)
+    # 只有 200（逐个节点的结果）和 504（全部节点超时）是测速结论；502 等是核心没应答（重载 / 重启中、请求超时），
+    # 以前也当成「全部超时」，会误发一条「所有节点均测速超时」，下一轮又发「已恢复」
+    if code not in (200, 504):
+        return
     try:
         res = json.loads(raw) if code == 200 else {}
     except Exception:
-        res = {}
+        return
+    if not isinstance(res, dict):
+        return
     all_down = not any(v for v in res.values() if isinstance(v, int) and v > 0)
     st = load_notified()
     if all_down != bool(st.get("allnodes")):
@@ -7778,6 +7984,33 @@ def retest_soon(wait=6):
     threading.Thread(target=run, daemon=True).start()
 
 
+_BG_LOCK = threading.Lock()
+
+
+def _bg_write(raw):
+    """写背景图：上传与每日刷新 / 链接下载可能同时发生，以前共用 bg.img.tmp，两边各自 truncate + 写同一个文件，
+    换上去的可能是两张图拼起来的坏文件（只显示出一部分）（同步 shunt v8.4.6）"""
+    with _BG_LOCK:
+        tmp = f"{BG_FILE}.tmp{threading.get_ident()}"
+        try:
+            with open(tmp, "wb") as f:
+                f.write(raw)
+            os.replace(tmp, BG_FILE)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+def _read_full(r, limit):
+    """读 urllib 响应体，最多 limit 字节；连接提前断开（Content-Length 没收满）时抛 IOError。
+    http.client 的 read(n) 在对方中途断开时不报错、只返回已收到的部分：以前背景图只存下半张（页面只画出上半截）"""
+    data = r.read(limit)
+    left = getattr(r, "length", None)
+    if left and len(data) < limit:
+        raise IOError(f"下载不完整：连接中途断开（收到 {len(data)} 字节，还差 {left} 字节）")
+    return data
+
+
 def bg_save(data_url):
     """data:image/...;base64,xxx → 保存背景图；只接受 JPEG / PNG / WebP / GIF"""
     m = re.match(r"data:image/[\\w.+-]+;base64,(.+)$", str(data_url or ""), re.S)
@@ -7791,10 +8024,7 @@ def bg_save(data_url):
         return False, "图片不能超过 8MB"
     if bg_type(raw[:16]) is None:
         return False, "只支持 JPG / PNG / WebP / GIF"
-    tmp = BG_FILE + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(raw)
-    os.replace(tmp, BG_FILE)
+    _bg_write(raw)
     return True, "背景图已保存"
 
 
@@ -7838,7 +8068,7 @@ def bg_fetch(url):
         req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "image/avif,image/webp,image/*,*/*;q=0.8"})
         try:
             with proxy_opener(proxy).open(req, timeout=20) as r:
-                raw = r.read(BG_MAX + 1)
+                raw = _read_full(r, BG_MAX + 1)
             break
         except urllib.error.HTTPError as e:
             err = f"HTTP {e.code}"
@@ -7850,10 +8080,7 @@ def bg_fetch(url):
         return False, "图片不能超过 8MB"
     if bg_type(raw[:16]) is None:
         return False, "链接返回的不是 JPG / PNG / WebP / GIF 图片"
-    tmp = BG_FILE + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(raw)
-    os.replace(tmp, BG_FILE)
+    _bg_write(raw)
     return True, "背景图已下载到路由器"
 
 
@@ -8646,7 +8873,7 @@ from collections import deque
 from urllib.parse import quote
 
 from .errlog import log_err
-from .base import AB_DIR, AB_STATS_FILE, CONF_DIR, FAKEIP_NETS, UA, dl_check, udp_dns_query
+from .base import AB_DIR, AB_STATS_FILE, CONF_DIR, FAKEIP_NETS, UA, dl_check, read_full, udp_dns_query
 from .data import load, read_json, write_json
 from .mihomo import build_config
 from .core import reload_core
@@ -8828,7 +9055,7 @@ def download(url, timeout=60, limit=40 << 20, gh=None):
             try:
                 req = urllib.request.Request(u, headers={"User-Agent": UA})
                 with proxy_opener(use_proxy).open(req, timeout=timeout) as r:
-                    data = r.read(limit + 1)
+                    data = read_full(r, limit + 1)
                     if len(data) > limit:
                         raise ValueError("文件过大（超过 40MB）")
                     return data.decode("utf-8", "ignore")
@@ -8839,7 +9066,7 @@ def download(url, timeout=60, limit=40 << 20, gh=None):
     raise IOError("；".join(errs)[:300] or "下载失败")
 
 
-def ab_fetch(lst, late=None):
+def ab_fetch(lst, late=None, sfx=".new"):
     """下载并转换一个列表，写入 <id>.txt / <id>.allow.txt，返回 meta。late 置位（整体超时）后不再写文件"""
     text = download(lst["url"])
     bs, be, as_, ae, skipped = parse_filter(text)
@@ -8849,7 +9076,7 @@ def ab_fetch(lst, late=None):
         raise ValueError("没有解析出任何域名，确认是 AdGuard / hosts / 域名列表格式")
     if late is not None and late.is_set():
         raise IOError("下载超时")
-    sfx = ".new" if late is not None else ""  # 并发更新：先写 .new，由调用方在锁内确认没超时再换上
+    sfx = sfx if late is not None else ""  # 并发更新：先写 .new，由调用方在锁内确认没超时再换上
     write_lines(os.path.join(AB_DIR, lst["id"] + ".txt" + sfx), lines)
     write_lines(os.path.join(AB_DIR, lst["id"] + ".allow.txt" + sfx), alines)
     return {"count": n, "allow": na, "skipped": skipped, "updated": int(time.time()), "error": "", "parser": AB_PARSER}
@@ -8926,6 +9153,9 @@ def adblock_update(ids=None, apply=True):
         res = {}
         res_lock = threading.Lock()
         late = threading.Event()
+        # 临时文件带本次更新的随机后缀：上一轮超时还卡着的线程迟到后清理半成品时，以前会删掉这一轮同名的 .new，
+        # 这一轮就换不上新列表（meta 却记成已更新），或只换上 .txt 没换上 .allow.txt
+        tag = ".new." + secrets.token_hex(4)
 
         def fail(l, err):
             m = dict(meta.get(l["id"]) or {})
@@ -8934,7 +9164,7 @@ def adblock_update(ids=None, apply=True):
 
         def one(l):
             try:
-                r = ab_fetch(l, late)
+                r = ab_fetch(l, late, tag)
             except Exception as e:
                 r = fail(l, str(e)[:200])
             with res_lock:
@@ -8942,12 +9172,12 @@ def adblock_update(ids=None, apply=True):
                 if not late.is_set():
                     if not r.get("error"):
                         for p in new:
-                            if os.path.exists(p + ".new"):
-                                os.replace(p + ".new", p)
+                            if os.path.exists(p + tag):
+                                os.replace(p + tag, p)
                     res[l["id"]] = r
                 for p in new:  # 迟到 / 失败留下的半成品
-                    if os.path.exists(p + ".new"):
-                        os.remove(p + ".new")
+                    if os.path.exists(p + tag):
+                        os.remove(p + tag)
         ths = [threading.Thread(target=one, args=(l,), daemon=True) for l in lists]
         [t.start() for t in ths]
         end = time.time() + AB_WAIT  # 整体最多等 AB_WAIT 秒（以前逐个 join(150)，几个列表都卡住时要等 N×150 秒）
@@ -9275,7 +9505,9 @@ class AdStats:
             name = "shunt-%s.%s" % (secrets.token_hex(4), base)
             st = time.time()
             if sb:
-                ok = udp_dns_query(name, 1053, timeout=8)
+                # 查 TXT 而不是 A：fake-ip 模式下 A / AAAA 由 dns-fake 立即返回假地址，以前测出来恒为 1~2 ms，
+                # 还每分钟往 Fake-IP 映射表里塞两个随机域名；TXT 照常按国内 / 国外分流到真实上游
+                ok = udp_dns_query(name, 1053, timeout=8, qtype=16)
             else:
                 code, _ = core("GET", f"/dns/query?name={name}&type=A", timeout=8)
                 ok = code == 200
@@ -9585,7 +9817,7 @@ def subs_update(names=None, d=None, where=None):
     else:
         okl, bad = [], []
         for nm in names or [s["name"] for s in d["subs"]]:
-            code, raw = core("PUT", "/providers/proxies/" + quote(nm), timeout=120)
+            code, raw = core("PUT", "/providers/proxies/" + quote(nm, safe=""), timeout=120)  # 名称里的「/」也要转义（与 Go url.PathEscape 一致）
             if code >= 300:
                 bad.append(nm + "：" + raw.decode(errors="ignore")[:100])
             else:
@@ -10613,7 +10845,7 @@ def restore_selections():
         g2, now2 = mp.get(g, g), mp.get(now, now)
         p = proxies.get(g2) or {}
         if p.get("type") == "Selector" and now2 in (p.get("all") or []) and p.get("now") != now2:
-            code, _ = core("PUT", "/proxies/" + quote(g2), {"name": now2})
+            code, _ = core("PUT", "/proxies/" + quote(g2, safe=""), {"name": now2})  # 组名可含「/」（与 Go url.PathEscape 一致）
             n += code < 300
     try:
         os.remove(SEL_FILE)
@@ -11146,7 +11378,7 @@ from . import adblock, stats
 from .base import (
     AB_DIR, AB_PRESETS, BUILTIN_POLICIES, CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, GROUP_TYPES, G_MANUAL, G_SEL, HC, KEY,
     LB_STRATEGIES, LOCK, MAX_BODY, PANEL_VERSION, PRIMARY_REGIONS, PROXY_MODES, REGIONS, SVC, TPROXY_SH,
-    TUN_STACKS, upd_begin, upd_busy_msg, wd_hold
+    TUN_STACKS, UPD_STATE, upd_begin, upd_busy_msg, wd_hold
 )
 from .data import HISTORY_FILE, HISTORY_SKIP, auto_name, config_version, lb_names, load, migrate_names, read_json, region_lb_set, save, update
 from .links import add_links, q1, reserved_names
@@ -11156,7 +11388,7 @@ from .core import conns_snapshot, refresh_after_sub, refresh_regions, reload_cor
 from .corehttp import core, core_json
 from .sb_common import CORES, SB_BIN, SB_ONLY, SB_STATE, active_core, core_conf_path
 from .sb_subs import sb_update_subs
-from .sb_config import build_singbox, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, sb_rule_need, sb_sync_assets, sb_version, write_active_config
+from .sb_config import build_singbox, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, rs_changed, sb_refresh_rulesets, sb_rule_need, sb_sync_assets, sb_version, write_active_config
 from .sb_switch import CHANNELS as SB_CHANNELS, sb_arch, sb_remote_version, sb_update_job
 from .panel_update import self_rollback, self_update
 from .core_update import CORE_UPD, core_job_start, core_upd_status
@@ -11837,6 +12069,16 @@ class H(BaseHTTPRequestHandler):
         cur = load()["adblock"]
         lists = []
         seen = set()
+        # 形状校验：lists 里混了非对象、black/white 不是列表时以前回 500；black 是字符串时还会被逐字符拆成条目
+        if not isinstance(b.get("lists", []), list) or not all(isinstance(x, dict) for x in b.get("lists", [])):
+            return self.send(400, {"message": "列表格式不正确"})
+        for key in ("black", "black_cn", "black_proxy", "white"):
+            if not isinstance(b.get(key, []), list):
+                return self.send(400, {"message": "黑名单 / 白名单格式不正确"})
+        try:
+            int(b.get("interval", cur["interval"]) or 0)
+        except (TypeError, ValueError):
+            return self.send(400, {"message": "更新间隔无效"})
         for l in b.get("lists", cur["lists"]):
             url = str(l.get("url") or "").strip()
             name = str(l.get("name") or "").strip()[:40] or (url.split("/")[2] if url.count("/") >= 2 else "")
@@ -11853,7 +12095,7 @@ class H(BaseHTTPRequestHandler):
             if scope != "all":
                 item["scope"] = scope  # 默认的「全部」不写入，旧配置 / 旧前端提交的列表保持原样
             lists.append(item)
-        clean = lambda xs: [x.strip() for x in xs if str(x).strip()][:20000]
+        clean = lambda xs: [str(x).strip() for x in xs if str(x).strip()][:20000]
         new = {"enabled": bool(b.get("enabled", cur["enabled"])), "lists": lists,
                "black": clean(b.get("black", cur["black"])), "white": clean(b.get("white", cur["white"])),
                "black_cn": clean(b.get("black_cn", cur.get("black_cn") or [])),
@@ -12037,6 +12279,8 @@ class H(BaseHTTPRequestHandler):
 
     def api(self, m, p, q):
         b = self.body() if m in ("POST", "PUT", "PATCH", "DELETE") else {}  # 请求体已在 route() 里完整读入
+        if not isinstance(b, dict):  # [1] / "x" / 123 这类合法 JSON：以前各接口 b.get 抛 AttributeError，回 500 并写一条错误堆栈
+            return self.send(400, {"message": "请求体必须是 JSON 对象"})
         # 透传到 mihomo external-controller
         if p.startswith("/api/core/") and active_core() == "singbox":
             sub = p[len("/api/core"):]
@@ -12353,6 +12597,8 @@ class H(BaseHTTPRequestHandler):
         from .sb_switch import sb_switch_variant_job
         gh = load().get("gh_proxy") or ""
         act = b.get("action")
+        if any(not isinstance(b.get(k), (str, type(None))) for k in ("action", "variant")):
+            return self.send(400, {"message": "参数无效"})  # 以前 action / variant 传成列表、对象时 `in` / 字典查找抛 TypeError 回 500
         if act == "prefetch_auto":
             set_enabled(bool(b.get("enabled")))
             return self.reply(True, "已开启自动更新已下载的内核" if b.get("enabled") else "已关闭自动下载（切换到没下载过的版本时仍会自动下载）")
@@ -12419,7 +12665,7 @@ class H(BaseHTTPRequestHandler):
 
     @api_route("/api/subs", "POST")
     def api_subs_post(self, m, p, b, q):
-        name, url = (b.get("name") or "").strip(), (b.get("url") or "").strip()
+        name, url = str(b.get("name") or "").strip(), str(b.get("url") or "").strip()
         cur = next((s for s in load()["subs"] if isinstance(s, dict) and s.get("name") == name), None)
         if cur:  # 编辑订阅时表单里是打码后的 URL：没改就沿用原链接
             url = unmask(url, cur.get("url"), mask_url)
@@ -12428,7 +12674,7 @@ class H(BaseHTTPRequestHandler):
         other = sub_name_clash(name, [s.get("name") for s in load()["subs"] if isinstance(s, dict) and s.get("name")])
         if other:
             return self.send(400, {"message": f"与已有订阅「{other}」只差符号，会共用同一个缓存文件，请改个名字"})
-        flt, exc = (b.get("filter") or "").strip(), (b["exclude"] if "exclude" in b else DEFAULT_EXCLUDE).strip()
+        flt, exc = str(b.get("filter") or "").strip(), str(b["exclude"] if "exclude" in b else DEFAULT_EXCLUDE).strip()
         for pat in (flt, exc):
             try:
                 re.compile(pat)
@@ -12455,7 +12701,7 @@ class H(BaseHTTPRequestHandler):
     @api_route("/api/nodes", "POST")
     def api_nodes_post(self, m, p, b, q):
         d = load()
-        added, errs = add_links(b.get("links") or "", d["nodes"], d)
+        added, errs = add_links(str(b.get("links") or ""), d["nodes"], d)
         if not added:
             return self.send(400, {"message": "没有可导入的节点" + ("：\\n" + "\\n".join(errs) if errs else "")})
         prev = update(lambda d: d["nodes"].extend(added))
@@ -12476,7 +12722,11 @@ class H(BaseHTTPRequestHandler):
 
     @api_route("/api/rules", "PUT")
     def api_rules_put(self, m, p, b, q):
-        rules = [r.strip() for r in b.get("rules", []) if r.strip()]
+        rules_in = b.get("rules")
+        # 必须是文本列表：以前缺省 / 传成数字、对象时 500（Go 版则当成空列表把全部规则清空）；列表里的非文本条目同样拒绝
+        if not isinstance(rules_in, list) or not all(isinstance(r, str) for r in rules_in):
+            return self.send(400, {"message": "rules 必须是规则文本列表"})
+        rules = [r.strip() for r in rules_in if r.strip()]
         bad = bad_rule_policies([r for r in rules if not r.startswith("#")], load())
         if bad:
             return self.send(400, {"message": "以下规则的策略不存在：" + "；".join(bad[:5])})
@@ -12582,7 +12832,7 @@ class H(BaseHTTPRequestHandler):
     @api_route("/api/adblock/check", "POST")
     def api_adblock_check_post(self, m, p, b, q):
         try:
-            return self.send(200, ab_check(b.get("domain") or ""))
+            return self.send(200, ab_check(str(b.get("domain") or "")))
         except ValueError as e:  # 无效域名：给出原因，不再 500「内部错误」
             return self.send(400, {"message": str(e)})
 
@@ -12618,8 +12868,8 @@ class H(BaseHTTPRequestHandler):
 
     @api_route("/api/dnsquery", "POST")
     def api_dnsquery_post(self, m, p, b, q):
-        name = clean_target(b.get("name") or "")
-        qtype = (b.get("type") or "A").upper()
+        name = clean_target(str(b.get("name") or ""))
+        qtype = str(b.get("type") or "A").upper()
         if not name or qtype not in ("A", "AAAA", "CNAME", "MX", "TXT", "NS", "HTTPS", "SRV", "PTR"):
             return self.send(400, {"message": "请输入域名并选择记录类型"})
         st = time.time()
@@ -12674,7 +12924,11 @@ class H(BaseHTTPRequestHandler):
             if v and not re.fullmatch(r"([01]\\d|2[0-3]):[0-5]\\d", v):
                 return self.send(400, {"message": f"时间格式应为 HH:MM：{v}"})
             sc[k] = v
-        sc["latency"] = int(b.get("latency") or 0) if int(b.get("latency") or 0) in (0, 10, 30, 60, 180) else 0
+        try:  # latency:"abc" / [1] 以前 int() 抛异常回 500
+            lat = int(b.get("latency") or 0)
+        except (TypeError, ValueError):
+            return self.send(400, {"message": "定时测速间隔无效"})
+        sc["latency"] = lat if lat in (0, 10, 30, 60, 180) else 0
         update(lambda d: d.update(schedule=sc))
         return self.send(200, {"message": "定时任务已保存"})
 
@@ -12746,6 +13000,8 @@ class H(BaseHTTPRequestHandler):
         prev = update(lambda d: d.update(new))
         d = load()
         msg = "已保存"
+        if "rulesets" in new:  # 新增 / 同名替换（换了地址、类型、格式）的规则集先下载好，否则沿用旧内容或被跳过
+            sb_refresh_rulesets(d, rs_changed(prev, d))
         if set(b) & {"rulesets", "sub_interval", "region_groups", "ipv6", "sniffer", "device_routes"} or ("bypass" in b and d["proxy_mode"] == "tun"):
             ok, msg = reload_core(prev)
             if not ok:
@@ -12797,14 +13053,40 @@ class H(BaseHTTPRequestHandler):
 
     @api_route("/api/backup/restore", "POST")
     def api_backup_restore(self, m, p, b, q):
+        # 与面板在线更新 / 内核更新互斥：以前恢复不占忙标志，与在线更新同时进行时两边交替覆盖 server.py / index.html，
+        # 可能留下新旧混合的文件（同步 shunt v8.4.6）
+        if not upd_begin("panel"):
+            return self.send(409, {"message": upd_busy_msg()})
+        try:
+            return self._backup_restore(b)
+        finally:
+            UPD_STATE["busy"] = False
+
+    def _backup_restore(self, b):
         from . import backup as backup_mod
-        ok, msg = backup_mod.restore((b.get("name") or "").strip())
-        return self.reply(ok, msg)
+        name = str(b.get("name") or "").strip()
+        prev = load()
+        ok, msg = backup_mod.restore(name)
+        if not ok:
+            if msg in ("非法文件名", "不是有效的备份文件", "备份不存在"):  # 参数问题返回 400 / 404，不是 500
+                return self.send(404 if msg == "备份不存在" else 400, {"message": msg})
+            return self.send(500, {"message": msg, "ok": False, "restart": False})
+        # data.json 已换成备份里的：以前不重载核心，正在运行的配置与面板显示的设置对不上，直到下一次保存；
+        # 备份里的设置生成不了配置时 reload_core 把 data.json 回滚到恢复前
+        ab_compose(load())
+        rok, rmsg = reload_core(prev)
+        if rok:
+            tp_apply()
+        msg += ("核心已重载：" if rok else "设置已撤销：") + rmsg
+        # index.html 按修改时间立即换成备份版本，正在运行的却还是当前的 server.py：不重启就是新旧前后端混跑。
+        # 以前要用户自己重启，前端的「是否现在重启」又判断了后端从不返回的 j.ok，从来不会出现
+        restart_self()
+        return self.send(200, {"message": msg + "；面板正在重启", "ok": rok, "restart": True})
 
     @api_route("/api/backup/delete", "POST")
     def api_backup_delete(self, m, p, b, q):
         from . import backup as backup_mod
-        ok, msg = backup_mod.delete((b.get("name") or "").strip())
+        ok, msg = backup_mod.delete(str(b.get("name") or "").strip())
         if not ok and msg in ("非法文件名", "不是有效的备份文件", "备份不存在"):  # 参数问题返回 400 / 404，不是 500
             return self.send(404 if msg == "备份不存在" else 400, {"message": msg})
         return self.reply(ok, msg)
@@ -12828,7 +13110,7 @@ class H(BaseHTTPRequestHandler):
     @api_route("/api/health/unhide", "POST")
     def api_health_unhide(self, m, p, b, q):
         from . import health as health_mod
-        name = (b.get("node_id") or "").strip()
+        name = str(b.get("node_id") or "").strip()
         ok = health_mod.unhide(name) if name else False
         if not ok:  # 404 而不是 500：不是服务器内部错误
             return self.send(404, {"message": "节点不存在"})
