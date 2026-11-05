@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.20"
+PANEL_VERSION = "8.10.21"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.20"
+PANEL_VERSION = "8.10.21"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1943,6 +1943,8 @@ def mihomo_rules(d, policies, dc):
     rules = pre + guard + [NTP_RULE] + ab_rules + [x for x in custom if x] + rs_rules + [
         "GEOSITE,private,DIRECT", "GEOIP,private,DIRECT,no-resolve", "RULE-SET,cn-apps,DIRECT",
         f"GEOSITE,category-ai-!cn,{G_AI}", f"GEOSITE,netflix,{G_NF}", f"GEOIP,netflix,{G_NF},no-resolve",
+        # 国行机的 Play 下载走 services.googleapis.cn，直连时被指到 Google 国内 CDN（*.xn--ngstr-lra8j.com），下载卡在 99%：两者走 Google 组
+        f"DOMAIN-SUFFIX,googleapis.cn,{G_GG}", f"DOMAIN-SUFFIX,xn--ngstr-lra8j.com,{G_GG}",
         f"GEOSITE,youtube,{G_YT}", f"GEOSITE,google,{G_GG}", f"GEOIP,google,{G_GG},no-resolve",
         f"GEOSITE,telegram,{G_TG}", f"GEOIP,telegram,{G_TG},no-resolve",
         # Cloudflare 1.1.1.1 / 1.0.0.1 国内直连常被运营商干扰：固定走节点选择，不随漏网之鱼直连
