@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.19"
+PANEL_VERSION = "11.6.20"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.19"
+PANEL_VERSION = "11.6.20"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -492,7 +492,7 @@ def log_tail(path, nbytes=16 * 1024):
         return None
 '''
 _SRC['shunt.data'] = '''"""数据"""
-import copy, json, os, re, secrets, threading, time
+import copy, hashlib, json, os, re, secrets, threading, time
 
 from .base import (
     AUTO_SUFFIX, AUTO_TAIL, AUTO_TAIL_OLD, DATA_FILE, DEFAULT, G_AUTO, G_OTHER, LB_PREFIX, LB_SUFFIX, LB_TAIL, LEGACY_AUTO, LOCK,
@@ -853,6 +853,37 @@ def write_json(path, obj, mode=0o600):
 def safe(name):
     return re.sub(r"[^\\w\\-]", "_", name) or "sub"
 
+
+def rs_safe(name):
+    """规则集缓存文件名（rs-<这个>.json / .srs、mihomo 的 rules/<这个>.yaml）。
+    以前直接用 safe(name)：「A.B」「A B」「A_B」这类只差符号的规则集名共用同一个缓存文件，互相覆盖。
+    现在名字本身就是安全字符时照旧（已下载的缓存不用重下），否则在后面加「.」+ 名字 SHA-1 的前 8 位；
+    「.」会被 safe() 换掉，原样保留的名字里不可能有，两种写法不会撞名"""
+    s = safe(name)
+    return s if s == name else s + "." + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+
+
+def adopt_rs_files(names, file):
+    """把按旧文件名（safe）存的规则集缓存接到新文件名（rs_safe）上（硬链接，失败再改名），免得升级后重新下载。
+    file(安全名) 返回完整路径；旧文件名被多个规则集共用（本来就互相覆盖）时不知道是谁的，不接，等重新下载"""
+    count = {}
+    for n in names:
+        count[safe(n)] = count.get(safe(n), 0) + 1
+    for n in names:
+        old, cur = safe(n), rs_safe(n)
+        if old == cur or count[old] != 1:
+            continue
+        op, np = file(old), file(cur)
+        if os.path.exists(np) or not os.path.isfile(op):
+            continue
+        try:
+            os.link(op, np)
+        except OSError:
+            try:
+                os.rename(op, np)
+            except OSError:
+                pass
+
 '''
 _SRC['shunt.links'] = '''"""单节点链接解析"""
 import base64, json, re
@@ -1162,6 +1193,36 @@ from .base import AB_DIR
 DOMAIN_RX = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_\\-]{0,61}[a-z0-9_])?\\.)+(?:[a-z]{2,63}|xn--[a-z0-9\\-]{1,59})$")
 
 
+_IDN_DOTS = str.maketrans({"\\u3002": ".", "\\uff0e": ".", "\\uff61": "."})  # 。．｡ 按 IDNA 当成点
+
+
+def idn_ascii(s):
+    """中文 / 国际化域名 → punycode（例子.中国 → xn--fsqu00a.xn--fiqs8s）；本来就是 ASCII 的原样返回，转换不了返回空串。
+    逐段转换（xn-- + RFC 3492 punycode），ASCII 段（含通配符「*」「?」）不动；与 Go ruleutil.IdnASCII 逐字一致。
+    sing-box / mihomo 按 ASCII 域名匹配：以前「DOMAIN-SUFFIX,例子.中国」「||例子.cn^」原样写进配置永远不命中，
+    广告列表里的中文域名被当成非法条目跳过"""
+    if s.isascii():
+        return s
+    out = []
+    for lab in s.translate(_IDN_DOTS).lower().split("."):
+        if lab.isascii():
+            out.append(lab)
+            continue
+        try:
+            out.append("xn--" + lab.encode("punycode").decode("ascii"))
+        except (UnicodeError, ValueError):
+            return ""
+    return ".".join(out)
+
+
+INLINE_COMMENT_RX = re.compile(r"\\s+[#!].*$")
+
+
+def strip_inline_comment(line):
+    """「规则 # 注释」「规则 ! 注释」：去掉空白后的行尾注释，保留规则（以前整行被当成无法识别跳过）"""
+    return INLINE_COMMENT_RX.sub("", line)
+
+
 def rule_policy_index(parts):
     i = len(parts) - 1
     while i > 0 and parts[i].strip().lower() in ("no-resolve", "src"):
@@ -1216,6 +1277,7 @@ def dns_policy_of(server):
 def _mh_domain(x):
     """mihomo 域名通配（+.a.com / *.a.com / a.*.com / img?.a.com）→ (sing-box 字段, 值)"""
     x = x.strip().lower()
+    x = idn_ascii(x) or x
     pre = ""
     if x.startswith("+."):  # 自身及所有子域
         x, pre = x[2:], r"(?:[^.]+\\.)*"
@@ -1487,7 +1549,9 @@ _SRC['shunt.devroute'] = '''"""按设备分流：把指定设备（IP / 网段 /
 data.json 的 device_routes：[{name, ip, mac, target, enabled}]，ip 与 mac 二选一。
 生成配置时转换成排在规则前部的 SRC-IP-CIDR 规则（sing-box 由 sb_config 按同一份 mihomo 规则翻译成 source_ip_cidr）；
 MAC 在生成时按 ARP 表（开启 IPv6 时再加 IPv6 邻居表）解析成当前 IP：设备以旁路由为网关就一定在 ARP 表里，不读 DHCP 租约。
-设备换了 IP 时，定时任务循环（schedule.sched_loop，每分钟）发现解析结果与上次写入配置时不同就重载核心。"""
+设备换了 IP 时，定时任务循环（schedule.sched_loop，每分钟）按新解析结果算出「实际生效的设备规则」，与上次写入配置时的
+不同才重载核心（v11.6.20 起比较的是生成的规则而不是 MAC → IP 表：目标不存在被跳过的条目、被前面规则覆盖的地址变了不重载），
+并且要连续两次检查结果相同（设备换 IP 期间 ARP / 邻居表常连变几次）才重载，几分钟内的多次变化合并成一次（见 schedule.devroute_tick）。"""
 import ipaddress, json, os, re, subprocess, threading
 
 from .base import PANEL_DIR
@@ -1497,7 +1561,8 @@ ROUTES_MAX = 500
 MAC_RX = re.compile(r"([0-9a-f]{2}:){5}[0-9a-f]{2}")
 APPLIED_FILE = os.path.join(PANEL_DIR, "devroute_applied.json")
 SEEN = {}  # mac -> 上次解析到的 IP 列表：设备暂时不在 ARP 表里（休眠）时沿用，不让规则时有时无、核心反复重载
-STATE = {"last": None, "applied": None, "loaded": False}  # last：最近一次生成配置时的 MAC 解析结果；applied：写入正式配置时的
+# last：最近一次生成配置时的签名 {"v": 2, "rules": 设备规则, "targets": 当时存在的目标, "map": MAC → IP}；applied：写入正式配置时的
+STATE = {"last": None, "applied": None, "loaded": False}
 _LOGGED = set()  # 已记过日志的跳过原因（生成配置很频繁，同一原因只记一次）
 _LOCK = threading.Lock()
 
@@ -1633,25 +1698,34 @@ def device_route_rules(d, policies, tables=None):
     目标策略组不存在、MAC 解析不到 IP 的条目跳过（记日志），不会生成无法加载的配置。同一地址只取第一条"""
     entries = _entries(d)
     mapping = mac_mapping(d, tables) if any(e["mac"] for e in entries) else {}
-    STATE["last"] = _sig(mapping)
-    rules, used = [], set()
+    rules = _rules(entries, mapping, policies, log=True)
+    STATE["last"] = {"v": 2, "rules": rules, "targets": sorted({e["target"] for e in entries if e["target"] in policies}),
+                     "map": _sig(mapping)}
+    return rules
+
+
+def _rules(entries, mapping, policies, log=False):
+    """条目 + MAC 解析结果 → 设备规则。地址被前面的规则（同一地址或更大的网段）覆盖时不再生成：按顺序匹配，后面那条永远不会命中"""
+    rules, used = [], []
     for e in entries:
         tgt = e["target"]
         if tgt not in policies:
-            _log_once(("tgt", e["name"], tgt), f"「{e['name']}」的目标「{tgt}」不存在，已跳过")
+            if log:
+                _log_once(("tgt", e["name"], tgt), f"「{e['name']}」的目标「{tgt}」不存在，已跳过")
             continue
         if e["ip"]:
             nets = [e["ip"]]
         else:
             nets = mapping.get(e["mac"]) or []
             if not nets:
-                _log_once(("mac", e["mac"]), f"「{e['name']}」（{e['mac']}）当前找不到 IP，暂不生效")
+                if log:
+                    _log_once(("mac", e["mac"]), f"「{e['name']}」（{e['mac']}）当前找不到 IP，暂不生效")
                 continue
         for x in nets:
             n = ipaddress.ip_network(x, strict=False)
-            if n in used:
+            if any(n.version == u.version and n.subnet_of(u) for u in used):
                 continue
-            used.add(n)
+            used.append(n)
             rules.append(f"SRC-IP-CIDR,{n},{tgt}")
     return rules
 
@@ -1665,7 +1739,7 @@ def mark_applied():
     sig = STATE["last"]
     STATE.update(applied=sig, loaded=True)
     try:
-        if sig or os.path.isfile(APPLIED_FILE):
+        if (sig and sig.get("map")) or os.path.isfile(APPLIED_FILE):  # 没有 MAC 条目（也没有旧记录）时不写文件
             os.makedirs(os.path.dirname(APPLIED_FILE), exist_ok=True)
             with open(APPLIED_FILE + ".tmp", "w") as f:
                 json.dump(sig or {}, f)
@@ -1687,11 +1761,20 @@ def applied_sig():
 
 
 def mac_changed(d):
-    """MAC 条目解析出的 IP 与当前配置里的不同 → 返回新的解析结果 {mac: [IP]}，没变返回 None（定时任务循环据此重载核心）"""
-    if not any(e["mac"] for e in _entries(d)):
+    """MAC 条目的 IP 变了、且实际生效的设备规则因此不同 → 返回新的设备规则列表，没变返回 None（定时任务循环据此重载核心）。
+    目标是否存在按写入配置时记下的（targets），不必重新生成整份配置。v11.6.19 及以前的记录（只有 MAC → IP 表）按旧办法比较"""
+    entries = _entries(d)
+    if not any(e["mac"] for e in entries):
         return None
-    cur = _sig(mac_mapping(d))
-    return cur if cur != (applied_sig() or {}) else None
+    mapping = mac_mapping(d)
+    ap = applied_sig() or {}
+    if ap.get("v") != 2:  # 旧版记录：比较 MAC → IP 表
+        cur = _sig(mapping)
+        if cur == ap:
+            return None
+        return _rules(entries, mapping, {e["target"] for e in entries})
+    cur = _rules(entries, mapping, set(ap.get("targets") or []))
+    return cur if cur != (ap.get("rules") or []) else None
 
 
 def _link():
@@ -1706,7 +1789,7 @@ from .base import (
     G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
     TUN_DEFAULT, TUN_STACKS
 )
-from .data import LB_KINDS, auto_name, lb_name, region_label, safe
+from .data import LB_KINDS, auto_name, lb_name, region_label, rs_safe, safe
 from .devroute import device_route_rules, mark_applied
 from .groups import clean_custom_group, gcfg, group_opts, region_plan, rx
 from .ruleutil import DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, dns_policy_of, rule_policy_index, split_rule
@@ -1848,7 +1931,7 @@ def build_rule_providers(d, dc):
     for r in d.get("rulesets", []):
         ext = {"mrs": "mrs", "text": "list"}.get(r.get("format"), "yaml")
         rule_providers[r["name"]] = {"type": "http", "behavior": r.get("behavior", "domain"), "format": r.get("format", "yaml"),
-                                     "url": r["url"], "path": f"./rules/{safe(r['name'])}.{ext}", "interval": 86400}
+                                     "url": r["url"], "path": f"./rules/{rs_safe(r['name'])}.{ext}", "interval": 86400}
     ab_prov, ab_rules = adblock_providers(d)
     rule_providers.update(ab_prov)
     rule_providers["cn-apps"] = {"type": "inline", "behavior": "domain", "payload": list(CN_APP_DOMAINS)}
@@ -2513,7 +2596,7 @@ def clean_fields(b, keys):
     return out
 '''
 _SRC['shunt.core'] = '''"""核心交互"""
-import itertools, json, os, threading, time
+import itertools, json, os, shutil, threading, time
 
 from .base import CONF_DIR, LOCK, wd_hold
 from .errlog import log_err
@@ -2522,7 +2605,7 @@ from .data import config_version, load, read_json, save
 from .groups import provider_nodes
 from .mihomo import build_config, check_config, write_config
 from .sb_common import SB_CONF, active_core
-from .sb_config import build_singbox, check_sb_config, sb_hot_reload, sb_log_error, sb_rule_need, sb_running_current, sb_sync_assets, write_sb_config
+from .sb_config import build_singbox, check_sb_config, core_pid, sb_fetch_new, sb_hot_reload, sb_log_error, sb_rule_need, sb_running_current, sb_sync_assets, write_sb_config
 from .sysopt import svc_restart
 from .notify import WD, core_alive
 
@@ -2607,6 +2690,17 @@ def _reload_core(prev, force=False):
     # 新配置与磁盘上的完全相同、且运行中的进程加载的就是这份文件时，跳过重载，连接不断
     tmp = None
     unchanged = False
+    if prev is not None and not os.environ.get("PANEL_OFFLINE"):
+        # 新引用的规则集（如刚加的 GEOSITE 规则）先下载好再生成配置，否则这次生成时会被当成「尚未下载」跳过。
+        # 在锁外下载；PANEL_OFFLINE（单元测试 / 生成配置自检）不联网
+        try:
+            d0 = load()
+            if active_core(d0) == "singbox":
+                bad = sb_fetch_new(prev, d0)
+                if bad:
+                    log_err("下载新引用的规则集", "；".join(bad)[:300])
+        except Exception as e:
+            log_err("下载新引用的规则集", e)
     try:
         for i in range(RELOAD_TRIES):
             last = i == RELOAD_TRIES - 1
@@ -2636,6 +2730,8 @@ def _reload_core(prev, force=False):
                     tmp = None
                     unchanged = True
                     break
+                if sb:
+                    _keep_old(final)
                 os.replace(tmp, final)
                 tmp = None
                 break
@@ -2648,16 +2744,27 @@ def _reload_core(prev, force=False):
     if unchanged:
         return True, "配置无变化，规则集文件已由 sing-box 自动重新加载（连接不中断）"
     if WD["manual_stop"]:  # 用户手动停止了核心：只写配置，不替用户把核心拉起来（与 refresh_regions 一致）
+        _drop_old(final)
         return True, "配置已保存；核心已手动停止，下次启动时生效"
     retest_soon()
     if sb:
+        pid0 = core_pid()
         ok, msg = sb_hot_reload()
-        if not ok and prev is not None:  # 配置能通过 sing-box check 但运行时启动失败（如内核缺少模块）：撤销并恢复
-            tail = sb_log_error()
-            _rollback(prev, sb=True)
-            svc_restart(timeout=90)
-            return False, "sing-box 启动失败，已撤销本次修改" + ("：" + tail if tail else "")
-        return ok, msg
+        if ok or prev is None:
+            _drop_old(final)
+            return ok, msg
+        # 配置能通过 sing-box check 但运行时被拒 / 启动失败（如内核缺少模块）：撤销并恢复。
+        # sing-box 收到 SIGHUP 先 check 新配置，被拒时旧实例原样继续运行（同一进程、控制端口照常应答）：
+        # 这时只把 data.json 和配置文件（原文件、原修改时间）放回去，不重启核心 —— 以前照样 svc_restart，
+        # 白白再断一次网。进程退出 / 换了进程 / 控制端口不应答（核心真的挂了）才重启
+        tail = sb_log_error()
+        suffix = "：" + tail if tail else ""
+        if pid0 and core_pid() == pid0 and core_alive() and _restore_old(prev, final):
+            return False, "sing-box 拒绝了新配置，已撤销本次修改（核心仍在用原配置运行，未重启）" + suffix
+        _drop_old(final)
+        _rollback(prev, sb=True)
+        svc_restart(timeout=90)
+        return False, "sing-box 启动失败，已撤销本次修改" + suffix
     wd_hold(45, "mihomo 重载配置")
     code, body = core("PUT", "/configs?force=true", {"path": final}, timeout=30)
     if code == 502:  # 核心没在跑，尝试启动
@@ -2672,6 +2779,44 @@ def _reload_core(prev, force=False):
         core("PUT", "/configs?force=true", {"path": final}, timeout=30)
         return False, "mihomo 重载失败，已撤销本次修改：" + (text[:300] or str(code))
     return True, text or "配置已重载"
+
+
+def _keep_old(final):
+    """替换 sing-box 正式配置前留一份原文件（硬链接，保留原 inode 与修改时间）：新配置被运行中的核心拒绝时原样放回，
+    sb_running_current 仍能判断出「运行中的进程加载的就是磁盘上这份」，下次不必为相同配置再 SIGHUP"""
+    old = final + ".old"
+    try:
+        os.remove(old)
+    except OSError:
+        pass
+    try:
+        os.link(final, old)
+    except OSError:
+        try:
+            shutil.copy2(final, old)
+        except OSError:
+            pass
+
+
+def _drop_old(final):
+    try:
+        os.remove(final + ".old")
+    except OSError:
+        pass
+
+
+def _restore_old(prev, final):
+    """data.json 退回 prev，配置文件换回 _keep_old 留下的原文件；没有原文件返回 False（交给 _rollback 重新生成）"""
+    with LOCK:
+        if not os.path.exists(final + ".old"):
+            return False
+        save(prev)
+        try:
+            os.replace(final + ".old", final)
+        except OSError as e:
+            log_err("撤销 sing-box 配置", e)
+            return False
+    return True
 
 
 def _same_file(a, b):
@@ -3675,7 +3820,7 @@ _SRC['shunt.sb_rules'] = '''"""规则：mihomo 规则字符串 → sing-box 路�
 import ipaddress
 import re
 
-from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, split_rule
+from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, idn_ascii, split_rule
 from .sb_common import SB_GEO
 
 # 值里可能带逗号的规则类型：mihomo 把类型与策略之间的所有项拼回去当值（如 DOMAIN-REGEX,^a{1,3}\\.com$）
@@ -3739,16 +3884,18 @@ class SBRules:
         """单个匹配条件 → sing-box 规则字段（dict）；不支持时返回 None。
         src：规则带「,src」参数（mihomo 按来源地址匹配 IP-CIDR / GEOIP / RULE-SET），以前被忽略、当成目标地址匹配"""
         typ, val = typ.strip().upper(), val.strip()
-        if typ == "DOMAIN":
-            return {"domain": [val.lower()]}
+        if typ == "DOMAIN":  # 中文域名转 punycode（sing-box 按 ASCII 域名匹配）
+            return {"domain": [idn_ascii(val.lower()) or val.lower()]}
         if typ == "DOMAIN-SUFFIX":  # 规则集文件里的值没经过 norm_rule：「+.a.com」「*.a.com」同样去掉前缀，否则按字面永远不命中
-            return {"domain_suffix": [re.sub(r"^(?:\\+\\.|\\*\\.|\\.)+", "", val.lower())]}
+            v = re.sub(r"^(?:\\+\\.|\\*\\.|\\.)+", "", val.lower())
+            return {"domain_suffix": [idn_ascii(v) or v]}
         if typ == "DOMAIN-KEYWORD":
             return {"domain_keyword": [val.lower()]}
         if typ == "DOMAIN-REGEX":
             return {"domain_regex": [val]}
         if typ == "DOMAIN-WILDCARD":  # 「*」可跨多级（与 mihomo 一致），不能用 _mh_domain（那是域名集合里「*」只算一级的写法）
             v = val.lower()
+            v = idn_ascii(v) or v
             return {"domain_regex": [_wildcard_regex(v)]} if ("*" in v or "?" in v) else {"domain": [v]}
         if typ in ("IP-CIDR", "IP-CIDR6"):
             return {"source_ip_cidr" if src else "ip_cidr": [_cidr(val)]}
@@ -4134,7 +4281,7 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, wd_hold)
 from .errlog import log_tail
-from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, safe, write_json
+from .data import adopt_rs_files, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_safe, write_json
 from .groups import gcfg, prov_set, rx
 from .mihomo import BUILTIN_GEO, build_config, build_rule_providers, dns_cfg, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
@@ -4144,12 +4291,13 @@ from .sb_yaml import yaml_lite
 from .groups import sb_provider_nodes, sb_sub_cache, sb_sub_outbounds
 from .sb_nodes import sb_outbound
 from .sb_rules import SBRules, geo_srs_entry
-from .ruleutil import LOGICAL_RX, _mh_domain, split_rule
+from .ruleutil import LOGICAL_RX, _mh_domain, split_rule, strip_inline_comment
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
 def build_singbox(d):
     """把 build_config 生成的 mihomo 结构翻译成 sing-box 配置；返回 (配置, 警告列表, 需要的规则集文件)"""
+    _adopt_rs(d)
     sub_out = sb_sub_outbounds(d)
     # 经 prov_set 写入：名单变了要推进 provider_rev()，/api/state 的策略组缓存和 /api/ping 版本号才会更新（与 Go 一致）
     prov_set(time.time(), {k: [n for n, _ in v] for k, v in sub_out.items()})
@@ -4358,6 +4506,14 @@ def sb_inbounds(d, v6, warn=None):
     return inbounds
 
 
+def _adopt_rs(d):
+    """v11.6.20 规则集缓存改名（rs_safe）：旧文件名的缓存接到新文件名上（与 Go adoptLegacyCacheNames 一致）"""
+    names = [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]]
+    if names:
+        for ext in (".json", ".srs"):
+            adopt_rs_files(names, lambda s, ext=ext: os.path.join(SB_RULE_DIR, f"rs-{s}{ext}"))
+
+
 def sb_geo_rule_sets(d, dc=None):
     """显式计算 sing-box 需要的 GEO 规则集条目（{tag: {kind:url:path}}）。
 
@@ -4428,15 +4584,15 @@ def sb_rule_sets(cfg, warn):
         else:
             url = prov.get("url") or ""
             if re.search(r"\\.srs(?:\\?|$)", url):
-                rule_sets[name] = {"kind": "srs", "url": url, "path": f"rs-{safe(name)}.srs"}
+                rule_sets[name] = {"kind": "srs", "url": url, "path": f"rs-{rs_safe(name)}.srs"}
             elif prov.get("format") == "mrs" and "meta-rules-dat" in url and "/meta/" in url:
                 rule_sets[name] = {"kind": "srs", "url": re.sub(r"\\.mrs(\\?|$)", r".srs\\1", url.replace("/meta/", "/sing/")),
-                                   "path": f"rs-{safe(name)}.srs"}
+                                   "path": f"rs-{rs_safe(name)}.srs"}
             elif prov.get("format") == "mrs":
                 warn.append(f"规则集「{name}」是 mihomo 专用的 .mrs 格式，sing-box 无法使用，已跳过（可改用 .srs 地址）")
             else:
                 rule_sets[name] = {"kind": "convert", "url": url, "behavior": prov.get("behavior", "domain"),
-                                   "format": prov.get("format", "yaml"), "path": f"rs-{safe(name)}.json"}
+                                   "format": prov.get("format", "yaml"), "path": f"rs-{rs_safe(name)}.json"}
     return rule_sets
 
 
@@ -4566,7 +4722,8 @@ def _rule_lines_to_source(text, behavior, fmt, skipped=None):
         y = yaml_lite(t)
         items = [str(x) for x in ((y or {}).get("payload") or [])] if isinstance(y, dict) else []
     else:
-        items = [l.strip() for l in t.splitlines() if l.strip() and not l.strip().startswith(("#", "//"))]
+        # 行尾注释（「DOMAIN,a.com # 注释」「a.com ! 注释」）去掉，规则保留：以前整行当成无法识别跳过
+        items = [strip_inline_comment(l.strip()) for l in t.splitlines() if l.strip() and not l.strip().startswith(("#", "//", "!"))]
     r = {}
     other = {}  # classical 里的端口 / 网络 / 来源地址 / 进程等条件：各自成条（sing-box 同一条规则里这些字段与域名 / IP 是「且」）
     logic = []  # classical 里的 AND / OR / NOT：转成 headless 逻辑规则（规则集里各条规则之间是「或」）
@@ -4734,6 +4891,25 @@ def sb_refresh_rulesets(d, names):
     want = set(names)
     need = {k: v for k, v in sb_rule_need(d).items() if k in want and v.get("kind") != "adblock"}
     return sb_sync_assets(d, force=True, need=need) if need else []
+
+
+def sb_fetch_new(prev, d):
+    """保存设置 / 规则后（reload_core 带 prev 时）：这次改动新引用、本地还没有的规则集（自定义规则里新加的 GEOSITE / GEOIP、
+    DNS 策略 / Fake-IP 过滤里的 geosite: 等）立即下载，返回失败列表。以前要等定时 GEO 更新才下载，这期间引用它们的规则被当成
+    「规则集尚未下载」跳过，新加的 GEOSITE 规则看起来不生效。改动前就引用的不在这里重下（下载失败的等定时更新 / 手动更新重试）"""
+    try:
+        old = sb_rule_need(prev) if prev is not None else {}
+    except Exception:
+        old = {}
+    need = {}
+    for tag, rsd in sb_rule_need(d).items():
+        if rsd.get("kind") == "adblock" or tag in old:
+            continue
+        path = os.path.join(SB_RULE_DIR, rsd["path"])
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            continue
+        need[tag] = rsd
+    return sb_sync_assets(d, need=need) if need else []
 
 
 def write_sb_config(d, path=None):
@@ -5556,6 +5732,7 @@ def self_update(apply=False, gh=""):
 '''
 _SRC['shunt.backup'] = '''# SPDX-License-Identifier: GPL-3.0-or-later
 """版本备份/恢复：把面板文件打包成带版本号的 tar.gz，支持一键回滚。"""
+import io
 import json
 import os
 import re
@@ -5571,6 +5748,9 @@ from .data import update
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(DATA_FILE)), "backups")
 # 保留最近多少个备份
 KEEP_N = 10
+
+BACKEND = "python"  # 备份元数据里的后端名（Go 版写 "go"）
+META = "backup.json"  # 备份元数据：{"version": 打包时的程序版本, "backend": "python" | "go"}
 
 # 打包进备份的文件（相对于 BASE / DATA_FILE 所在目录）
 _FILES = [
@@ -5636,6 +5816,11 @@ def create(version=None, keep=None):
                         tf.add(src, arcname=rel)
                 if os.path.isfile(DATA_FILE):
                     tf.add(DATA_FILE, arcname="data.json")
+                # 记下打包时的程序版本和后端：恢复时据此判断备份里的页面能不能和当前程序一起用（见 restore）
+                meta = json.dumps({"version": PANEL_VERSION, "backend": BACKEND}).encode()
+                ti = tarfile.TarInfo(META)
+                ti.size, ti.mtime, ti.mode = len(meta), int(time.time()), 0o600
+                tf.addfile(ti, io.BytesIO(meta))
         except BaseException:
             try:
                 os.unlink(path)
@@ -5734,11 +5919,28 @@ def keep_password(pw):
         pass
 
 
+def _meta_version(tmpd, name):
+    """备份打包时的程序版本：优先读 backup.json（v11.6.20 起），旧备份按文件名里的版本号"""
+    try:
+        with open(os.path.join(tmpd, META), encoding="utf-8") as f:
+            v = json.load(f).get("version")
+        if isinstance(v, str) and v:
+            return v
+    except (OSError, ValueError, AttributeError):
+        pass
+    return _parse_name(name) or ""
+
+
+def keep_note(bver):
+    return "备份版本 v%s 与当前程序 v%s 不同，备份里没有对应的程序：只恢复了设置，面板页面保持当前版本。" % (bver or "?", PANEL_VERSION)
+
+
 def restore(name):
     """恢复指定备份。返回 (ok, message)。
 
     流程：先自动备份当前版本（防呆）→ 解压覆盖 server.py/index.html/data.json。
     恢复 server.py 后需重启面板进程才生效。
+    备份里没有程序（server.py）且版本与当前程序不同时（Go 版做的备份）只恢复 data.json，页面保持当前版本
     """
     fp, err = _backup_path(name)
     if err:
@@ -5764,8 +5966,16 @@ def restore(name):
                     tf.extractall(tmpd, filter="data")
                 except TypeError:  # Python < 3.12 且没有安全补丁的版本没有 filter 参数；上面已逐项检查过成员
                     tf.extractall(tmpd)
-                # 搬文件
-                for rel in ("server.py", "index.html", "CHANGELOG.md"):
+                # 搬文件。页面（index.html）必须和后端程序同一版本：备份里带了 server.py 时程序随页面一起换回去（恢复后重启面板）；
+                # 没带程序（Go 版做的备份）且版本与当前程序不同时，只恢复设置，页面保持当前版本，免得旧页面配新程序
+                note = ""
+                prog = os.path.isfile(os.path.join(tmpd, "server.py"))
+                bver = _meta_version(tmpd, name)
+                rels = ("server.py", "index.html", "CHANGELOG.md")
+                if not prog and bver != PANEL_VERSION:
+                    rels = ()
+                    note = keep_note(bver)
+                for rel in rels:
                     src = os.path.join(tmpd, rel)
                     if os.path.isfile(src):
                         dst = os.path.join(BASE, rel)
@@ -5780,7 +5990,7 @@ def restore(name):
                     keep_password(pw)
             finally:
                 shutil.rmtree(tmpd, ignore_errors=True)
-        return True, "已恢复到 %s（已自动备份当前版本 %s）。" % (name, cur)
+        return True, "已恢复到 %s（已自动备份当前版本 %s）。%s" % (name, cur, note)
     except Exception as e:
         return False, "恢复失败：%s" % e
 '''
@@ -5788,6 +5998,7 @@ _SRC['shunt.health'] = '''"""节点健康检查：定时测速，连续失败的
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 from .base import BUILTIN_POLICIES, G_MANUAL, HC
@@ -5883,6 +6094,49 @@ def merge_delay(members, code, data):
     return results
 
 
+PROBE_WORKERS = 8  # 补测缺席节点的并发数
+PROBE_BUDGET = 120  # 补测总时长（秒）：超过后还没开始补测的节点记为「未测到」
+
+
+def probe_one(name):
+    """单独测一个节点：延迟（>0）= 正常；0 = 核心明确回答测速失败（503 / 504）；None = 不知道（核心不通、节点不存在、应答异常）"""
+    code, raw = core("GET", f"/proxies/{quote(name, safe='')}/delay?url={quote(HC)}&timeout=5000", timeout=15)
+    if code == 200:
+        try:
+            v = json.loads(raw).get("delay")
+        except Exception:
+            return None
+        return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+    if code in (503, 504):
+        return 0
+    return None
+
+
+def fill_absent(results, present, probe=None, budget=PROBE_BUDGET):
+    """sing-box 的组测速（/group/…/delay）只返回测速成功的节点：测失败的、和这一轮没来得及测到的都缺席，
+    以前一律记为失败，健康的节点也会累计失败天数被自动隐藏。
+    缺席的节点逐个补测：核心明确回答失败才记失败；补测不到（核心不通、超过补测时长等）记为 None = 未知，
+    合并时保留原来的状态（不算失败，也不清零）。返回新的结果字典（未知的值为 None）"""
+    probe = probe or probe_one
+    out = dict(results)
+    absent = [n for n in results if n not in present]
+    if not absent:
+        return out
+    end = time.monotonic() + budget
+
+    def one(n):
+        if time.monotonic() > end:
+            return None
+        try:
+            return probe(n)
+        except Exception:
+            return None
+    with ThreadPoolExecutor(max_workers=min(PROBE_WORKERS, len(absent))) as ex:
+        for n, v in zip(absent, ex.map(one, absent)):
+            out[n] = v
+    return out
+
+
 def unhide(name):
     """手动取消隐藏节点，清零计数重新评估"""
     found = []
@@ -5931,11 +6185,15 @@ def run_check():
         if not results:
             return False, "手动选择组里没有节点"
         HEALTH_STATE["total"] = len(results)
-        HEALTH_STATE["checked"] = len(results)
-        apply_results(results, universe=results.keys())
+        present = {n for n, v in results.items() if v > 0}
+        full = fill_absent(results, present)
+        known = {n: v for n, v in full.items() if v is not None}  # 未知的不合并：保留原记录（universe 里有它，不会被删）
+        HEALTH_STATE["checked"] = len(known)
+        apply_results(known, universe=list(results))
         HEALTH_STATE["last_run"] = int(time.time())
-        ok_count = sum(1 for v in results.values() if v > 0)
-        return True, f"检查完成：{ok_count}/{len(results)} 个节点正常"
+        ok_count = sum(1 for v in known.values() if v > 0)
+        unknown = len(results) - len(known)
+        return True, f"检查完成：{ok_count}/{len(results)} 个节点正常" + (f"，{unknown} 个未测到（保留原状态）" if unknown else "")
     finally:
         HEALTH_STATE["running"] = False
 
@@ -8888,7 +9146,7 @@ from .sb_config import sb_sync_assets
 from .sysopt import proxy_opener
 from .ruletest import clean_target
 from .logstream import core_stream
-from .ruleutil import DOMAIN_RX, adblock_providers
+from .ruleutil import DOMAIN_RX, adblock_providers, idn_ascii, strip_inline_comment
 # 订阅 AdGuard/ABP（||domain^、@@||domain^）、hosts（0.0.0.0 domain）与纯域名列表，转换为 mihomo
 # behavior=domain / format=text 的本地 rule-provider 文件：
 #   ||a.com^ → "+.a.com"（含子域）；hosts / 纯域名 → "a.com"（仅该域名，与 AdGuard Home 语义一致）
@@ -8916,24 +9174,54 @@ def list_id(url):
 
 def norm_domain(s):
     s = s.strip().lower().rstrip(".")
-    if not s or "*" in s or not DOMAIN_RX.match(s):
+    if not s or "*" in s:
+        return None
+    s = idn_ascii(s).rstrip(".")  # 中文 / 国际化域名转 punycode（以前当成非法条目跳过）
+    if not s or not DOMAIN_RX.match(s):
         return None
     return s
 
 
 # 元素隐藏 / 脚本注入规则（example.com##.ad、#@#、#?#、#$#、#%#）：只作用于页面元素，不能当成整站拦截
 COSMETIC_RX = re.compile(r"#[@$?%]{0,3}#")
-AB_PARSER = 3  # 解析器版本：变了就让已下载的列表尽快按新规则重新转换（见 schedule.ab_last_update）
+AB_PARSER = 4  # 解析器版本（4：$important / $badfilter、中文域名、行内注释）：变了就让已下载的列表尽快按新规则重新转换（见 schedule.ab_last_update）
 
 
 def parse_filter(text, plain_suffix=False):
     """解析过滤列表文本。返回 (block_suffix, block_exact, allow_suffix, allow_exact, skipped)"""
+    r = parse_filter_ex(text, plain_suffix)
+    return r["bs"], r["be"], r["as"], r["ae"], r["skipped"]
+
+
+def cancel_allow(as_, ae, isuf, iexact):
+    """$important 拦截覆盖 @@ 例外：去掉被重要拦截规则盖住的例外（原地修改 as_ / ae）。
+    ||a.com^$important（后缀）去掉 a.com 及其子域上的例外；|a.com^$important（精确）只去掉 a.com 的精确例外。
+    比重要规则范围更大的例外（@@||com 级父域）没法在域名集合里挖洞，保留"""
+    if not isuf and not iexact:
+        return
+    def under(x):
+        return x in isuf or any(p in isuf for p in parents(x, False))
+    for x in [x for x in as_ if under(x)]:
+        as_.discard(x)
+    for x in [x for x in ae if under(x) or x in iexact]:
+        ae.discard(x)
+
+
+def parse_filter_ex(text, plain_suffix=False):
+    """解析过滤列表文本 → {"bs", "be", "as", "ae", "is", "ie", "skipped"}（is / ie：带 $important 的拦截，后缀 / 精确）。
+    AdGuard 语义（v11.6.20）：
+    - $important 拦截优先于 @@ 例外：同一份列表里被盖住的例外直接去掉（跨列表的在 ab_compose 里去掉）；@@…$important 例外不受影响
+    - $badfilter 让与它相同（去掉 $badfilter 后完全一样）的规则失效，它本身也不生效
+    - 中文 / 国际化域名转成 punycode
+    - 规则后面的行内注释（「规则 # 注释」「规则 ! 注释」）去掉，规则保留"""
     bs, be, as_, ae = set(), set(), set(), set()
+    abp = []  # (allow, pipes, 域名, 修饰符集合)：最后统一处理 $badfilter / $important
     skipped = 0
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line[0] in "!#[":
             continue
+        line = strip_inline_comment(line)
         low = line.lower()
         if low.startswith("payload:"):
             continue
@@ -8965,19 +9253,15 @@ def parse_filter(text, plain_suffix=False):
                     skipped += 1
                 continue
             allow, pipes, dom, mods = m.groups()
-            if mods and {x.strip() for x in mods.split(",")} - {"important", ""}:
+            ms = {x.strip() for x in (mods or "").split(",")} - {""}
+            if ms - {"important", "badfilter"}:
                 skipped += 1  # $client= / $dnstype= / $denyallow= 等修饰符无法用域名规则等价表达
                 continue
             dom = norm_domain(dom)
             if not dom:
                 skipped += 1
                 continue
-            # 以前 |a.com^ / @@|a.com^ 被当成无法识别跳过，allow_exact 永远为空；用户白名单里的 @@|a.com^ 仍按后缀（兼容旧行为）
-            exact = pipes == "|" and not plain_suffix
-            if allow:
-                (ae if exact else as_).add(dom)
-            else:
-                (be if exact else bs).add(dom)
+            abp.append((bool(allow), pipes, dom, frozenset(ms)))
             continue
         if low[0] in "|/" or any(c in low for c in "$^*/\\\\"):
             skipped += 1  # 正则、URL 规则、通配符等
@@ -9000,7 +9284,26 @@ def parse_filter(text, plain_suffix=False):
                 be.add(dom)
         else:
             skipped += 1
-    return bs, be, as_, ae, skipped
+    bad = {(a, p, dm, ms - {"badfilter"}) for a, p, dm, ms in abp if "badfilter" in ms}
+    isuf, iexact, keep_s, keep_e = set(), set(), set(), set()  # keep：@@…$important 例外，不被重要拦截去掉
+    for allow, pipes, dom, ms in abp:
+        if "badfilter" in ms or (allow, pipes, dom, ms) in bad:
+            continue
+        # 以前 |a.com^ / @@|a.com^ 被当成无法识别跳过，allow_exact 永远为空；用户白名单里的 @@|a.com^ 仍按后缀（兼容旧行为）
+        exact = pipes == "|" and not plain_suffix
+        imp = "important" in ms
+        if allow:
+            (ae if exact else as_).add(dom)
+            if imp:
+                (keep_e if exact else keep_s).add(dom)
+        else:
+            (be if exact else bs).add(dom)
+            if imp:
+                (iexact if exact else isuf).add(dom)
+    cancel_allow(as_, ae, isuf, iexact)
+    as_ |= keep_s
+    ae |= keep_e
+    return {"bs": bs, "be": be, "as": as_, "ae": ae, "is": isuf, "ie": iexact, "skipped": skipped}
 
 
 def parents(dom, include_self):
@@ -9071,9 +9374,10 @@ def download(url, timeout=60, limit=40 << 20, gh=None):
 
 
 def ab_fetch(lst, late=None, sfx=".new"):
-    """下载并转换一个列表，写入 <id>.txt / <id>.allow.txt，返回 meta。late 置位（整体超时）后不再写文件"""
+    """下载并转换一个列表，写入 <id>.txt / <id>.allow.txt / <id>.important.txt，返回 meta。late 置位（整体超时）后不再写文件"""
     text = download(lst["url"])
-    bs, be, as_, ae, skipped = parse_filter(text)
+    r = parse_filter_ex(text)
+    bs, be, as_, ae, skipped = r["bs"], r["be"], r["as"], r["ae"], r["skipped"]
     lines, n = domain_lines(bs, be)
     alines, na = domain_lines(as_, ae)
     if not n and not na:
@@ -9083,6 +9387,8 @@ def ab_fetch(lst, late=None, sfx=".new"):
     sfx = sfx if late is not None else ""  # 并发更新：先写 .new，由调用方在锁内确认没超时再换上
     write_lines(os.path.join(AB_DIR, lst["id"] + ".txt" + sfx), lines)
     write_lines(os.path.join(AB_DIR, lst["id"] + ".allow.txt" + sfx), alines)
+    # 带 $important 的拦截：ab_compose 用它去掉其他列表里被盖住的 @@ 例外
+    write_lines(os.path.join(AB_DIR, lst["id"] + ".important.txt" + sfx), domain_lines(r["is"], r["ie"])[0])
     return {"count": n, "allow": na, "skipped": skipped, "updated": int(time.time()), "error": "", "parser": AB_PARSER}
 
 
@@ -9099,21 +9405,34 @@ def ab_compose(d):
         bs, be, _, _, _ = parse_filter("\\n".join(ab.get(key) or []), plain_suffix=True)
         write_lines(os.path.join(AB_DIR, fn), domain_lines(bs, be)[0])
     ws, we, was, wae, _ = parse_filter("\\n".join(ab.get("white") or []), plain_suffix=True)
-    suffix, exact = ws | was, we | wae
+    # 各列表的 @@ 例外：被任何一个启用列表（或自定义黑名单）里的 $important 拦截盖住的去掉（AdGuard 语义：$important 优先于例外）。
+    # 面板里的自定义白名单是用户自己的意思，始终优先，不受 $important 影响
+    ls, le, isuf, iexact = set(), set(), set(), set()
     for l in ab.get("lists", []):
         if not l.get("enabled", True):
             continue
-        try:
-            with open(os.path.join(AB_DIR, l["id"] + ".allow.txt")) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("+."):
-                        suffix.add(line[2:])
-                    elif line:
-                        exact.add(line)
-        except OSError:
-            pass
+        _read_lines(os.path.join(AB_DIR, l["id"] + ".allow.txt"), ls, le)
+        _read_lines(os.path.join(AB_DIR, l["id"] + ".important.txt"), isuf, iexact)
+    cb = parse_filter_ex("\\n".join(ab.get("black") or []), plain_suffix=True)
+    isuf |= cb["is"]
+    iexact |= cb["ie"]
+    cancel_allow(ls, le, isuf, iexact)
+    suffix, exact = ws | was | ls, we | wae | le
     write_lines(os.path.join(AB_DIR, "allow.txt"), domain_lines(suffix, exact)[0])
+
+
+def _read_lines(path, suffix, exact):
+    """读面板写的域名列表文件（每行 +.a.com 或 a.com）到 suffix / exact 集合；文件不存在时什么都不做"""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("+."):
+                    suffix.add(line[2:])
+                elif line:
+                    exact.add(line)
+    except OSError:
+        pass
 
 
 def config_text(d):
@@ -9172,7 +9491,7 @@ def adblock_update(ids=None, apply=True):
             except Exception as e:
                 r = fail(l, str(e)[:200])
             with res_lock:
-                new = [os.path.join(AB_DIR, l["id"] + s) for s in (".txt", ".allow.txt")]
+                new = [os.path.join(AB_DIR, l["id"] + s) for s in (".txt", ".allow.txt", ".important.txt")]
                 if not late.is_set():
                     if not r.get("error"):
                         for p in new:
@@ -9284,12 +9603,16 @@ def ab_check(target):
     r = ab_match(host, (ws | was, we | wae))
     if r:
         allowed.append({"name": "自定义白名单", "rule": r})
+    combined = None  # 合并后的 allow.txt：列表例外被 $important 拦截去掉时这里没有
     for l in ab["lists"]:
         if not l.get("enabled", True):
             continue
         r = ab_match(host, ab_sets(os.path.join(AB_DIR, l["id"] + ".allow.txt")))
         if r:
-            allowed.append({"name": l["name"] + "（@@ 例外）", "rule": r})
+            if combined is None:
+                combined = ab_match(host, ab_sets(os.path.join(AB_DIR, "allow.txt"))) is not None
+            if combined:
+                allowed.append({"name": l["name"] + "（@@ 例外）", "rule": r})
     bs, be, _, _, _ = parse_filter("\\n".join(ab.get("black") or []), plain_suffix=True)
     r = ab_match(host, (bs, be))
     if r:
@@ -9946,18 +10269,36 @@ def sched_loop():
             print("schedule error", e, flush=True)
 
 
-_DEVROUTE = {"tried": None}  # 上次因 MAC 解析变化而重载时的解析结果：重载失败也不对同一结果反复重试
+# tried：上次因设备 IP 变化而重载时的设备规则（重载失败也不对同一结果反复重试）；
+# pending / since：检测到变化、还在等它稳定的设备规则，和第一次检测到变化的时刻
+_DEVROUTE = {"tried": None, "pending": None, "since": 0}
+DEVROUTE_MAX_WAIT = 300  # 设备 IP 一直在变（多台设备陆续换 IP、IPv6 临时地址轮换）时最多攒这么多秒，合并成一次重载
 
 
-def devroute_tick(d):
-    """按设备分流的 MAC 条目：ARP / DHCP / IPv6 邻居表解析出的 IP 与当前配置不同时重载核心。
-    只读 /proc/net/arp 和租约文件（开 IPv6 时多跑一次 ip -6 neigh），没有 MAC 条目时什么都不做"""
+def devroute_tick(d, now=None):
+    """按设备分流的 MAC 条目：ARP / DHCP / IPv6 邻居表解析出的 IP 变了、且实际生效的设备规则因此不同时重载核心。
+    只读 /proc/net/arp 和租约文件（开 IPv6 时多跑一次 ip -6 neigh），没有 MAC 条目时什么都不做。
+    断流：sing-box 重载会断开全部连接。以前每分钟一发现 MAC → IP 表不同就立即重载，设备换 IP 期间表常连变几次，
+    就连着重载几次；规则实际没变（目标不存在被跳过、地址被前面的规则覆盖）也重载。现在只比较生成的设备规则，
+    且要下一次检查（约 1 分钟后）结果相同才重载；一直在变时最多攒 DEVROUTE_MAX_WAIT 秒，按最新结果只重载一次"""
     if WD["manual_stop"]:
         return
+    now = time.time() if now is None else now
     cur = mac_changed(d)
-    if cur is None or cur == _DEVROUTE["tried"]:
+    if cur is None:  # 又变回和当前配置一样：不用重载
+        _DEVROUTE.update(pending=None, since=0)
         return
-    _DEVROUTE["tried"] = cur
+    if cur == _DEVROUTE["tried"]:
+        return
+    if _DEVROUTE["pending"] is None:
+        _DEVROUTE.update(pending=cur, since=now)
+        return
+    if cur != _DEVROUTE["pending"]:
+        waited = now - _DEVROUTE["since"]
+        _DEVROUTE["pending"] = cur
+        if waited < DEVROUTE_MAX_WAIT:
+            return
+    _DEVROUTE.update(tried=cur, pending=None, since=0)
     ok, msg = reload_core()
     sched_event(f"按设备分流：设备 IP 有变化，{'已更新配置' if ok else '更新配置失败 ' + str(msg)[:120]}")
 
@@ -12285,6 +12626,9 @@ class H(BaseHTTPRequestHandler):
         b = self.body() if m in ("POST", "PUT", "PATCH", "DELETE") else {}  # 请求体已在 route() 里完整读入
         if not isinstance(b, dict):  # [1] / "x" / 123 这类合法 JSON：以前各接口 b.get 抛 AttributeError，回 500 并写一条错误堆栈
             return self.send(400, {"message": "请求体必须是 JSON 对象"})
+        if p == "/api/core/configs/geo" and m != "POST":
+            # 重新下载全部 GEO / 规则集并重载核心：以前任何方法都执行，只认 POST（与其他会改动状态的接口一样要 X-Shunt 头）
+            return self.send(405, {"message": "该接口只支持 POST"})
         # 透传到 mihomo external-controller
         if p.startswith("/api/core/") and active_core() == "singbox":
             sub = p[len("/api/core"):]
@@ -12300,7 +12644,7 @@ class H(BaseHTTPRequestHandler):
             if sub.startswith("/providers/proxies/") and sub.endswith("/healthcheck"):
                 code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=60)
                 return self.send(204 if code < 300 else code, b"")
-            if (sub.startswith("/providers/rules/") and m == "PUT") or sub == "/configs/geo":
+            if (sub.startswith("/providers/rules/") and m == "PUT") or (sub == "/configs/geo" and m == "POST"):
                 d = load()
                 need = sb_rule_need(d)
                 if sub.startswith("/providers/rules/"):
@@ -12373,7 +12717,7 @@ class H(BaseHTTPRequestHandler):
             return self.wfile.write(b)
         if p == "/api/unlock":
             return self.send(200, unlock_test())
-        if p == "/api/logs":
+        if p == "/api/logs" and m == "GET":  # 与 Go 一致：只读接口只认 GET
             from .logclean import core_log_text
             return self.send(200, {"log": core_log_text(300)})
         fn = ROUTES.get((m, p))
