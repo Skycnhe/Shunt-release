@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.21"
+PANEL_VERSION = "8.10.22"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.21"
+PANEL_VERSION = "8.10.22"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -489,7 +489,7 @@ def log_err(where, e, tb=False):
     print(f"[error] {where}: {msg}{extra}", flush=True)
 '''
 _SRC['shunt.data'] = '''"""数据"""
-import copy, json, os, re, secrets, threading, time
+import copy, hashlib, json, os, re, secrets, threading, time
 
 from .base import (
     AUTO_SUFFIX, AUTO_TAIL, AUTO_TAIL_OLD, DATA_FILE, DEFAULT, G_AUTO, G_OTHER, LB_PREFIX, LB_SUFFIX, LB_TAIL, LEGACY_AUTO, LOCK,
@@ -866,6 +866,12 @@ def write_json(path, obj, mode=0o600):
 def safe(name):
     return re.sub(r"[^\\w\\-]", "_", name) or "sub"
 
+
+def rs_file(name):
+    """规则集缓存文件名主体：safe(名) + 名字的短哈希。以前只用 safe(名)，名字只差符号的两个规则集
+    （「国外.规则」与「国外_规则」）共用一个缓存文件，后下载的覆盖先下载的，两条规则按同一份列表分流"""
+    return f"{safe(name)}_{hashlib.sha1(name.encode('utf-8')).hexdigest()[:8]}"
+
 '''
 _SRC['shunt.links'] = '''"""单节点链接解析"""
 import base64, json, re
@@ -1176,6 +1182,43 @@ from .base import AB_DIR
 DOMAIN_RX = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_\\-]{0,61}[a-z0-9_])?\\.)+(?:[a-z]{2,63}|xn--[a-z0-9\\-]{1,59})$")
 
 
+_DOTS = str.maketrans({"\\u3002": ".", "\\uff0e": ".", "\\uff61": "."})  # 中文句号「。」、全角「．」、半角「｡」都当成点
+
+
+def idna_domain(x):
+    """中文 / 国际化域名 → punycode（xn--…）：「中国.cn」→「xn--fiqs8s.cn」。
+    两个内核和 DNS 收到的查询都是 punycode 形式，以前原样写进规则 / 广告拦截列表，永远命中不了。
+    保留前缀「+.」「*.」「.」和通配标签（*、?）；纯 ASCII 原样返回（只转小写由调用方决定）；转换失败返回原值"""
+    if not isinstance(x, str) or x.isascii():
+        return x
+    s = x.translate(_DOTS)
+    if s.isascii():
+        return s
+    out = []
+    for lab in s.split("."):
+        if lab.isascii():
+            out.append(lab)
+            continue
+        try:
+            out.append(lab.lower().encode("idna").decode("ascii"))
+        except (UnicodeError, ValueError):
+            return x
+    return ".".join(out)
+
+
+# 行内注释：规则后面跟「空白 + # 或 !」的部分（「DOMAIN,a.com,DIRECT # 说明」「||a.com^ ! 说明」）。
+# 要求前面有空白：DOMAIN-REGEX 里的「(?!…)」、AdGuard 的「##」元素隐藏规则不受影响
+INLINE_COMMENT_RX = re.compile(r"\\s+[#!].*$")
+
+
+def strip_comment(line):
+    """去掉行内注释，保留规则本身。整行注释（# / ! 开头）原样返回，由调用方跳过"""
+    s = line.strip()
+    if not s or s[0] in "#!":
+        return s
+    return INLINE_COMMENT_RX.sub("", s)
+
+
 def rule_policy_index(parts):
     i = len(parts) - 1
     while i > 0 and parts[i].strip().lower() in ("no-resolve", "src"):
@@ -1238,6 +1281,10 @@ def complete_rule(rule, default):
     return rule
 
 
+# 规则（含逻辑规则的子规则）里域名类条件的值：「DOMAIN-SUFFIX,中国.cn」「(DOMAIN,例子.测试)」
+_IDN_SUB_RX = re.compile(r"((?:^|\\()\\s*DOMAIN(?:-SUFFIX|-WILDCARD)?\\s*,\\s*)([^,()]+)", re.I)
+
+
 def norm_rule(rule):
     """规范化自定义规则里两种内核都会「静默不生效」的写法（v8.4.15）：
     - DOMAIN-SUFFIX 的值带前导「.」「+.」「*.」：mihomo 按字面匹配，永远命中不了（sing-box 只去掉了「.」，「+.」「*.」同样失效）
@@ -1247,10 +1294,17 @@ def norm_rule(rule):
       → 补 /32 或 /128
     - 逻辑规则（AND / OR / NOT）末尾的「,no-resolve」「,src」：mihomo 把最后一项当策略，整份配置加载失败（策略 no-resolve 不存在）
       → 去掉（逻辑规则的 no-resolve 要写在子规则里，如 (IP-CIDR,1.2.3.0/24,no-resolve)）
+    - 行内注释（「DOMAIN,a.com,DIRECT # 说明」）：去掉注释保留规则。以前注释被当成策略名的一部分，规则被换成节点选择
+    - DOMAIN / DOMAIN-SUFFIX / DOMAIN-WILDCARD 的中文域名转成 punycode（两个内核按 xn-- 形式匹配）
     其余逻辑规则、注释、空行原样返回"""
     s = rule.strip()
     if not s or s.startswith("#"):
         return rule
+    c = strip_comment(s)
+    if c != s:
+        s = rule = c
+    if not s.isascii():
+        s = rule = _IDN_SUB_RX.sub(lambda m: m.group(1) + idna_domain(m.group(2)), s)
     if LOGICAL_RX.match(s):
         body, pol, flags = split_rule(s)
         return f"{body},{pol}" if flags and pol else rule
@@ -1284,8 +1338,8 @@ def dns_policy_of(server):
 
 
 def _mh_domain(x):
-    """mihomo 域名通配（+.a.com / *.a.com / a.*.com / img?.a.com）→ (sing-box 字段, 值)"""
-    x = x.strip().lower()
+    """mihomo 域名通配（+.a.com / *.a.com / a.*.com / img?.a.com）→ (sing-box 字段, 值)；中文域名转成 punycode"""
+    x = idna_domain(x.strip()).lower()
     pre = ""
     if x.startswith("+."):  # 自身及所有子域
         x, pre = x[2:], r"(?:[^.]+\\.)*"
@@ -1310,6 +1364,12 @@ def _rs_tag(kind, name):
     return f"{kind}-{name}".lower() if kind in ("geosite", "geoip") else name
 
 
+AB_ALLOW_SETS = ("ad-allow", "ad-allowimp")  # 放行名单：只出现在拦截规则的 NOT 里
+# 只在规则层拦截、不进 DNS 层的广告拦截规则集：$important 要压过 @@ 例外，而 DNS 层（mihomo nameserver-policy /
+# sing-box DNS 规则）先按 ad-allow 放行，表达不了「important 且不在 allowimp」。普通列表里也有这些域名，没被放行时照样在 DNS 层拦
+AB_RULE_ONLY = ("ad-important",) + AB_ALLOW_SETS
+
+
 def adblock_providers(d):
     ab = d.get("adblock") or {}
     if not ab.get("enabled"):
@@ -1321,6 +1381,9 @@ def adblock_providers(d):
         if os.path.isfile(path) and os.path.getsize(path) > 0:
             prov[name] = {"type": "file", "behavior": "domain", "format": "text", "path": "./adblock/" + fn}
     add("ad-allow", "allow.txt")
+    add("ad-important", "important.txt")  # 列表里的 $important 拦截：普通 @@ 例外压不住
+    if "ad-important" in prov:
+        add("ad-allowimp", "allow-important.txt")  # 能压过 $important 的放行：用户白名单 + @@…$important
     add("ad-custom", "custom.txt")
     add("ad-customcn", "custom-cn.txt")  # 自定义黑名单（只拦国内直连）
     add("ad-customproxy", "custom-proxy.txt")  # 自定义黑名单（只拦国外代理）
@@ -1330,11 +1393,12 @@ def adblock_providers(d):
     scopes = adblock_scopes(d)
     rules = []
     for k in prov:
-        if k == "ad-allow":
+        if k in AB_ALLOW_SETS:
             continue
         conds = [f"(RULE-SET,{k})"]
-        if "ad-allow" in prov:
-            conds.append("(NOT,((RULE-SET,ad-allow)))")
+        allow = "ad-allowimp" if k == "ad-important" else "ad-allow"
+        if allow in prov:
+            conds.append(f"(NOT,((RULE-SET,{allow})))")
         if k in scopes:  # 限定范围的列表：只拦国内直连（geosite:cn）或只拦国外代理（非 geosite:cn）的域名
             conds.append(AB_SCOPE_COND[scopes[k]])
         rules.append(f"AND,({','.join(conds)}),REJECT" if len(conds) > 1 else f"RULE-SET,{k},REJECT")
@@ -1705,9 +1769,9 @@ from .base import (
     G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
     TUN_DEFAULT, TUN_STACKS
 )
-from .data import LB_KINDS, auto_name, lb_name, region_label, safe
+from .data import LB_KINDS, auto_name, lb_name, region_label, rs_file, safe
 from .groups import clean_custom_group, gcfg, group_opts, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
-from .ruleutil import DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, complete_rule, dns_policy_of, norm_rule, \\
+from .ruleutil import AB_RULE_ONLY, DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, complete_rule, dns_policy_of, norm_rule, \\
     rule_policy_index, split_rule
 from .sb_common import active_core
 from .sysopt import sh
@@ -1727,15 +1791,50 @@ def drop_provider_cache(name):
 def drop_ruleset_cache(name):
     """删掉规则集在 mihomo 里的本地缓存 ./rules/<名>.<yaml|mrs|list>。与 drop_provider_cache 同理：mihomo 加载 rule-provider 时
     只要本地文件存在就先用它，满一个更新间隔（24 小时）才去下载，不看地址变没变。同名替换规则集（换了地址 / 类型 / 格式）后
-    以前最长 24 小时仍按旧地址的列表分流"""
+    以前最长 24 小时仍按旧地址的列表分流。旧版文件名（不带哈希）一并删掉"""
     n = 0
-    for ext in ("yaml", "mrs", "list"):
-        try:
-            os.remove(os.path.join(CONF_DIR, "rules", f"{safe(name)}.{ext}"))
-            n += 1
-        except OSError:
-            pass
+    for stem in (rs_file(name), safe(name)):
+        for ext in RS_MH_EXTS:
+            try:
+                os.remove(os.path.join(CONF_DIR, "rules", f"{stem}.{ext}"))
+                n += 1
+            except OSError:
+                pass
     return n > 0
+
+
+RS_MH_EXTS = ("yaml", "mrs", "list")  # mihomo 规则集缓存 ./rules/<名>.<扩展名>
+RS_SB_EXTS = ("srs", "json", "json.skip")  # sing-box 规则集文件 rs-<名>.<扩展名>（.skip 是转换时跳过条目的记录）
+
+
+def migrate_ruleset_cache(d):
+    """v8.10.22 起规则集缓存文件名带哈希（rs_file）。旧文件名 safe(名) 的缓存：
+    - 只有一个规则集用这个旧名：改名成新文件名接着用（不用重新下载，与升级前内容一致）
+    - 几个规则集只差符号、共用过这个旧名：分不清是谁的，删掉，各自按自己的地址重新下载
+    新文件已存在时旧文件直接删掉。返回处理的文件数"""
+    names = [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)]
+    cnt = {}
+    for n in names:
+        cnt[safe(n)] = cnt.get(safe(n), 0) + 1
+    from .sb_common import SB_RULE_DIR
+    done = 0
+    for n in names:
+        old, new = safe(n), rs_file(n)
+        for folder, pre, exts in ((os.path.join(CONF_DIR, "rules"), "", RS_MH_EXTS), (SB_RULE_DIR, "rs-", RS_SB_EXTS)):
+            for ext in exts:
+                src = os.path.join(folder, f"{pre}{old}.{ext}")
+                if not os.path.isfile(src):
+                    continue
+                dst = os.path.join(folder, f"{pre}{new}.{ext}")
+                try:
+                    if cnt[old] == 1 and not os.path.exists(dst):
+                        os.replace(src, dst)
+                    else:
+                        os.remove(src)
+                    done += 1
+                except OSError:
+                    pass
+    return done
 
 
 def build_config(d, strict=False):
@@ -1889,7 +1988,7 @@ def build_rule_providers(d, dc):
     for r in d.get("rulesets", []):
         ext = {"mrs": "mrs", "text": "list"}.get(r.get("format"), "yaml")
         rule_providers[r["name"]] = {"type": "http", "behavior": r.get("behavior", "domain"), "format": r.get("format", "yaml"),
-                                     "url": r["url"], "path": f"./rules/{safe(r['name'])}.{ext}", "interval": 86400}
+                                     "url": r["url"], "path": f"./rules/{rs_file(r['name'])}.{ext}", "interval": 86400}
     ab_prov, ab_rules = adblock_providers(d)
     rule_providers.update(ab_prov)
     rule_providers["cn-apps"] = {"type": "inline", "behavior": "domain", "payload": list(CN_APP_DOMAINS)}
@@ -1986,7 +2085,7 @@ def mihomo_dns(d, dc, policies, ab_prov):
             pol["rule-set:ad-allow"] = direct
         scoped = adblock_scopes(d)  # 限定国内直连 / 国外代理的列表只在规则层拦（nameserver-policy 表达不了交集）
         for k in ab_prov:
-            if k != "ad-allow" and k not in scoped:
+            if k not in AB_RULE_ONLY and k not in scoped:
                 pol["rule-set:" + k] = "rcode://name_error"
     for pe in dc["policies"]:  # 用户自定义的 nameserver-policy（排在内置分流之前，JSON 保序，mihomo 按顺序匹配）
         if pe["match"] not in pol:
@@ -2242,6 +2341,8 @@ def bad_rule_policies(rules, d):
 
 def write_config(d, path=None):
     os.makedirs(os.path.join(CONF_DIR, "providers"), exist_ok=True)
+    if path is None:
+        migrate_ruleset_cache(d)
     path = path or os.path.join(CONF_DIR, "config.yaml")
     write_atomic(path, build_config(d))  # JSON 是 YAML 的子集，mihomo 可直接读取
     return path
@@ -2323,7 +2424,7 @@ def _url(v, label):
     return v
 
 
-RS_RESERVED_RX = re.compile(r"^(?:cn-apps|dns-bypass-ip|dns-bypass-domain|ad-allow|ad-custom|ad-customcn|ad-customproxy|ad-[0-9a-f]{8}|geosite-.*|geoip-.*)$", re.I)
+RS_RESERVED_RX = re.compile(r"^(?:cn-apps|dns-bypass-ip|dns-bypass-domain|ad-allow|ad-allowimp|ad-important|ad-custom|ad-customcn|ad-customproxy|ad-[0-9a-f]{8}|geosite-.*|geoip-.*)$", re.I)
 
 
 def rs_name_reserved(name):
@@ -2343,7 +2444,7 @@ def clean_rulesets(v):
         if name in seen:
             raise ValueError(f"规则集重名：{name}")
         if rs_name_reserved(name):
-            raise ValueError(f"规则集名称「{name}」与内置规则集冲突（cn-apps、dns-bypass-*、ad-allow、ad-custom、ad-<8位id>、geosite-*、geoip-* 为保留名）")
+            raise ValueError(f"规则集名称「{name}」与内置规则集冲突（cn-apps、dns-bypass-*、ad-allow、ad-allowimp、ad-important、ad-custom、ad-<8位id>、geosite-*、geoip-* 为保留名）")
         seen.add(name)
         rs = {"name": name, "url": _url(r.get("url"), f"规则集「{name}」的地址")}
         beh, fmt = r.get("behavior", "domain"), r.get("format", "yaml")
@@ -3969,7 +4070,7 @@ _SRC['shunt.sb_rules'] = '''"""规则：mihomo 规则字符串 → sing-box 路�
 import ipaddress
 import re
 
-from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, split_rule
+from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, idna_domain, split_rule
 from .sb_common import SB_GEO
 
 # 值里可能带逗号的规则类型：mihomo 把类型与策略之间的所有项拼回去当值（如 DOMAIN-REGEX,^a{1,3}\\.com$）
@@ -4033,6 +4134,8 @@ class SBRules:
         """单个匹配条件 → sing-box 规则字段（dict）；不支持时返回 None。
         src：规则带「,src」参数（mihomo 按来源地址匹配 IP-CIDR / GEOIP / RULE-SET），以前被忽略、当成目标地址匹配"""
         typ, val = typ.strip().upper(), val.strip()
+        if typ in ("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-WILDCARD"):  # 规则集文件里的中文域名同样转成 punycode
+            val = idna_domain(val)
         if typ == "DOMAIN":
             return {"domain": [val.lower()]}
         if typ == "DOMAIN-SUFFIX":  # 规则集文件里的值没经过 norm_rule：「+.a.com」「*.a.com」同样去掉前缀，否则按字面永远不命中
@@ -4208,7 +4311,7 @@ from urllib.parse import urlsplit
 
 from .base import CN_DNS, DNS_DEFAULT, G_SEL
 from .mihomo import dns_cfg, fix_dns_policy, is_ip_addr, policy_parts
-from .ruleutil import _mh_domain, adblock_scopes, dns_policy_of
+from .ruleutil import AB_RULE_ONLY, _mh_domain, adblock_scopes, dns_policy_of
 def _sb_dns_server(addr, tag, boot, warn, via=None):
     """mihomo DNS 地址（含 #策略组）→ sing-box DNS server。
     via：没写 #策略组 时经哪个出站发出（respect-rules 开启时的代理 DNS）；不传就是直连"""
@@ -4336,7 +4439,7 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
         # 与 mihomo 一致：限定国内直连 / 国外代理的列表只在路由层拦。以前 sing-box 在 DNS 层把它们一律拦成 NXDOMAIN，
         # 「只拦国内直连」的列表连走代理的国外域名也拦了（反之亦然），切换内核后拦截范围不同
         scoped = adblock_scopes(d)
-        bl = [k for k in ab_sets if k != "ad-allow" and k not in scoped]
+        bl = [k for k in ab_sets if k not in AB_RULE_ONLY and k not in scoped]
         if bl:
             rules.append({"rule_set": bl, "action": "predefined", "rcode": "NXDOMAIN"})
 
@@ -4430,16 +4533,16 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
-from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, safe, write_json
+from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, write_json
 from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes
-from .mihomo import BUILTIN_GEO, build_config, build_rule_providers, dns_cfg, policy_parts, tun_params, write_atomic, write_config
+from .mihomo import BUILTIN_GEO, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
 from .sb_yaml import yaml_lite
 from .groups import sb_provider_nodes, sb_sub_cache, sb_sub_meta, sb_sub_outbounds
 from .sb_nodes import sb_outbound
 from .sb_rules import SBRules, geo_srs_entry
-from .ruleutil import LOGICAL_RX, _mh_domain, split_rule
+from .ruleutil import LOGICAL_RX, _mh_domain, split_rule, strip_comment
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
@@ -4851,15 +4954,15 @@ def sb_rule_sets(cfg, warn):
         else:
             url = prov.get("url") or ""
             if re.search(r"\\.srs(?:\\?|$)", url):
-                rule_sets[name] = {"kind": "srs", "url": url, "path": f"rs-{safe(name)}.srs"}
+                rule_sets[name] = {"kind": "srs", "url": url, "path": f"rs-{rs_file(name)}.srs"}
             elif prov.get("format") == "mrs" and "meta-rules-dat" in url and "/meta/" in url:
                 rule_sets[name] = {"kind": "srs", "url": re.sub(r"\\.mrs(\\?|$)", r".srs\\1", url.replace("/meta/", "/sing/")),
-                                   "path": f"rs-{safe(name)}.srs"}
+                                   "path": f"rs-{rs_file(name)}.srs"}
             elif prov.get("format") == "mrs":
                 warn.append(f"规则集「{name}」是 mihomo 专用的 .mrs 格式，sing-box 无法使用，已跳过（可改用 .srs 地址）")
             else:
                 rule_sets[name] = {"kind": "convert", "url": url, "behavior": prov.get("behavior", "domain"),
-                                   "format": prov.get("format", "yaml"), "path": f"rs-{safe(name)}.json"}
+                                   "format": prov.get("format", "yaml"), "path": f"rs-{rs_file(name)}.json"}
     return rule_sets
 
 
@@ -4995,7 +5098,10 @@ def _rule_lines_to_source(text, behavior, fmt, skipped=None):
     logic = []  # classical 里的 AND / OR / NOT：转成 headless 逻辑规则（规则集里各条规则之间是「或」）
     tr = SBRules({}, set(), {}, {})
     for x in items:
-        x = x.strip().strip("'\\"")
+        # 行内注释（「DOMAIN,a.com # 说明」「a.com ! 说明」）：去掉注释保留规则。以前整条被当成无效值跳过，或注释写进了域名
+        x = strip_comment(x.strip()).strip("'\\"").strip()
+        if not x or x[0] in "#!":
+            continue
         if behavior == "ipcidr":
             try:
                 r.setdefault("ip_cidr", []).append(str(ipaddress.ip_network(x, strict=False)))
@@ -5081,6 +5187,7 @@ ASSETS_WAIT = 150  # 并发下载规则集整体最多等这么多秒
 
 def sb_sync_assets(d, force=False, need=None, wait=None):
     """下载 / 转换 sing-box 需要的规则集文件；返回失败列表。wait：整体最多等多少秒（默认 ASSETS_WAIT）"""
+    migrate_ruleset_cache(d)  # 旧版文件名的规则集文件先改名，免得按新文件名全部重新下载
     if need is None:
         need = sb_rule_need(d)
     gh = (d.get("gh_proxy") or "").rstrip("/")
@@ -5213,6 +5320,8 @@ def sb_fetch_missing(d):
 
 def write_sb_config(d, path=None):
     os.makedirs(SB_DIR, exist_ok=True)
+    if path is None:
+        migrate_ruleset_cache(d)
     conf, warn, _ = build_singbox(d)
     SB_STATE["warn"] = warn
     path = path or SB_CONF
@@ -5510,7 +5619,7 @@ from .sb_common import CORES, FORK2_API, FORK2_REPO, FORK_API, FORK_ARCHES, FORK
 from .sb_subs import sb_update_subs
 from .sb_config import check_sb_config, sb_is_fork, sb_sync_assets, sb_version, write_sb_config
 from .core_update import QUIET, CORE_FAIL_LOG, LGBM_FILE, MANUAL_NOTE, _cu, bin_version, copy_replace, core_fail_log, gh_atom_tags, gh_get, lgbm_fetch, mh_fetch, open_url, pick_tag, release_digest
-from .sysopt import sh, svc_restart
+from .sysopt import kill_core_procs, sh, svc_restart
 from .notify import WD, core_alive, notify, set_manual_stop
 from .migrate import restore_selections, snapshot_selections
 def sb_arch():
@@ -5730,6 +5839,21 @@ def core_label(kind, var=""):
     return SB_VARIANTS[var][0] if kind == "singbox" and var in SB_VARIANTS else CORES[kind]
 
 
+def core_bin(kind):
+    """内核种类 → 程序路径"""
+    return SB_BIN if kind == "singbox" else mh_bin(kind)
+
+
+def kill_old_cores(kind):
+    """切换内核后还在跑的其他内核进程（不是 kind 的程序）全部结束，返回个数。
+    rc-service restart 停旧核心时按 pid 文件 + 程序路径匹配，而 /etc/mihomo-panel/core 已改成新内核、init.d 的 command
+    已指向新程序（OpenRC 记下的启动命令被 zap 清掉时就会用它）：匹配不上，旧核心没停、继续占着端口，新核心起不来；
+    旧核心照样应答控制接口，面板还以为切换成功了"""
+    new = os.path.realpath(core_bin(kind))
+    old = tuple(b for b in {SB_BIN, mh_bin("mihomo"), mh_bin("smart")} if b and os.path.realpath(b) != new)
+    return kill_core_procs(bins=old) if old else 0
+
+
 def core_switch_job(kind, gh, variant=None):
     """切换内核：准备程序与数据 → 生成并校验配置 → 写入启动选择 → 重启；失败自动换回原内核。
     sing-box 的几个版本（官方 / reF1nd / MiChongs）各有缓存：缓存里有就直接用，没有才下载"""
@@ -5828,6 +5952,9 @@ def core_switch_job(kind, gh, variant=None):
         _cu("重启核心", 88, f"正在以 {label} 重启核心（局域网会断网几秒）")
         set_manual_stop(False)
         svc_restart(timeout=90)
+        if kill_old_cores(kind):  # 旧内核没被停掉：结束它后再启动一次（新核心多半因端口被占已退出）
+            log_err("切换内核", Exception(f"切换到 {label} 时旧内核进程仍在运行，已结束并重新启动核心"))
+            svc_restart(timeout=90)
         for _ in range(30):
             time.sleep(1)
             if core_alive():
@@ -5846,6 +5973,8 @@ def core_switch_job(kind, gh, variant=None):
             write_core_file(prev)
             _unswap()
             svc_restart(timeout=90)
+            if kill_old_cores(prev):
+                svc_restart(timeout=90)
             raise ValueError(f"{label} 30 秒内未响应，已切回 {prev_label}。" + ("报错：" + log if log else "完整日志见 " + CORE_FAIL_LOG))
         threading.Thread(target=restore_selections, daemon=True).start()
         if dns_auto_fix and d.get("proxy_mode") != "off":
@@ -7789,11 +7918,13 @@ CORE_BINS = None  # 核心可执行文件路径；None 时取 mihomo / mihomo Sm
 _CHECK_ARGS = {"-t", "check", "version", "-v", "format", "rule-set", "generate", "merge"}  # selftest / 校验 / 查版本，不是常驻核心
 
 
-def core_procs():
+def core_procs(bins=None):
     """所有正在运行的核心进程 pid（按可执行文件识别，不依赖 pid 文件）。
     OpenRC 被 zap、服务迁移或手动在 SSH 里运行过的核心不在 pid 文件里：rc-service stop 停不掉它，
-    它占着 9090 / 7890 端口，面板就一直显示「运行中」，新启动的核心也会因端口被占立即退出"""
-    bins = CORE_BINS
+    它占着 9090 / 7890 端口，面板就一直显示「运行中」，新启动的核心也会因端口被占立即退出。
+    bins：只找这些程序的进程（切换内核后找旧内核用）"""
+    if bins is None:
+        bins = CORE_BINS
     if bins is None:
         from .sb_common import SB_BIN
         bins = (MIHOMO_BIN, SMART_BIN, SB_BIN)
@@ -7813,6 +7944,8 @@ def core_procs():
                 args = f.read().split(b"\\0")
         except OSError:
             continue
+        if not args[0]:  # 命令行为空：进程正在 exec（程序已换、命令行还没就位）或已是僵尸，认不出是不是 -t 校验，先不算
+            continue  # 以前这一刻的 mihomo -t 被当成常驻核心（全量单元测试负载高时 Strays.test_detect 偶发多出一个）
         if exe.endswith(" (deleted)"):  # 内核更新替换了二进制，旧进程还在跑
             exe = exe[:-10]
         if os.path.realpath(exe) not in want and exe not in want:
@@ -7823,10 +7956,11 @@ def core_procs():
     return out
 
 
-def kill_core_procs(grace=15):
-    """结束全部核心进程：先 TERM（sing-box 正常退出时才把 Fake-IP 映射写进 cache.db），grace 秒后还在就 KILL。返回结束的个数"""
+def kill_core_procs(grace=15, bins=None):
+    """结束全部核心进程（bins：只结束这些程序的）：先 TERM（sing-box 正常退出时才把 Fake-IP 映射写进 cache.db），
+    grace 秒后还在就 KILL。返回结束的个数"""
     import signal
-    pids = core_procs()
+    pids = core_procs(bins)
     for p in pids:
         try:
             os.kill(p, signal.SIGTERM)
@@ -9576,7 +9710,7 @@ from .sb_config import sb_sync_assets
 from .sysopt import proxy_opener
 from .ruletest import clean_target
 from .logstream import core_stream
-from .ruleutil import DOMAIN_RX, adblock_providers
+from .ruleutil import DOMAIN_RX, adblock_providers, idna_domain, strip_comment
 # 订阅 AdGuard/ABP（||domain^、@@||domain^）、hosts（0.0.0.0 domain）与纯域名列表，转换为 mihomo
 # behavior=domain / format=text 的本地 rule-provider 文件：
 #   ||a.com^ → "+.a.com"（含子域）；hosts / 纯域名 → "a.com"（仅该域名，与 AdGuard Home 语义一致）
@@ -9603,7 +9737,7 @@ def list_id(url):
 
 
 def norm_domain(s):
-    s = s.strip().lower().rstrip(".")
+    s = idna_domain(s.strip()).lower().rstrip(".")
     if not s or "*" in s or not DOMAIN_RX.match(s):
         return None
     return s
@@ -9611,17 +9745,28 @@ def norm_domain(s):
 
 # 元素隐藏 / 脚本注入规则（example.com##.ad、#@#、#?#、#$#、#%#）：只作用于页面元素，不能当成整站拦截
 COSMETIC_RX = re.compile(r"#[@$?%]{0,3}#")
-AB_PARSER = 3  # 解析器版本：变了就让已下载的列表尽快按新规则重新转换（见 schedule.ab_last_update）
+AB_PARSER = 4  # 解析器版本：变了就让已下载的列表尽快按新规则重新转换（见 schedule.ab_last_update）
 
 
-def parse_filter(text, plain_suffix=False):
-    """解析过滤列表文本。返回 (block_suffix, block_exact, allow_suffix, allow_exact, skipped)"""
+AB_MODS = {"important", "badfilter"}  # 能用域名规则等价表达的修饰符；其余（$client= / $dnstype= / $denyallow= …）整条跳过
+
+
+def parse_filter(text, plain_suffix=False, imp=None):
+    """解析过滤列表文本。返回 (block_suffix, block_exact, allow_suffix, allow_exact, skipped)。
+    - 行内注释（「||a.com^ # 说明」「a.com ! 说明」）去掉后照常解析，以前整行被当成无法识别跳过
+    - 中文域名转成 punycode
+    - $badfilter：取消本列表里同一条规则（同样的 @@、|| / |、域名和 $important；只看本列表）
+    - $important：拦截规则照常放进 block，并另记到 imp["bs"] / imp["be"]，列表的 @@ 例外压不住它（见 ab_compose）；
+      @@…$important 例外照常放进 allow，并记到 imp["as"] / imp["ae"]，连 $important 拦截也能放行。imp 为 None 时不收集"""
     bs, be, as_, ae = set(), set(), set(), set()
     skipped = 0
+    abp = []  # [(allow, exact, dom, important)]：$badfilter 可能写在被取消的规则后面，最后统一处理
+    bad = set()
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line[0] in "!#[":
             continue
+        line = strip_comment(line)
         low = line.lower()
         if low.startswith("payload:"):
             continue
@@ -9653,7 +9798,8 @@ def parse_filter(text, plain_suffix=False):
                     skipped += 1
                 continue
             allow, pipes, dom, mods = m.groups()
-            if mods and {x.strip() for x in mods.split(",")} - {"important", ""}:
+            mset = {x.strip() for x in (mods or "").split(",")} - {""}
+            if mset - AB_MODS:
                 skipped += 1  # $client= / $dnstype= / $denyallow= 等修饰符无法用域名规则等价表达
                 continue
             dom = norm_domain(dom)
@@ -9662,10 +9808,11 @@ def parse_filter(text, plain_suffix=False):
                 continue
             # 以前 |a.com^ / @@|a.com^ 被当成无法识别跳过，allow_exact 永远为空；用户白名单里的 @@|a.com^ 仍按后缀（兼容旧行为）
             exact = pipes == "|" and not plain_suffix
-            if allow:
-                (ae if exact else as_).add(dom)
+            key = (bool(allow), exact, dom, "important" in mset)
+            if "badfilter" in mset:
+                bad.add(key)
             else:
-                (be if exact else bs).add(dom)
+                abp.append(key)
             continue
         if low[0] in "|/" or any(c in low for c in "$^*/\\\\"):
             skipped += 1  # 正则、URL 规则、通配符等
@@ -9688,6 +9835,16 @@ def parse_filter(text, plain_suffix=False):
                 be.add(dom)
         else:
             skipped += 1
+    for key in abp:
+        if key in bad:
+            continue
+        allow, exact, dom, important = key
+        if allow:
+            (ae if exact else as_).add(dom)
+        else:
+            (be if exact else bs).add(dom)
+        if important and imp is not None:
+            imp.setdefault(("a" if allow else "b") + ("e" if exact else "s"), set()).add(dom)
     return bs, be, as_, ae, skipped
 
 
@@ -9761,7 +9918,8 @@ def download(url, timeout=60, limit=40 << 20, gh=None):
 def ab_fetch(lst, late=None, sfx=".new"):
     """下载并转换一个列表，写入 <id>.txt / <id>.allow.txt，返回 meta。late 置位（整体超时）后不再写文件"""
     text = download(lst["url"])
-    bs, be, as_, ae, skipped = parse_filter(text)
+    imp = {}
+    bs, be, as_, ae, skipped = parse_filter(text, imp=imp)
     lines, n = domain_lines(bs, be)
     alines, na = domain_lines(as_, ae)
     if not n and not na:
@@ -9771,15 +9929,38 @@ def ab_fetch(lst, late=None, sfx=".new"):
     sfx = sfx if late is not None else ""  # 并发更新：先写 .new，由调用方在锁内确认没超时再换上
     write_lines(os.path.join(AB_DIR, lst["id"] + ".txt" + sfx), lines)
     write_lines(os.path.join(AB_DIR, lst["id"] + ".allow.txt" + sfx), alines)
+    # $important 拦截 / @@…$important 例外：单独存一份，由 ab_compose 汇总成 important.txt / allow-important.txt
+    write_lines(os.path.join(AB_DIR, lst["id"] + ".imp.txt" + sfx), domain_lines(imp.get("bs", set()), imp.get("be", set()))[0])
+    write_lines(os.path.join(AB_DIR, lst["id"] + ".impallow.txt" + sfx), domain_lines(imp.get("as", set()), imp.get("ae", set()))[0])
     return {"count": n, "allow": na, "skipped": skipped, "updated": int(time.time()), "error": "", "parser": AB_PARSER}
+
+
+AB_LIST_FILES = (".txt", ".allow.txt", ".imp.txt", ".impallow.txt")  # 每个订阅列表转换出的文件
 
 
 # 分范围的自定义黑名单：(设置键, 文件名)；对应 rule-provider ad-customcn / ad-customproxy
 AB_SCOPED_BLACK = (("black_cn", "custom-cn.txt"), ("black_proxy", "custom-proxy.txt"))
 
 
+def _read_domains(path, suffix, exact):
+    """读 domain_lines 写出的文件（+.a.com / a.com）并入两个集合；文件不存在忽略"""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("+."):
+                    suffix.add(line[2:])
+                elif line:
+                    exact.add(line)
+    except OSError:
+        pass
+
+
 def ab_compose(d):
-    """根据用户黑/白名单与各列表的 @@ 规则生成 custom.txt / allow.txt"""
+    """根据用户黑/白名单与各列表的 @@ 规则生成 custom.txt / allow.txt，
+    以及 $important：important.txt（不限范围的已启用列表里的 $important 拦截）和 allow-important.txt
+    （能压过 $important 的放行：用户白名单 + 列表里的 @@…$important）。列表普通的 @@ 例外压不住 $important 拦截；
+    限定了范围（只拦国内直连 / 国外代理）的列表里的 $important 按普通拦截处理"""
     ab = d["adblock"]
     bs, be, _, _, _ = parse_filter("\\n".join(ab.get("black") or []), plain_suffix=True)
     write_lines(os.path.join(AB_DIR, "custom.txt"), domain_lines(bs, be)[0])
@@ -9788,20 +9969,19 @@ def ab_compose(d):
         write_lines(os.path.join(AB_DIR, fn), domain_lines(bs, be)[0])
     ws, we, was, wae, _ = parse_filter("\\n".join(ab.get("white") or []), plain_suffix=True)
     suffix, exact = ws | was, we | wae
+    isuf, iex = set(suffix), set(exact)  # 用户白名单永远优先，$important 也压不过
+    bsuf, bex = set(), set()
     for l in ab.get("lists", []):
         if not l.get("enabled", True):
             continue
-        try:
-            with open(os.path.join(AB_DIR, l["id"] + ".allow.txt")) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("+."):
-                        suffix.add(line[2:])
-                    elif line:
-                        exact.add(line)
-        except OSError:
-            pass
+        _read_domains(os.path.join(AB_DIR, l["id"] + ".allow.txt"), suffix, exact)
+        _read_domains(os.path.join(AB_DIR, l["id"] + ".impallow.txt"), isuf, iex)
+        if l.get("scope", "all") not in ("cn", "proxy"):
+            _read_domains(os.path.join(AB_DIR, l["id"] + ".imp.txt"), bsuf, bex)
     write_lines(os.path.join(AB_DIR, "allow.txt"), domain_lines(suffix, exact)[0])
+    write_lines(os.path.join(AB_DIR, "important.txt"), domain_lines(bsuf, bex)[0])
+    # 没有 $important 拦截时放行名单没用：写成空文件，adblock_providers 不引用（免得多一个规则集）
+    write_lines(os.path.join(AB_DIR, "allow-important.txt"), domain_lines(isuf, iex)[0] if bsuf or bex else [])
 
 
 def config_text(d):
@@ -9860,7 +10040,7 @@ def adblock_update(ids=None, apply=True):
             except Exception as e:
                 r = fail(l, str(e)[:200])
             with res_lock:
-                new = [os.path.join(AB_DIR, l["id"] + s) for s in (".txt", ".allow.txt")]
+                new = [os.path.join(AB_DIR, l["id"] + s) for s in AB_LIST_FILES]
                 if not late.is_set():
                     if not r.get("error"):
                         for p in new:
@@ -9969,7 +10149,7 @@ def ab_check(target):
     names = {l["id"]: l["name"] for l in ab["lists"]}
     blocked, allowed = [], []
     ws, we, was, wae, _ = parse_filter("\\n".join(ab.get("white") or []), plain_suffix=True)
-    r = ab_match(host, (ws | was, we | wae))
+    r = r_white = ab_match(host, (ws | was, we | wae))
     if r:
         allowed.append({"name": "自定义白名单", "rule": r})
     for l in ab["lists"]:
@@ -9994,8 +10174,23 @@ def ab_check(target):
         if r:
             sc = {"cn": "（只拦国内直连）", "proxy": "（只拦国外代理）"}.get(l.get("scope"), "")
             blocked.append({"name": names[l["id"]] + sc, "rule": r})
+    # $important：不限范围的列表里的 $important 拦截，只有用户白名单和 @@…$important 能放行（与 ab_compose 一致）
+    imp_hit, imp_ok = [], bool(r_white)
+    for l in ab["lists"]:
+        if not l.get("enabled", True):
+            continue
+        if l.get("scope", "all") not in ("cn", "proxy"):
+            r = ab_match(host, ab_sets(os.path.join(AB_DIR, l["id"] + ".imp.txt")))
+            if r:
+                imp_hit.append({"name": names[l["id"]] + "（$important）", "rule": r})
+        r = ab_match(host, ab_sets(os.path.join(AB_DIR, l["id"] + ".impallow.txt")))
+        if r:
+            imp_ok = True
+    for x in imp_hit:  # 同一个列表的同一条规则在上面已经列过：换成带 $important 标记的名字
+        blocked = [b for b in blocked if not (b["rule"] == x["rule"] and x["name"].startswith(b["name"]))] + [x]
+    hit = bool(blocked) and (not allowed or (bool(imp_hit) and not imp_ok))
     return {"host": host, "enabled": bool(ab.get("enabled")), "blocked_by": blocked, "allowed_by": allowed,
-            "blocked": bool(blocked) and not allowed and bool(ab.get("enabled"))}
+            "blocked": hit and bool(ab.get("enabled"))}
 
 
 def is_fake_ip(host):
@@ -14173,6 +14368,10 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
         b = self.body() if m in ("POST", "PUT", "PATCH", "DELETE") else {}  # 请求体已在 route() 里完整读入
         if not isinstance(b, dict):  # [1] / "x" / 123 这类合法 JSON：以前各接口 b.get 抛 AttributeError，回 500 并写一条错误堆栈
             return self.send(400, {"message": "请求体必须是 JSON 对象"})
+        if p == "/api/core/configs/geo" and m != "POST":
+            # 重新下载全部 GEO / 规则集并重载核心：两个内核都只认 POST（与 mihomo 一致）。以前 mihomo 下原样透传，
+            # 方法由核心判断；sing-box 下单独拦。统一在这里回 405，不经过核心
+            return self.send(405, {"message": "该接口只支持 POST"})
         # 透传到 mihomo external-controller
         if p.startswith("/api/core/") and active_core() == "singbox":
             sub = p[len("/api/core"):]
@@ -14218,8 +14417,6 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
                 return self.reply(*reload_core(force=True))
             if sub == "/upgrade":
                 return self.send(400, {"message": "请在 设置 → 核心 → 内核更新 里更新 sing-box"})
-            if sub == "/configs/geo":
-                return self.send(405, {"message": "请用 POST"})
         if p.startswith("/api/core/"):
             slow = p.endswith("/delay") or p.endswith("/healthcheck")  # 测速可能超过默认 10 秒
             code, raw = core(m, p[len("/api/core"):] + ("?" + q if q else ""), b if b else None, timeout=60 if slow else 10)
@@ -14280,7 +14477,7 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
             return self.wfile.write(b)
         if p == "/api/unlock":
             return self.send(200, unlock_test())
-        if p == "/api/logs":
+        if p == "/api/logs" and m == "GET":  # 只读接口只认 GET（以前任何方法都返回日志）
             from .logclean import core_log_text
             return self.send(200, {"log": core_log_text(300)})
         fn = ROUTES.get((m, p))

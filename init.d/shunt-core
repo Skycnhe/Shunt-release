@@ -53,6 +53,20 @@ start_post() {
 }
 # 先撤规则再停核心：sing-box 正常退出最多要等 15 秒（写 Fake-IP 缓存），以前这段时间局域网流量仍被导向正在退出的核心
 # 只删 nftables 表（表名同 tproxy.sh 的 TABLE）：流量不再被打标记 / 重定向即恢复直连，策略路由等由 stop_post 收尾
-stop_pre() { nft delete table inet mihomo_panel 2>/dev/null; return 0; }
+stop_pre() { _cmd_fix; nft delete table inet mihomo_panel 2>/dev/null; return 0; }
+# 切换内核后 /etc/mihomo-panel/core 已是新内核，上面的 command 指向新程序；OpenRC 记下的启动命令被 zap 清掉（服务状态卡住时
+# 面板会自动 zap）后，停止时按「pid 文件 + 新程序」匹配不上旧核心，报 no matching processes、旧核心继续占着端口，新核心起不来。
+# 停止前按 pid 文件里进程的实际程序改写 command（只认这几个内核程序；内核更新后程序被替换显示的「 (deleted)」去掉）
+CORE_BINS="/usr/local/bin/mihomo /usr/local/bin/mihomo-smart /usr/local/bin/sing-box"
+_cmd_fix() {
+  _p=$(cat "$pidfile" 2>/dev/null)
+  case "$_p" in ''|*[!0-9]*) return 0;; esac
+  _e=$(readlink "/proc/$_p/exe" 2>/dev/null) || return 0
+  _e=${_e% (deleted)}
+  for _b in $CORE_BINS; do
+    [ "$_e" = "$_b" ] && [ "$_b" != "$command" ] && command="$_b"
+  done
+  return 0
+}
 # 再撤一次（幂等，防停止期间别处又挂上）；核心被 KILL 时来不及撤的 TUN 策略路由 / auto-redirect 表顺带清掉（有核心进程在跑时不动）
 stop_post() { /opt/mihomo-panel/tproxy.sh stop leftovers; return 0; }  # 旧版 tproxy.sh 忽略第二个参数，只做 stop
