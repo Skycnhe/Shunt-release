@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.24"
+PANEL_VERSION = "8.10.25"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.24"
+PANEL_VERSION = "8.10.25"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1820,7 +1820,7 @@ def clean_custom_group(b):
     return g
 '''
 _SRC['shunt.mihomo'] = '''"""生成配置"""
-import ipaddress, json, os, re, threading
+import ipaddress, json, os, re, threading, time
 
 from .base import (
     AUTO_ORDER, BUILTIN_POLICIES, CN_APP_DOMAINS, CONF_DIR, CTRL_HOST, CTRL_PORT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, DOH_DOMAINS, DOH_IPS, G_AI,
@@ -1859,6 +1859,29 @@ def drop_ruleset_cache(name):
             except OSError:
                 pass
     return n > 0
+
+
+def drop_removed_rulesets(prev, d):
+    """整个删掉的规则集（prev 里有、d 里没有）：删掉它的 mihomo 缓存和 sing-box 文件（新旧文件名）。
+    只删没有剩下的规则集认领的文件：旧文件名 safe(名) 可能与剩下的某个规则集相同（「A.B」与「A_B」），那份留给迁移处理。
+    以前只靠下次迁移清理，删掉的规则集的新文件名缓存一直留在硬盘上。返回删掉的文件数"""
+    from .sb_common import SB_RULE_DIR
+    left = _rs_names(d)
+    gone = set(_rs_names(prev)) - set(left)
+    own = {rs_file(n) for n in left} | {safe(n) for n in left}
+    n_del = 0
+    for n in gone:
+        for stem in (rs_file(n), safe(n)):
+            if stem in own:
+                continue
+            for folder, pre, exts in ((os.path.join(CONF_DIR, "rules"), "", RS_MH_EXTS), (SB_RULE_DIR, "rs-", RS_SB_EXTS)):
+                for ext in exts:
+                    try:
+                        os.remove(os.path.join(folder, f"{pre}{stem}.{ext}"))
+                        n_del += 1
+                    except OSError:
+                        pass
+    return n_del
 
 
 RS_MH_EXTS = ("yaml", "mrs", "list")  # mihomo 规则集缓存 ./rules/<名>.<扩展名>
@@ -1903,22 +1926,43 @@ def _rs_stem(fn, pre, exts):
     return stem if dot and stem and ext in exts else None
 
 
-def migrate_ruleset_cache(d):
+def _rs_names(d):
+    return [r["name"] for r in (d or {}).get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)]
+
+
+RS_ORPHAN_GRACE = 300  # 新文件名格式的无主缓存修改时间在这么多秒内的先不删：可能是并发保存刚加的规则集、核心正在下载
+_RS_STARTUP = {"names": None}  # 启动时迁移过的规则集名；之后只有这些规则集能沿用旧文件名的缓存
+
+
+def migrate_ruleset_cache(d, startup=False):
     """v8.10.22 起规则集缓存文件名带哈希（rs_file）。旧文件名 safe(名) 的缓存：
     - 只有一个规则集用这个旧名：改名成新文件名接着用（不用重新下载，与升级前内容一致）
     - 几个规则集只差符号、共用过这个旧名：分不清是谁的，删掉，各自按自己的地址重新下载
     - 新文件已存在（可能是核心刚下载的新内容）：绝不覆盖，旧文件直接删掉
-    - 没有任何当前规则集认领的旧文件名缓存（规则集已删除等）：删掉。否则以后新建一个名字恰好等于这个旧文件名的
-      规则集（「A.B」的旧文件名是「A_B」，再新建「A_B」）会把别人的旧列表当成自己的缓存沿用
+    清理：按当前规则集的实际名字算出应有的文件名（新：safe(名)_<sha1 前 8 位>；旧：safe(名)），两者都不是的规则集缓存
+    就是无主文件，删掉（规则集已删除留下的新旧文件都算）。以前按「是否以 _ + 8 位十六进制结尾」猜新旧格式，
+    旧文件名本身恰好这样结尾的（规则集「x_deadbeef」）永远删不掉，删除的规则集的新文件名缓存也一直留着。
+    看起来像新文件名、且刚写过（RS_ORPHAN_GRACE 内）的先保留：可能是并发保存刚加的规则集，核心正在下载。
+    不动 geosite-* / geoip-* / ad-* 等不以 rs- 开头的 sing-box 文件、临时文件和扩展名不对的文件。
+    startup=True（面板启动、开始处理请求之前调用）：记下此刻的规则集，之后新加的规则集不再沿用旧文件名缓存——
+    旧文件名缓存只可能是升级前留下的，启动时没有规则集认领的已在这次清掉，即使没删掉也绝不会被同名的新规则集当成自己的。
     迁移本身加锁，不会两个线程同时改名同一批文件。返回处理的文件数"""
-    names = [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)]
+    names = _rs_names(d)
+    keep = set(names)
+    try:  # 调用方的 d 可能比 data.json 旧（定时任务、下载线程）：并发保存刚加的规则集的文件同样要保留
+        from .data import load
+        keep.update(_rs_names(load()))
+    except Exception:
+        pass
     cnt = {}
     for n in names:
         cnt[safe(n)] = cnt.get(safe(n), 0) + 1
-    current = {rs_file(n) for n in names}
+    want_new = {rs_file(n) for n in keep}
+    want_old = {safe(n) for n in keep}
     from .sb_common import SB_RULE_DIR
     done = 0
     with _RS_MIGRATE_LOCK:
+        boot = _RS_STARTUP["names"]
         for folder, pre, exts in ((os.path.join(CONF_DIR, "rules"), "", RS_MH_EXTS), (SB_RULE_DIR, "rs-", RS_SB_EXTS)):
             for n in names:
                 old, new = safe(n), rs_file(n)
@@ -1926,8 +1970,10 @@ def migrate_ruleset_cache(d):
                     src = os.path.join(folder, f"{pre}{old}.{ext}")
                     if not os.path.isfile(src):
                         continue
+                    # 启动之后才加的规则集：旧文件名缓存不是它的（只是名字撞上了升级前别的规则集留下的文件）
+                    mine = cnt[old] == 1 and (startup or boot is None or n in boot)
                     try:
-                        if not (cnt[old] == 1 and _move_noclobber(src, os.path.join(folder, f"{pre}{new}.{ext}"))):
+                        if not (mine and _move_noclobber(src, os.path.join(folder, f"{pre}{new}.{ext}"))):
                             os.remove(src)
                         done += 1
                     except OSError:
@@ -1936,16 +1982,25 @@ def migrate_ruleset_cache(d):
                 files = os.listdir(folder)
             except OSError:
                 continue
+            now = time.time()
             for fn in files:
                 stem = _rs_stem(fn, pre, exts)
-                # 旧文件名：不是「_8 位哈希」结尾（旧名本身恰好这样结尾的分不出来，保留），也不是当前规则集的新文件名
-                if stem is None or stem in current or _RS_NEW_RX.search(stem):
+                if stem is None or stem in want_new:
+                    continue
+                path = os.path.join(folder, fn)
+                if stem in want_old:
+                    # 当前规则集的旧文件名：上面没能改名 / 删掉（出错）的留着，下次再迁移；
+                    # 启动之后才加的同名规则集认领不了（上面已删），这里不会走到
                     continue
                 try:
-                    os.remove(os.path.join(folder, fn))
+                    if _RS_NEW_RX.search(stem) and now - os.path.getmtime(path) < RS_ORPHAN_GRACE:
+                        continue
+                    os.remove(path)
                     done += 1
                 except OSError:
                     pass
+        if startup:
+            _RS_STARTUP["names"] = set(keep)
     return done
 
 
@@ -2868,26 +2923,33 @@ def reload_core(prev=None, force=False):
     except Exception as e:
         log_err("下载新引用的规则集", e)
     with RELOAD_LOCK:  # 重载整体串行：替换配置、热重载、被核心拒绝后的回滚不能与另一次重载交错
+        st = {}
+        _RELOAD_ST.__dict__.setdefault("stack", []).append(st)  # _reload_core 记下生成配置用的数据（重入时各用各的）
         try:
             return _reload_core(prev, force)
         except Exception as e:
             log_err("重载核心配置", e, tb=True)  # 临时配置文件已由 _reload_core 清理
             if prev is None:
                 return False, "生成配置失败：" + str(e)[:300]
-            _rollback(prev)
+            _rollback(prev, applied=st.get("applied"))  # 同样只退回这次改过的部分，不抹掉期间别的保存
             return False, "生成配置失败，已撤销本次修改：" + str(e)[:300]
+        finally:
+            _RELOAD_ST.stack.pop()
 
 
 # 两次保存同时触发重载时，以前替换正式配置之后的热重载 / 回滚在锁外：A 被 mihomo 拒绝后按 A 的旧数据重写 config.yaml
 # 并重载，可能夹在 B 替换配置和 B 热重载之间，B 生效的其实是 A 回滚出的旧配置；sing-box 起不来时的回滚同理。
 # 现在整个 reload_core 串行（可重入：重载里再触发重载不会自锁）。加锁顺序固定为 RELOAD_LOCK → LOCK
 RELOAD_LOCK = threading.RLock()
+_RELOAD_ST = threading.local()
 
 
 def _revert_data(prev, applied=None):
-    """撤销一次修改：data.json 恢复为 prev。applied 是这次重载生成配置时用的数据：
-    之后又有别的保存（data.json 已不等于 applied）时只把这次改过的顶层项退回 prev，别的保存改的其他项保留，
-    以前整份写回 prev，并发的另一次保存（设备备注、另一个页面的设置）被一起抹掉。须在 LOCK 内调用"""
+    """撤销一次修改：data.json 恢复为 prev。applied 是这次重载生成配置时用的数据。
+    之后又有别的保存（data.json 已不等于 applied）时按 prev / applied / 当前三方比较，只退回这次改过、且当前仍等于 applied 的部分
+    （_merge3）：字典逐键、规则集 / 订阅等按名字、规则等文本列表按条目，别的保存改的地方保留。
+    v8.10.24 只按顶层项退回，并发保存改了同一项（如两个页面都改了规则）时那一项整体退回 prev，对方的改动被一起抹掉。
+    局限：这次只调整了顺序的列表不还原顺序；同一个值两边都改了的，保留后来的（它会由那次保存自己的重载校验）。须在 LOCK 内调用"""
     if applied is None:
         save(prev)
         return
@@ -2895,16 +2957,73 @@ def _revert_data(prev, applied=None):
     if cur == applied:
         save(prev)
         return
-    for k in set(prev) | set(applied):
-        if prev.get(k, _MISSING) != applied.get(k, _MISSING):
-            if k in prev:
-                cur[k] = prev[k]
-            else:
-                cur.pop(k, None)
-    save(cur)
+    save(_merge3(prev, applied, cur))
 
 
 _MISSING = object()
+
+
+def _merge3(p, a, c):
+    """三方合并：撤销 p → a 这次修改，保留 a → c 之间别人的修改。返回撤销后的值（_MISSING 表示应删掉这一项）"""
+    if c == a:
+        return p
+    if p == a:
+        return c
+    if isinstance(p, dict) and isinstance(a, dict) and isinstance(c, dict):
+        out = dict(c)
+        for k in set(p) | set(a) | set(c):
+            v = _merge3(p.get(k, _MISSING), a.get(k, _MISSING), c.get(k, _MISSING))
+            if v is _MISSING:
+                out.pop(k, None)
+            else:
+                out[k] = v
+        return out
+    if isinstance(p, list) and isinstance(a, list) and isinstance(c, list):
+        kp, ka, kc = _item_keys(p), _item_keys(a), _item_keys(c)
+        if kp is not None and ka is not None and kc is not None:
+            return _merge_list(p, a, c, kp, ka, kc)
+    return c  # 同一个值两边都改了（或结构对不上）：保留后来的，不抹掉别人的保存
+
+
+def _item_keys(lst):
+    """列表各项的身份：带 name 的字典按名字、文本 / 数字按值；有重复或分不清时返回 None（不逐项合并）"""
+    keys = []
+    for x in lst:
+        if isinstance(x, dict) and isinstance(x.get("name"), str):
+            k = ("n", x["name"])
+        elif isinstance(x, (str, int, float)) and not isinstance(x, bool):
+            k = ("v", type(x).__name__, x)
+        else:
+            return None
+        keys.append(k)
+    return keys if len(set(keys)) == len(keys) else None
+
+
+def _merge_list(p, a, c, kp, ka, kc):
+    mp, ma = dict(zip(kp, p)), dict(zip(ka, a))
+    seq, val = [], {}
+    for k, x in zip(kc, c):
+        if k in ma and k in mp:
+            v = _merge3(mp[k], ma[k], x)
+            if v is _MISSING:
+                continue
+        elif k in ma and x == ma[k]:
+            continue  # 这次新加的、别人没再改：撤掉
+        else:
+            v = x  # 别人新加的，或这次加了之后又被别人改过
+        seq.append(k)
+        val[k] = v
+    for i, k in enumerate(kp):  # 这次删掉的、当前也没有：按原来的位置放回（跟在原来前面那一项后面）
+        if k in ma or k in val:
+            continue
+        pos = 0
+        for j in range(i - 1, -1, -1):
+            if kp[j] in val:
+                pos = seq.index(kp[j]) + 1
+                break
+        seq.insert(pos, k)
+        val[k] = mp[k]
+    return [val[k] for k in seq]
 
 
 def _rollback(prev, sb=None, applied=None):
@@ -2962,6 +3081,8 @@ def _reload_core(prev, force=False):
             with LOCK:
                 d = load()
                 applied = load()  # 生成配置可能改动 d：另留一份原样的，回滚时判断之后有没有别的保存
+                if getattr(_RELOAD_ST, "stack", None):
+                    _RELOAD_ST.stack[-1]["applied"] = applied
                 ver = config_version()
                 sb = active_core(d) == "singbox"
                 final = SB_CONF if sb else os.path.join(CONF_DIR, "config.yaml")
@@ -13592,7 +13713,7 @@ from .base import (
 from .data import config_version, load, migrate_names, normalize, save, update
 from .links import q1
 from .groups import provider_rev
-from .mihomo import dns_cfg, drop_ruleset_cache, safe_dev
+from .mihomo import dns_cfg, drop_removed_rulesets, drop_ruleset_cache, safe_dev
 from .core import reload_core
 from .corehttp import core
 from .sb_common import CORES, SB_STATE, active_core, core_conf_path
@@ -14025,6 +14146,7 @@ class SysAPI:
         d = load()
         msg = "已保存"
         if "rulesets" in new:  # 新增 / 同名替换（换了地址、类型、格式）的规则集：不再沿用旧地址的缓存文件
+            drop_removed_rulesets(prev, d)  # 整个删掉的规则集：缓存文件一并删掉
             changed = rs_changed(prev, d)
             for n in changed:
                 drop_ruleset_cache(n)
@@ -14676,7 +14798,7 @@ from . import adblock, stats
 from .base import CERT, KEY, PANEL_DIR, PORT
 from . import base
 from .data import load, update
-from .mihomo import dns_cfg
+from .mihomo import dns_cfg, migrate_ruleset_cache
 from .sb_common import active_core, write_core_file
 from .sb_config import write_active_config
 from .sysopt import opt_fix_ulimit, opt_migrate_confd, rfile, sh
@@ -14774,6 +14896,15 @@ def default_tz():
     return True
 
 
+def _startup_rs_migrate(d):
+    """规则集缓存迁移 / 清理在启动时、处理任何请求之前先做一次。以前要等第一次写配置才迁移：升级后到那之前新加一个
+    名字恰好等于某个无主旧文件名的规则集（已删除的「A.B」留下 A_B.yaml，再新建「A_B」），会把别人的旧列表当成自己的缓存沿用"""
+    try:
+        migrate_ruleset_cache(d, startup=True)
+    except Exception as e:
+        log_err("规则集缓存改名", e)
+
+
 def main():
     """命令行入口：带参数时执行一次性命令，否则启动面板"""
     default_tz()
@@ -14790,6 +14921,7 @@ def main():
         except Exception as e:
             print("文件句柄修正失败：", e, file=sys.stderr)
         dd = load()
+        _startup_rs_migrate(dd)
         write_core_file(active_core(dd))
         print(write_active_config(dd))
         try:  # init.d 的 start_post 由 tproxy.sh 直接读，不必再起一个 Python 跑 --tpenv
@@ -14841,6 +14973,7 @@ def main():
         os.remove(os.path.join(PANEL_DIR, "sessions.json"))
     except FileNotFoundError:
         pass
+    _startup_rs_migrate(d)  # 开始处理请求、启动定时任务之前
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # 让 finally 有机会保存统计
     STATS = stats.STATS = Stats()
     AD_STATS = adblock.AD_STATS = AdStats()
