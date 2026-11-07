@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.22"
+PANEL_VERSION = "8.10.23"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.22"
+PANEL_VERSION = "8.10.23"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1285,7 +1285,7 @@ def complete_rule(rule, default):
 _IDN_SUB_RX = re.compile(r"((?:^|\\()\\s*DOMAIN(?:-SUFFIX|-WILDCARD)?\\s*,\\s*)([^,()]+)", re.I)
 
 
-def norm_rule(rule):
+def norm_rule(rule, policies=None):
     """规范化自定义规则里两种内核都会「静默不生效」的写法（v8.4.15）：
     - DOMAIN-SUFFIX 的值带前导「.」「+.」「*.」：mihomo 按字面匹配，永远命中不了（sing-box 只去掉了「.」，「+.」「*.」同样失效）
       → 去掉前缀（后缀规则本来就含域名自身及所有子域）
@@ -1296,12 +1296,14 @@ def norm_rule(rule):
       → 去掉（逻辑规则的 no-resolve 要写在子规则里，如 (IP-CIDR,1.2.3.0/24,no-resolve)）
     - 行内注释（「DOMAIN,a.com,DIRECT # 说明」）：去掉注释保留规则。以前注释被当成策略名的一部分，规则被换成节点选择
     - DOMAIN / DOMAIN-SUFFIX / DOMAIN-WILDCARD 的中文域名转成 punycode（两个内核按 xn-- 形式匹配）
-    其余逻辑规则、注释、空行原样返回"""
+    其余逻辑规则、注释、空行原样返回。
+    policies：现有策略名集合。策略名本身带「 #」「 !」（节点「香港 #1」、组「Netflix !」）时整条按原样保留，
+    不当成行内注释截掉（以前截成「香港」，策略不存在：保存报错 / 已保存的规则被换成节点选择）"""
     s = rule.strip()
     if not s or s.startswith("#"):
         return rule
     c = strip_comment(s)
-    if c != s:
+    if c != s and not (policies and split_rule(s)[1] in policies):
         s = rule = c
     if not s.isascii():
         s = rule = _IDN_SUB_RX.sub(lambda m: m.group(1) + idna_domain(m.group(2)), s)
@@ -1429,7 +1431,7 @@ from .data import load, read_json, safe, write_json
 from .links import reserved_names
 from .sb_common import SB_SUB_DIR, active_core
 PROV_FILE = os.path.join(PANEL_DIR, "provider_nodes.json")
-PROV = {"t": 0, "data": None, "rev": 0}  # rev：订阅节点名单每变化一次加一（/api/state 的策略组缓存键、/api/ping 版本号用）
+PROV = {"t": 0, "data": None, "rev": 0, "pending": set()}  # pending：mihomo 里还没加载完的订阅名  # rev：订阅节点名单每变化一次加一（/api/state 的策略组缓存键、/api/ping 版本号用）
 RX_CACHE = {}
 
 
@@ -1528,10 +1530,32 @@ def provider_nodes(fresh=False):
     j = None if os.environ.get("PANEL_OFFLINE") else core_json("/providers/proxies", timeout=3)
     if j is not None:
         data = {}
-        for name, p in (j.get("providers") or {}).items():
-            if p.get("vehicleType") in ("HTTP", "File", "Inline") and p.get("proxies") is not None:
-                data[name] = [x.get("name") for x in p["proxies"] if x.get("name")]
-        if data != read_json(PROV_FILE, None):
+        pending = set()  # 还没加载完的订阅
+        cache = read_json(PROV_FILE, None)
+        old = cache if isinstance(cache, dict) else {}
+        provs = j.get("providers") if isinstance(j, dict) else None
+        for name, p in (provs if isinstance(provs, dict) else {}).items():
+            if not isinstance(p, dict) or p.get("vehicleType") not in ("HTTP", "File", "Inline") or p.get("proxies") is None:
+                continue
+            if not prov_loaded(p):
+                pending.add(name)
+                # mihomo 刚重启、订阅还没从缓存文件 / 网络加载完：节点是空列表，不是「订阅没节点」。以前照样当成空订阅，
+                # 刷新地区分组时把各地区组全删了（组里的选择也丢了），等加载完才又加回来。沿用上次已知的名单，没有就当作未知
+                if isinstance(old.get(name), list):
+                    data[name] = old[name]
+                continue
+            data[name] = [x.get("name") for x in p["proxies"] if isinstance(x, dict) and x.get("name")]
+        try:
+            subs = [s["name"] for s in load().get("subs") or []]
+        except Exception:
+            subs = []
+        for name in subs:  # 核心还没应用配置（只有 default provider）：订阅不在结果里，同样沿用上次的名单
+            if name not in data and isinstance(old.get(name), list):
+                data[name] = old[name]
+            if name not in (provs if isinstance(provs, dict) else {}):
+                pending.add(name)
+        PROV["pending"] = pending
+        if data != cache:
             try:
                 write_json(PROV_FILE, data)
             except OSError as e:
@@ -1540,6 +1564,15 @@ def provider_nodes(fresh=False):
         data = read_json(PROV_FILE, {})
     prov_set(now, data)
     return data
+
+
+def prov_loaded(p):
+    """mihomo /providers/proxies 里的一个 provider 是否已加载：有节点，或 updatedAt 不是零值（Go 零时间 0001-01-01）。
+    刚启动、还没从缓存文件 / 网络加载完（或首次下载失败、没有缓存）时节点为空且 updatedAt 是零值"""
+    if p.get("vehicleType") == "Inline" or p.get("proxies"):
+        return True
+    ua = str(p.get("updatedAt") or "")
+    return bool(ua) and not ua.startswith("0001-")
 
 
 def prov_set(now, data):
@@ -2131,7 +2164,7 @@ def mihomo_tun(d):
 
 def fix_rule_policy(rule, policies):
     """自定义规则引用了不存在的策略组时改用节点选择，避免整份配置无法加载"""
-    rule = complete_rule(norm_rule(rule.strip()), G_SEL)
+    rule = complete_rule(norm_rule(rule.strip(), policies), G_SEL)
     if not rule or rule.startswith("#"):
         return None
     body, pol, flags = split_rule(rule)
@@ -2329,8 +2362,14 @@ def validate_dns(dc, d):
     return errs
 
 
-def bad_rule_policies(rules, d):
-    pol = {g["name"] for g in build_config(dict(d, rules=[]))["proxy-groups"]} | BUILTIN_POLICIES | {n["proxy"]["name"] for n in d["nodes"]}
+def rule_policy_names(d):
+    """自定义规则可以引用的策略名：策略组 + 内置策略 + 节点名"""
+    return {g["name"] for g in build_config(dict(d, rules=[]))["proxy-groups"]} | BUILTIN_POLICIES | {n["proxy"]["name"] for n in d["nodes"]}
+
+
+def bad_rule_policies(rules, d, pol=None):
+    if pol is None:
+        pol = rule_policy_names(d)
     bad = []
     for r in rules:
         _, p, _ = split_rule(r)  # 逻辑规则按匹配部分的括号收尾取策略（策略名可带括号）
@@ -2706,8 +2745,8 @@ from .base import CONF_DIR, LOCK, wd_hold
 from .errlog import log_err
 from .corehttp import core, core_json
 from .data import config_version, load, read_json, save
-from .groups import provider_nodes
-from .mihomo import build_config, check_config, write_config
+from .groups import PROV, provider_nodes
+from .mihomo import build_config, check_config, migrate_ruleset_cache, write_config
 from .sb_common import SB_CONF, active_core
 from .sb_config import build_singbox, check_sb_config, sb_fetch_missing, sb_hot_reload, sb_log_error, sb_rule_need, sb_running_current, sb_sync_assets, write_sb_config
 from .sysopt import svc_restart
@@ -2780,6 +2819,13 @@ RELOAD_TRIES = 3  # 校验期间配置又被改了：重新生成再校验，最
 
 def _gen_config(d, sb, tmp):
     """生成待校验的配置到临时文件 tmp"""
+    # 旧版文件名的规则集缓存先改名（write_config / write_sb_config 只在写正式配置时做，这里写的是临时文件）：
+    # 面板升级后核心没重启、直接热重载时，以前 mihomo 按新文件名找不到缓存，规则集全部重新下载，下载不到（GitHub 被墙）的
+    # 规则集为空、对应分流规则失效
+    try:
+        migrate_ruleset_cache(d)
+    except Exception as e:
+        log_err("规则集缓存改名", e)
     if sb:
         try:  # 广告 / 白名单列表改动后，先把对应的 sing-box 规则集文件转换好，否则这些规则会被跳过
             need = {k: v for k, v in sb_rule_need(d).items() if v.get("kind") == "adblock"}
@@ -2926,7 +2972,8 @@ def refresh_after_sub(name, wait=90):
         end = time.time() + wait
         while time.time() < end:
             time.sleep(10)
-            if name in provider_nodes(fresh=True):
+            # 要等核心真正加载完这个订阅：名单里有它、且不是沿用的旧缓存（换了链接时缓存里还是旧链接的节点）
+            if name in provider_nodes(fresh=True) and name not in PROV.get("pending", ()):
                 break
         try:
             refresh_regions()
@@ -4533,9 +4580,9 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
-from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, write_json
+from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
 from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes
-from .mihomo import BUILTIN_GEO, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
+from .mihomo import BUILTIN_GEO, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
 from .sb_yaml import yaml_lite
@@ -5284,6 +5331,15 @@ def sb_drop_ruleset_files(d, names):
             for p in (rsd["path"], rsd["path"] + ".skip"):
                 try:
                     os.remove(os.path.join(SB_RULE_DIR, p))
+                except OSError:
+                    pass
+    # 旧版文件名（rs-<safe(名)>，不带哈希）的文件一并删掉：否则随后 write_config 里的 migrate_ruleset_cache
+    # 把它改名成新文件名，切换到 sing-box 时照样沿用旧地址的内容
+    for n in want:
+        if isinstance(n, str):
+            for ext in RS_SB_EXTS:
+                try:
+                    os.remove(os.path.join(SB_RULE_DIR, f"rs-{safe(n)}.{ext}"))
                 except OSError:
                     pass
 
@@ -10819,15 +10875,16 @@ def sched_loop():
                 if time.time() - max(last, SCHED["done"].get("sb_subs", 0)) >= iv:
                     SCHED["done"]["sb_subs"] = time.time()
                     ok_, bad_ = sb_update_subs(d=d)
-                    refresh_regions()
+                    try:  # 出错不能打断这一轮：上面 daily_due 已把到点的定点任务记成今天执行过，跳过就漏一天
+                        refresh_regions()
+                    except Exception as e:
+                        log_err("订阅自动更新：刷新地区分组", e)
                     if bad_:
                         sched_event("订阅自动更新：✗ " + "；".join(bad_)[:200])
-            bm = bg_meta()
-            if bm.get("daily") and bm.get("url") and time.time() - max(int(bm.get("t") or 0), SCHED["done"].get("bg", 0)) >= 86400:
-                SCHED["done"]["bg"] = time.time()  # 失败也等一天，避免反复重试
-                if bg_fetch(bm["url"])[0]:
-                    bm["t"] = int(time.time())
-                    bg_meta_save(bm)
+            try:
+                _bg_tick()
+            except Exception as e:
+                print("background image error", e, flush=True)
             ab = d["adblock"]
             if ab.get("enabled") and ab.get("lists") and int(ab.get("interval") or 0):
                 if time.time() - max(AB_STATE["last"], ab_last_update()) >= int(ab["interval"]):
@@ -10849,7 +10906,11 @@ def sched_loop():
                     if not core_alive():  # 刚开机 / 核心重启中：先等核心起来，否则国外列表只能直连（常被污染）
                         AB_STATE["retry"] = time.time() + 60
                         continue
-                ok, msg = run_task(k)
+                try:  # 一个任务抛异常不能连累同一轮的其他任务（它们已被 daily_due 记成今天执行过，跳过就漏一天）
+                    ok, msg = run_task(k)
+                except Exception as e:
+                    log_err("定时任务：" + TASK_NAMES[k], e)
+                    ok, msg = False, f"执行出错：{str(e)[:150]}"
                 if k == "adblock":
                     n = AB_STATE.get("retries", 0)
                     if not ok and n < AB_RETRY_MAX:
@@ -10860,6 +10921,16 @@ def sched_loop():
                     sched_event(f"{TASK_NAMES[k]}：{'✓' if ok else '✗'} {msg}")
         except Exception as e:
             print("schedule error", e, flush=True)
+
+
+def _bg_tick():
+    """每天更新一次背景图（在 sched_loop 里调用；出错不影响同一轮的定时任务）"""
+    bm = bg_meta()
+    if bm.get("daily") and bm.get("url") and time.time() - max(int(bm.get("t") or 0), SCHED["done"].get("bg", 0)) >= 86400:
+        SCHED["done"]["bg"] = time.time()  # 失败也等一天，避免反复重试
+        if bg_fetch(bm["url"])[0]:
+            bm["t"] = int(time.time())
+            bg_meta_save(bm)
 
 
 AB_RETRY_MAX = 3  # 广告列表部分下载失败后的补下次数（每次间隔 10 分钟）
@@ -13154,7 +13225,7 @@ from . import adblock
 from .base import AB_DIR, AB_PRESETS, DNS_DEFAULT, DNS_LISTS, G_SEL, LOCK
 from .data import HISTORY_FILE, HISTORY_SKIP, load, migrate_names, read_json, save, update
 from .ruleutil import AB_SCOPES, complete_rule, norm_rule
-from .mihomo import bad_rule_policies, dns_cfg, validate_dns
+from .mihomo import bad_rule_policies, dns_cfg, rule_policy_names, validate_dns
 from .core import reload_core
 from .corehttp import core, core_json
 from .sb_common import active_core
@@ -13287,8 +13358,10 @@ class RulesAPI:
         # 必须是文本列表：以前缺省 / 传成数字时 500，[1] 这类非文本条目被跳过后当成空列表，把全部规则清空
         if not isinstance(rules_in, list) or not all(isinstance(r, str) for r in rules_in):
             return self.send(400, {"message": "rules 必须是规则文本列表"})
-        rules = [complete_rule(norm_rule(r.strip()), G_SEL) for r in rules_in if r.strip()]
-        bad = bad_rule_policies([r for r in rules if not r.startswith("#")], load())
+        d0 = load()
+        pol = rule_policy_names(d0)  # 策略名本身带「 #」的规则不当成行内注释截掉
+        rules = [complete_rule(norm_rule(r.strip(), pol), G_SEL) for r in rules_in if r.strip()]
+        bad = bad_rule_policies([r for r in rules if not r.startswith("#")], d0, pol)
         if bad:
             return self.send(400, {"message": "以下规则的策略不存在：" + "；".join(bad[:5])})
         prev = update(lambda d: d.update(rules=rules))
