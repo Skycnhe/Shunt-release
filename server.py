@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.23"
+PANEL_VERSION = "8.10.24"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.23"
+PANEL_VERSION = "8.10.24"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1188,8 +1188,12 @@ _DOTS = str.maketrans({"\\u3002": ".", "\\uff0e": ".", "\\uff61": "."})  # 中�
 def idna_domain(x):
     """中文 / 国际化域名 → punycode（xn--…）：「中国.cn」→「xn--fiqs8s.cn」。
     两个内核和 DNS 收到的查询都是 punycode 形式，以前原样写进规则 / 广告拦截列表，永远命中不了。
-    保留前缀「+.」「*.」「.」和通配标签（*、?）；纯 ASCII 原样返回（只转小写由调用方决定）；转换失败返回原值"""
-    if not isinstance(x, str) or x.isascii():
+    保留前缀「+.」「*.」「.」和通配标签（*、?）；纯 ASCII 原样返回（只转小写由调用方决定）；转换失败返回原值。
+    先去掉首尾空白：以前「 中国.cn」把空格当成第一个标签的一部分编码，得到「xn-- -….cn」这种永远命中不了的值"""
+    if not isinstance(x, str):
+        return x
+    x = x.strip()
+    if x.isascii():
         return x
     s = x.translate(_DOTS)
     if s.isascii():
@@ -1209,14 +1213,35 @@ def idna_domain(x):
 # 行内注释：规则后面跟「空白 + # 或 !」的部分（「DOMAIN,a.com,DIRECT # 说明」「||a.com^ ! 说明」）。
 # 要求前面有空白：DOMAIN-REGEX 里的「(?!…)」、AdGuard 的「##」元素隐藏规则不受影响
 INLINE_COMMENT_RX = re.compile(r"\\s+[#!].*$")
+# 值本身是正则 / 路径 / 任意文本的规则类型：值里的「 #」「 !」是值的一部分（「DOMAIN-REGEX,^a #b$」
+# 「PROCESS-PATH,C:\\\\My App !\\\\x.exe」），只去掉值后面（策略 / 参数部分）的注释
+VERBATIM_TYPES = frozenset(("DOMAIN-REGEX", "PROCESS-PATH", "PROCESS-PATH-REGEX", "PROCESS-NAME", "PROCESS-NAME-REGEX",
+                            "URL-REGEX", "USER-AGENT", "IN-NAME", "IN-USER"))
+
+
+def _comment_floor(s):
+    """注释最早可以从哪个位置开始：值原样保留的规则类型返回值结束处（第二个逗号；没有就是行尾，不去注释），
+    逻辑规则返回匹配部分的「)」之后（子规则里可能有 DOMAIN-REGEX），其他返回 0"""
+    t = s[1:].lstrip() if s.startswith("-") else s  # YAML 列表项「- DOMAIN-REGEX,…」
+    off = len(s) - len(t)
+    if LOGICAL_RX.match(t):
+        e = _logical_end(t)
+        return off + e + 1 if e >= 0 else 0
+    i = t.find(",")
+    if i < 0 or t[:i].strip().strip("'\\"").upper() not in VERBATIM_TYPES:
+        return 0
+    j = t.find(",", i + 1)
+    return off + j if j >= 0 else len(s)
 
 
 def strip_comment(line):
-    """去掉行内注释，保留规则本身。整行注释（# / ! 开头）原样返回，由调用方跳过"""
+    """去掉行内注释，保留规则本身。整行注释（# / ! 开头）原样返回，由调用方跳过。
+    DOMAIN-REGEX / PROCESS-PATH 等规则的值里的「 #」「 !」不当注释（以前正则 / 路径被截断，规则改了意思或配置加载失败）"""
     s = line.strip()
     if not s or s[0] in "#!":
         return s
-    return INLINE_COMMENT_RX.sub("", s)
+    m = INLINE_COMMENT_RX.search(s, _comment_floor(s))
+    return s[:m.start()] if m else s
 
 
 def rule_policy_index(parts):
@@ -1840,30 +1865,84 @@ RS_MH_EXTS = ("yaml", "mrs", "list")  # mihomo 规则集缓存 ./rules/<名>.<�
 RS_SB_EXTS = ("srs", "json", "json.skip")  # sing-box 规则集文件 rs-<名>.<扩展名>（.skip 是转换时跳过条目的记录）
 
 
+_RS_MIGRATE_LOCK = threading.Lock()  # 迁移不能与自己并发（保存、热重载、sing-box 下载、启动时都会调用）
+_RS_NEW_RX = re.compile(r"_[0-9a-f]{8}$")  # rs_file 的文件名主体以「_ + 8 位哈希」结尾
+
+
+def _move_noclobber(src, dst):
+    """把 src 改名成 dst，但 dst 已存在时绝不覆盖（返回 False，src 留给调用方删）。
+    os.replace 会无条件覆盖：迁移的同时 sing-box / mihomo 刚按新文件名下载好新内容，旧缓存会把它盖掉。
+    硬链接是原子的「不存在才创建」；文件系统不支持硬链接时退回 O_EXCL 新建 + 复制"""
+    try:
+        os.link(src, dst)
+    except FileExistsError:
+        return False
+    except OSError:
+        try:
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            return False
+        try:
+            with os.fdopen(fd, "wb") as out, open(src, "rb") as f:
+                out.write(f.read())
+        except OSError:
+            try:
+                os.remove(dst)
+            except OSError:
+                pass
+            raise
+    os.remove(src)
+    return True
+
+
+def _rs_stem(fn, pre, exts):
+    """缓存文件名 → 文件名主体；不是规则集缓存文件（前缀 / 扩展名不对、临时文件）返回 None"""
+    if not fn.startswith(pre):
+        return None
+    stem, dot, ext = fn[len(pre):].partition(".")
+    return stem if dot and stem and ext in exts else None
+
+
 def migrate_ruleset_cache(d):
     """v8.10.22 起规则集缓存文件名带哈希（rs_file）。旧文件名 safe(名) 的缓存：
     - 只有一个规则集用这个旧名：改名成新文件名接着用（不用重新下载，与升级前内容一致）
     - 几个规则集只差符号、共用过这个旧名：分不清是谁的，删掉，各自按自己的地址重新下载
-    新文件已存在时旧文件直接删掉。返回处理的文件数"""
+    - 新文件已存在（可能是核心刚下载的新内容）：绝不覆盖，旧文件直接删掉
+    - 没有任何当前规则集认领的旧文件名缓存（规则集已删除等）：删掉。否则以后新建一个名字恰好等于这个旧文件名的
+      规则集（「A.B」的旧文件名是「A_B」，再新建「A_B」）会把别人的旧列表当成自己的缓存沿用
+    迁移本身加锁，不会两个线程同时改名同一批文件。返回处理的文件数"""
     names = [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)]
     cnt = {}
     for n in names:
         cnt[safe(n)] = cnt.get(safe(n), 0) + 1
+    current = {rs_file(n) for n in names}
     from .sb_common import SB_RULE_DIR
     done = 0
-    for n in names:
-        old, new = safe(n), rs_file(n)
+    with _RS_MIGRATE_LOCK:
         for folder, pre, exts in ((os.path.join(CONF_DIR, "rules"), "", RS_MH_EXTS), (SB_RULE_DIR, "rs-", RS_SB_EXTS)):
-            for ext in exts:
-                src = os.path.join(folder, f"{pre}{old}.{ext}")
-                if not os.path.isfile(src):
+            for n in names:
+                old, new = safe(n), rs_file(n)
+                for ext in exts:
+                    src = os.path.join(folder, f"{pre}{old}.{ext}")
+                    if not os.path.isfile(src):
+                        continue
+                    try:
+                        if not (cnt[old] == 1 and _move_noclobber(src, os.path.join(folder, f"{pre}{new}.{ext}"))):
+                            os.remove(src)
+                        done += 1
+                    except OSError:
+                        pass
+            try:
+                files = os.listdir(folder)
+            except OSError:
+                continue
+            for fn in files:
+                stem = _rs_stem(fn, pre, exts)
+                # 旧文件名：不是「_8 位哈希」结尾（旧名本身恰好这样结尾的分不出来，保留），也不是当前规则集的新文件名
+                if stem is None or stem in current or _RS_NEW_RX.search(stem):
                     continue
-                dst = os.path.join(folder, f"{pre}{new}.{ext}")
                 try:
-                    if cnt[old] == 1 and not os.path.exists(dst):
-                        os.replace(src, dst)
-                    else:
-                        os.remove(src)
+                    os.remove(os.path.join(folder, fn))
                     done += 1
                 except OSError:
                     pass
@@ -2788,20 +2867,50 @@ def reload_core(prev=None, force=False):
                 log_err("下载新引用的规则集", "；".join(bad)[:300])
     except Exception as e:
         log_err("下载新引用的规则集", e)
-    try:
-        return _reload_core(prev, force)
-    except Exception as e:
-        log_err("重载核心配置", e, tb=True)  # 临时配置文件已由 _reload_core 清理
-        if prev is None:
-            return False, "生成配置失败：" + str(e)[:300]
-        _rollback(prev)
-        return False, "生成配置失败，已撤销本次修改：" + str(e)[:300]
+    with RELOAD_LOCK:  # 重载整体串行：替换配置、热重载、被核心拒绝后的回滚不能与另一次重载交错
+        try:
+            return _reload_core(prev, force)
+        except Exception as e:
+            log_err("重载核心配置", e, tb=True)  # 临时配置文件已由 _reload_core 清理
+            if prev is None:
+                return False, "生成配置失败：" + str(e)[:300]
+            _rollback(prev)
+            return False, "生成配置失败，已撤销本次修改：" + str(e)[:300]
 
 
-def _rollback(prev, sb=None):
-    """data.json 恢复为 prev，并按它重写当前内核的配置文件；返回 (内核是否 sing-box, 配置路径)"""
-    with LOCK:
+# 两次保存同时触发重载时，以前替换正式配置之后的热重载 / 回滚在锁外：A 被 mihomo 拒绝后按 A 的旧数据重写 config.yaml
+# 并重载，可能夹在 B 替换配置和 B 热重载之间，B 生效的其实是 A 回滚出的旧配置；sing-box 起不来时的回滚同理。
+# 现在整个 reload_core 串行（可重入：重载里再触发重载不会自锁）。加锁顺序固定为 RELOAD_LOCK → LOCK
+RELOAD_LOCK = threading.RLock()
+
+
+def _revert_data(prev, applied=None):
+    """撤销一次修改：data.json 恢复为 prev。applied 是这次重载生成配置时用的数据：
+    之后又有别的保存（data.json 已不等于 applied）时只把这次改过的顶层项退回 prev，别的保存改的其他项保留，
+    以前整份写回 prev，并发的另一次保存（设备备注、另一个页面的设置）被一起抹掉。须在 LOCK 内调用"""
+    if applied is None:
         save(prev)
+        return
+    cur = load()
+    if cur == applied:
+        save(prev)
+        return
+    for k in set(prev) | set(applied):
+        if prev.get(k, _MISSING) != applied.get(k, _MISSING):
+            if k in prev:
+                cur[k] = prev[k]
+            else:
+                cur.pop(k, None)
+    save(cur)
+
+
+_MISSING = object()
+
+
+def _rollback(prev, sb=None, applied=None):
+    """data.json 恢复为 prev（见 _revert_data），并按它重写当前内核的配置文件；返回 (内核是否 sing-box, 配置路径)"""
+    with LOCK:
+        _revert_data(prev, applied)
         d = load()
         if sb is None:
             sb = active_core(d) == "singbox"
@@ -2852,6 +2961,7 @@ def _reload_core(prev, force=False):
             last = i == RELOAD_TRIES - 1
             with LOCK:
                 d = load()
+                applied = load()  # 生成配置可能改动 d：另留一份原样的，回滚时判断之后有没有别的保存
                 ver = config_version()
                 sb = active_core(d) == "singbox"
                 final = SB_CONF if sb else os.path.join(CONF_DIR, "config.yaml")
@@ -2865,7 +2975,7 @@ def _reload_core(prev, force=False):
             with LOCK:
                 if not ok:
                     if prev is not None:
-                        save(prev)
+                        _revert_data(prev, applied)
                     return False, "配置校验失败，已撤销本次修改：" + err
                 if config_version() != ver and not last:
                     os.remove(tmp)  # 校验期间 data.json 被改过：这份配置已过时，丢掉重来
@@ -2894,7 +3004,7 @@ def _reload_core(prev, force=False):
         ok, msg = sb_hot_reload()
         if not ok and prev is not None:  # 配置能通过 sing-box check 但运行时启动失败（如内核缺少模块）：撤销并恢复
             tail = sb_log_error()
-            _rollback(prev, sb=True)
+            _rollback(prev, sb=True, applied=applied)
             svc_restart(timeout=90)
             return False, "sing-box 启动失败，已撤销本次修改" + ("：" + tail if tail else "")
         return ok, msg
@@ -2908,7 +3018,7 @@ def _reload_core(prev, force=False):
         if prev is None:
             return False, text or f"mihomo 重载失败（{code}）"
         # 核心拒绝了新配置、还在跑旧配置：data.json 和 config.yaml 也退回去，界面与实际生效的配置保持一致
-        _, final = _rollback(prev, sb=False)
+        _, final = _rollback(prev, sb=False, applied=applied)
         core("PUT", "/configs?force=true", {"path": final}, timeout=30)
         return False, "mihomo 重载失败，已撤销本次修改：" + (text[:300] or str(code))
     return True, text or "配置已重载"
@@ -4580,7 +4690,7 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
-from .data import auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
+from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
 from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes
 from .mihomo import BUILTIN_GEO, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
@@ -5277,9 +5387,8 @@ def sb_sync_assets(d, force=False, need=None, wait=None):
             if rsd["kind"] in ("geo", "srs"):
                 if not data.startswith(b"SRS"):
                     raise ValueError("不是有效的 .srs 文件")
-                with open(path + ".tmp", "wb") as f:
-                    f.write(data)
-                os.replace(path + ".tmp", path)
+                # 唯一临时文件 + 改名：以前固定用 path + ".tmp"，两个线程同时下载同一个规则集（保存时补下载与定时更新）会互相截断
+                _atomic_write(path, data, 0o644)
             else:
                 skipped = []
                 src = _rule_lines_to_source(data.decode("utf-8", "ignore"), rsd["behavior"], rsd["format"], skipped)
@@ -10912,9 +11021,9 @@ def sched_loop():
                     log_err("定时任务：" + TASK_NAMES[k], e)
                     ok, msg = False, f"执行出错：{str(e)[:150]}"
                 if k == "adblock":
-                    n = AB_STATE.get("retries", 0)
-                    if not ok and n < AB_RETRY_MAX:
-                        AB_STATE.update(retry=time.time() + 600, retries=n + 1)
+                    tries = AB_STATE.get("retries", 0)  # 自己的计数：以前复用了循环计数 n，广告规则一更新就把它改成重试次数
+                    if not ok and tries < AB_RETRY_MAX:
+                        AB_STATE.update(retry=time.time() + 600, retries=tries + 1)
                     elif ok:
                         AB_STATE["retries"] = 0
                 if k != "latency" or not ok:
