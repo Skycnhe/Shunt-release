@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.24"
+PANEL_VERSION = "11.6.25"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -221,6 +221,12 @@ DNS_DEFAULT = {"direct": ["https://doh.pub/dns-query", "https://dns.alidns.com/d
                "proxy": ["https://1.1.1.1/dns-query#🚀 节点选择", "https://dns.google/dns-query#🚀 节点选择"],
                "default": ["223.5.5.5", "119.29.29.29"], "pserver": [], "mode": "fake-ip", "fake_filter": DEFAULT_FAKE_FILTER,
                "cache": "arc", "policy": True, "respect_rules": True, "block_bypass": False, "hosts": [], "policies": []}
+# 局域网主机名（NAS / 打印机 / 路由器等）：只有主路由（DHCP 服务器）的 DNS 认识。以前它们按 geosite:private 交给公共 DoH
+# （doh.pub 等）解析，必然 NXDOMAIN；fake-ip 过滤也只有「*.lan」一层，nas.home.arpa 等拿到 198.18.x 假地址被送进核心，
+# 局域网共享（SMB）/ NAS 网页 / 打印机按主机名都打不开。现在这些后缀始终不走 Fake-IP，并交给主路由 DNS 解析（含内网反向解析 PTR）
+LAN_DNS_SUFFIX = ["+.lan", "+.local", "+.localdomain", "+.home", "+.home.arpa", "+.internal", "+.intranet", "+.router"]
+LAN_PTR_ZONES = (["+.10.in-addr.arpa", "+.168.192.in-addr.arpa", "+.254.169.in-addr.arpa"]
+                 + [f"+.{i}.172.in-addr.arpa" for i in range(16, 32)])
 DNS_LISTS = ("direct", "proxy", "default", "pserver", "fake_filter")
 # 客户端绕过 mihomo DNS 的常见公共 DoH / DoT 服务器（阻止客户端绕过 DNS 时拒绝 LAN 设备直连它们的 443 / 853）
 DOH_IPS = ["1.1.1.1/32", "1.0.0.1/32", "8.8.8.8/32", "8.8.4.4/32", "9.9.9.9/32", "149.112.112.112/32", "208.67.222.222/32",
@@ -324,7 +330,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.24"
+PANEL_VERSION = "11.6.25"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1881,12 +1887,12 @@ def _link():
     from .stats import arp_table
 '''
 _SRC['shunt.mihomo'] = '''"""生成配置"""
-import ipaddress, json, os, re, threading
+import ipaddress, json, os, re, threading, time
 
 from .base import (
     AUTO_ORDER, BUILTIN_POLICIES, CN_APP_DOMAINS, CONF_DIR, CTRL_HOST, CTRL_PORT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, DOH_DOMAINS, DOH_IPS, G_AI,
     G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
-    TUN_DEFAULT, TUN_STACKS
+    LAN_DNS_SUFFIX, LAN_PTR_ZONES, TUN_DEFAULT, TUN_STACKS
 )
 from .data import LB_KINDS, adopt_rs_files, auto_name, lb_name, region_label, rs_safe, safe
 from .devroute import device_route_rules, mark_applied
@@ -2121,7 +2127,8 @@ def mihomo_dns(d, dc, policies, ab_prov):
     }
     if mode == "fake-ip":
         dns["fake-ip-range"] = "198.18.0.1/16"
-        dns["fake-ip-filter"] = [x for x in dc["fake_filter"] if x.strip()]
+        ff = [x for x in dc["fake_filter"] if x.strip()]
+        dns["fake-ip-filter"] = ff + [x for x in LAN_DNS_SUFFIX if x not in ff]
         if v6:
             dns["fake-ip-range6"] = "fdfe:dcba:9876::1/64"
     pol = {}
@@ -2136,12 +2143,41 @@ def mihomo_dns(d, dc, policies, ab_prov):
     for pe in dc["policies"]:  # 用户自定义的 nameserver-policy（排在内置分流之前，JSON 保序，mihomo 按顺序匹配）
         if pe["match"] not in pol:
             pol[pe["match"]] = fx(pe["servers"])
+    gw = lan_dns(d)
+    if gw:  # 局域网主机名 / 内网反向解析交给主路由 DNS（排在用户自定义之后、内置分流之前）
+        key = ",".join(LAN_DNS_SUFFIX + LAN_PTR_ZONES)
+        if not any(set(LAN_DNS_SUFFIX) & set(k.split(",")) for k in pol):
+            pol[key] = [gw]
     if dc["policy"] and proxy_dns:  # 国内域名走直连 DNS，其余（含未知域名）走代理 DNS
         pol.setdefault("rule-set:cn-apps", direct)
         pol.setdefault("geosite:cn,private", direct)
     if pol:
         dns["nameserver-policy"] = pol
     return dns
+
+
+_LAN_GW = {"t": 0.0, "v": ""}
+_LAN_NETS = [ipaddress.ip_network(c) for c in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
+
+
+def _lan_ip(v):
+    try:
+        ip = ipaddress.ip_address(str(v).strip())
+    except ValueError:
+        return ""
+    return str(ip) if any(ip in n for n in _LAN_NETS) else ""
+
+
+def lan_dns(d):
+    """解析局域网主机名用的 DNS：data.json 的 dns.lan（可写 off 关闭），否则自动取本机默认网关（主路由）。只认内网 IPv4"""
+    v = str((d.get("dns") or {}).get("lan") or os.environ.get("PANEL_LAN_DNS") or "").strip()
+    if v:
+        return "" if v.lower() in ("off", "none", "0") else _lan_ip(v)
+    if time.time() - _LAN_GW["t"] > 60:
+        rc, out = sh("ip -4 route show default 2>/dev/null", 5)
+        m = re.search(r"default via (\\S+)", out or "") if rc == 0 else None
+        _LAN_GW.update(t=time.time(), v=_lan_ip(m.group(1)) if m else "")
+    return _LAN_GW["v"]
 
 
 def mihomo_hosts(dc):
@@ -4282,8 +4318,8 @@ import ipaddress
 import re
 from urllib.parse import urlsplit
 
-from .base import CN_DNS, DNS_DEFAULT, G_SEL
-from .mihomo import dns_cfg, fix_dns_policy, is_ip_addr, policy_parts
+from .base import CN_DNS, DNS_DEFAULT, G_SEL, LAN_DNS_SUFFIX, LAN_PTR_ZONES
+from .mihomo import dns_cfg, fix_dns_policy, is_ip_addr, lan_dns, policy_parts
 from .ruleutil import _mh_domain, adblock_scopes, dns_policy_of
 def _sb_dns_server(addr, tag, boot, warn, via=None):
     """mihomo DNS 地址（含 #策略组）→ sing-box DNS server。
@@ -4389,6 +4425,8 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
     final = t_proxy or t_direct
     rules = []
     fake = dc["mode"] == "fake-ip"
+    if fake:  # 局域网后缀始终不走 Fake-IP（找不到主路由时也至少拿真实解析结果）
+        dc = dict(dc, fake_filter=dc["fake_filter"] + [x for x in LAN_DNS_SUFFIX if x not in dc["fake_filter"]])
     fc = _fake_filter_cond(dc, rs) if fake else None
 
     def add_route(c, tgt):
@@ -4455,6 +4493,13 @@ def sb_dns(d, cfg, policies, rs, alias, v6):
         # 放在最前：mihomo 的 hosts 先于 nameserver-policy / 广告拦截生效；以前排在 DNS 策略之后，
         # 同时被 DNS 策略（或拦截列表）覆盖的域名在 sing-box 下 hosts 不生效，两个内核结果不同
         rules.insert(0, {"domain": sorted(exact), "action": "route", "server": "dns-hosts"})
+    gw = lan_dns(d)
+    if gw:  # 局域网主机名 / 内网 PTR：主路由 DNS 返回真实 IP（排在 Fake-IP 之前，与 mihomo 的 fake-ip-filter + nameserver-policy 一致）
+        lc = {}
+        for x in LAN_DNS_SUFFIX + LAN_PTR_ZONES:
+            k, v = _mh_domain(x)
+            lc.setdefault(k, []).append(v)
+        rules.append(dict(lc, action="route", server=server(gw)))
     cn_cond = {"rule_set": [rs.use_geo("geosite", "cn"), rs.use_geo("geosite", "private")]}
     if "cn-apps" in rs.rule_sets:  # 内置国内 App 名单与 geosite:cn 一样走直连 DNS
         cn_cond["rule_set"].insert(0, "cn-apps")
