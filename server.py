@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.25"
+PANEL_VERSION = "8.10.26"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -356,7 +356,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.25"
+PANEL_VERSION = "8.10.26"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1219,9 +1219,27 @@ VERBATIM_TYPES = frozenset(("DOMAIN-REGEX", "PROCESS-PATH", "PROCESS-PATH-REGEX"
                             "URL-REGEX", "USER-AGENT", "IN-NAME", "IN-USER"))
 
 
-def _comment_floor(s):
-    """注释最早可以从哪个位置开始：值原样保留的规则类型返回值结束处（第二个逗号；没有就是行尾，不去注释），
-    逻辑规则返回匹配部分的「)」之后（子规则里可能有 DOMAIN-REGEX），其他返回 0"""
+_POLICY_BAD = set("\\\\^$*+?{}[]|")  # 策略名里不会出现的正则元字符：「3}」「b)$」之类是正则被逗号拆开的一段，不是策略
+_BUILTIN_POL = frozenset(("DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL"))
+
+
+def _policy_like(pol, policies=None):
+    """pol 是否像一个策略名：给了现有策略名集合就只认集合里的（和内置策略），否则只要不像正则的一段"""
+    if not pol:
+        return False
+    if pol.upper() in _BUILTIN_POL:
+        return True
+    if policies is not None:
+        return pol in policies
+    return not (_POLICY_BAD & set(pol))
+
+
+def _comment_floor(s, policies=None):
+    """注释最早可以从哪个位置开始。
+    值原样保留的规则类型（DOMAIN-REGEX 等）：值本身可能带逗号（「^a{1,3}$」），按第二个逗号算值的结尾会把值里的
+    「 #…」当成注释。现在只认跟在策略字段后面的注释：从左到右找「空白 + # / !」，它前面那段按逗号拆开后
+    （去掉末尾 no-resolve / src）至少是「类型,值,策略」、且最后一项像策略名（见 _policy_like）时才算注释；
+    都不是就不去注释（返回行尾）。逻辑规则返回匹配部分的「)」之后（子规则里可能有 DOMAIN-REGEX），其他返回 0"""
     t = s[1:].lstrip() if s.startswith("-") else s  # YAML 列表项「- DOMAIN-REGEX,…」
     off = len(s) - len(t)
     if LOGICAL_RX.match(t):
@@ -1230,17 +1248,23 @@ def _comment_floor(s):
     i = t.find(",")
     if i < 0 or t[:i].strip().strip("'\\"").upper() not in VERBATIM_TYPES:
         return 0
-    j = t.find(",", i + 1)
-    return off + j if j >= 0 else len(s)
+    for m in re.finditer(r"\\s+[#!]", t[i + 1:]):
+        pos = i + 1 + m.start()
+        parts = t[:pos].split(",")
+        k = rule_policy_index(parts)
+        if k >= 2 and ",".join(parts[1:k]).strip() and _policy_like(parts[k].strip().strip("'\\""), policies):
+            return off + pos
+    return len(s)
 
 
-def strip_comment(line):
+def strip_comment(line, policies=None):
     """去掉行内注释，保留规则本身。整行注释（# / ! 开头）原样返回，由调用方跳过。
-    DOMAIN-REGEX / PROCESS-PATH 等规则的值里的「 #」「 !」不当注释（以前正则 / 路径被截断，规则改了意思或配置加载失败）"""
+    DOMAIN-REGEX / PROCESS-PATH 等规则的值里的「 #」「 !」不当注释（以前正则 / 路径被截断，规则改了意思或配置加载失败），
+    值里带逗号（「DOMAIN-REGEX,^a{1,3} #b$,DIRECT」）同样保留。policies：现有策略名集合（可选），给了时更准"""
     s = line.strip()
     if not s or s[0] in "#!":
         return s
-    m = INLINE_COMMENT_RX.search(s, _comment_floor(s))
+    m = INLINE_COMMENT_RX.search(s, _comment_floor(s, policies))
     return s[:m.start()] if m else s
 
 
@@ -1327,7 +1351,7 @@ def norm_rule(rule, policies=None):
     s = rule.strip()
     if not s or s.startswith("#"):
         return rule
-    c = strip_comment(s)
+    c = strip_comment(s, set(policies) if policies else None)
     if c != s and not (policies and split_rule(s)[1] in policies):
         s = rule = c
     if not s.isascii():
@@ -1955,7 +1979,7 @@ def migrate_ruleset_cache(d, startup=False):
     except Exception:
         pass
     cnt = {}
-    for n in names:
+    for n in keep:  # 按 d 与 data.json 的并集数：调用方的 d 较旧时，另一次保存刚加的同旧名规则集同样算共用（分不清是谁的）
         cnt[safe(n)] = cnt.get(safe(n), 0) + 1
     want_new = {rs_file(n) for n in keep}
     want_old = {safe(n) for n in keep}
@@ -1968,8 +1992,8 @@ def migrate_ruleset_cache(d, startup=False):
                 old, new = safe(n), rs_file(n)
                 for ext in exts:
                     src = os.path.join(folder, f"{pre}{old}.{ext}")
-                    if not os.path.isfile(src):
-                        continue
+                    if old in want_new or not os.path.isfile(src):
+                        continue  # 旧文件名恰好是某个当前规则集的新文件名：那是它的缓存，不动
                     # 启动之后才加的规则集：旧文件名缓存不是它的（只是名字撞上了升级前别的规则集留下的文件）
                     mine = cnt[old] == 1 and (startup or boot is None or n in boot)
                     try:
@@ -2949,7 +2973,8 @@ def _revert_data(prev, applied=None):
     之后又有别的保存（data.json 已不等于 applied）时按 prev / applied / 当前三方比较，只退回这次改过、且当前仍等于 applied 的部分
     （_merge3）：字典逐键、规则集 / 订阅等按名字、规则等文本列表按条目，别的保存改的地方保留。
     v8.10.24 只按顶层项退回，并发保存改了同一项（如两个页面都改了规则）时那一项整体退回 prev，对方的改动被一起抹掉。
-    局限：这次只调整了顺序的列表不还原顺序；同一个值两边都改了的，保留后来的（它会由那次保存自己的重载校验）。须在 LOCK 内调用"""
+    这次只调整了顺序的列表：之后没人再调整顺序时顺序也退回（别人新加的项按当前位置插回）；之后别人又调整过顺序的保留别人的顺序。
+    同一个值两边都改了的，保留后来的（它会由那次保存自己的重载校验）。须在 LOCK 内调用"""
     if applied is None:
         save(prev)
         return
@@ -2986,17 +3011,30 @@ def _merge3(p, a, c):
 
 
 def _item_keys(lst):
-    """列表各项的身份：带 name 的字典按名字、文本 / 数字按值；有重复或分不清时返回 None（不逐项合并）"""
-    keys = []
+    """列表各项的身份：带 name 的字典按名字、文本 / 数字按值。
+    文本 / 数字重复出现时按「值 + 第几次出现」区分（同值的各项内容一样，认错了也不会把一项的内容换成另一项的）；
+    带 name 的字典名字重复、或有分不清身份的项时返回 None（不逐项合并）"""
+    keys, seen = [], {}
     for x in lst:
         if isinstance(x, dict) and isinstance(x.get("name"), str):
             k = ("n", x["name"])
+            if k in seen:
+                return None
+            seen[k] = 1
         elif isinstance(x, (str, int, float)) and not isinstance(x, bool):
-            k = ("v", type(x).__name__, x)
+            v = ("v", type(x).__name__, x)
+            n = seen.get(v, 0)
+            seen[v] = n + 1
+            k = v + (n,)
         else:
             return None
         keys.append(k)
-    return keys if len(set(keys)) == len(keys) else None
+    return keys
+
+
+def _rel_order(keys, other):
+    s = set(other)
+    return [k for k in keys if k in s]
 
 
 def _merge_list(p, a, c, kp, ka, kc):
@@ -3023,6 +3061,21 @@ def _merge_list(p, a, c, kp, ka, kc):
                 break
         seq.insert(pos, k)
         val[k] = mp[k]
+    # 这次调整了顺序、之后没人再调整（当前共有项的相对顺序仍等于 applied 的）：顺序也退回 prev 的。
+    # 改之前就有的项按 prev 的顺序排；别人新加的（prev 里没有）跟在当前列表里它前面那一项后面（加在末尾的仍在末尾），连续新加的保持在一起
+    if _rel_order(kp, ka) != _rel_order(ka, kp) and _rel_order(kc, ka) == _rel_order(ka, kc):
+        pos_p = {k: i for i, k in enumerate(kp)}
+        out = [k for k in kp if k in val]
+        last_old = max((i for i, k in enumerate(seq) if k in pos_p), default=-1)
+        prev_k = None
+        for i, k in enumerate(seq):
+            if k not in pos_p:
+                if i > last_old:
+                    out.append(k)  # 加在末尾的（后面没有原有项）：仍放在末尾
+                else:
+                    out.insert(out.index(prev_k) + 1 if prev_k is not None else 0, k)
+            prev_k = k
+        seq = out
     return [val[k] for k in seq]
 
 
@@ -3504,6 +3557,21 @@ def write_core_file(kind):
 '''
 _SRC['shunt.sb_yaml'] = '''"""极简 YAML 读取（只为解析 Clash 订阅里的 proxies 列表；面板保持零依赖）"""
 import copy, json, re
+
+_LINE_RX = re.compile(r"\\r\\n|\\r|\\n")
+_TRIM = "".join(map(chr, range(33))) + "\\x7f\\x85\\xa0\\u200b\\u2028\\u2029\\u3000\\ufeff"
+
+
+def text_lines(text):
+    """规则集 / 过滤列表 / 订阅文本按行拆开：\\r\\n、\\n、单独的 \\r（老 Mac 格式）都算换行，去掉开头的 BOM。
+    不用 str.splitlines：它还会在 \\x0b \\x0c \\x1c-\\x1e \\x85 \\u2028 等字符处断行，把一条规则拆成两半；
+    而 re.M 的「^」又只认 \\n，单独 \\r 换行的文件以前整份当成一行（「payload:」认不出、规则全部丢失）"""
+    return _LINE_RX.split(text.lstrip("\\ufeff"))
+
+
+def trim_line(s):
+    """去掉行首尾的空白和控制字符（\\x00、BOM、零宽空格等）；行中间的原样保留"""
+    return s.strip(_TRIM)
 def _y_strip_comment(s):
     q = None
     for i, ch in enumerate(s):
@@ -3667,7 +3735,8 @@ def yaml_lite(text):
     """块状 / 流式映射与列表、引号字符串、注释、锚点 &a / 别名 *a / 合并键 <<: *a（机场常用来复用节点参数）。
     以前不认锚点：「- &a {name: …}」整条被当成一个字符串、「- &a」后面的块状节点整段丢掉，没有 PyYAML 的设备上这些节点静默消失"""
     raw = []
-    for line in text.replace("\\t", "  ").splitlines():
+    for line in text_lines(text.replace("\\t", "  ")):
+        line = line.rstrip(_TRIM)
         if line.strip() in ("---", "...") or not line.strip() or line.lstrip().startswith("#"):
             continue
         raw.append(line)
@@ -4816,7 +4885,7 @@ from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_
 from .mihomo import BUILTIN_GEO, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
-from .sb_yaml import yaml_lite
+from .sb_yaml import text_lines, trim_line, yaml_lite
 from .groups import sb_provider_nodes, sb_sub_cache, sb_sub_meta, sb_sub_outbounds
 from .sb_nodes import sb_outbound
 from .sb_rules import SBRules, geo_srs_entry
@@ -5361,25 +5430,31 @@ def _re2_ok(rx):
     return True
 
 
+_CTRL_RX = re.compile(r"[\\x00-\\x1f\\x7f]")
+
+
 def _rule_lines_to_source(text, behavior, fmt, skipped=None):
     """mihomo 规则集文本（yaml payload / text）→ sing-box source 规则集。
     skipped：传入列表时收集转换不了、被跳过的 classical 条目（以前 GEOSITE / GEOIP / 逻辑规则静默丢掉）"""
-    t = text.strip()
+    raw = text_lines(text)  # \\r\\n / \\n / 单独 \\r 换行一视同仁，去掉 BOM
+    lines = [trim_line(l) for l in raw]  # 首尾空白和控制字符（YAML 交给 yaml_lite，保留缩进）
     items = []
-    if fmt == "yaml" or re.search(r"(?m)^payload\\s*:", t):
-        y = yaml_lite(t)
+    if fmt == "yaml" or any(re.match(r"payload\\s*:", l) for l in lines):
+        y = yaml_lite("\\n".join(raw))
         items = [str(x) for x in ((y or {}).get("payload") or [])] if isinstance(y, dict) else []
     else:
-        items = [l.strip() for l in t.splitlines() if l.strip() and not l.strip().startswith(("#", "//"))]
+        items = [l for l in lines if l and not l.startswith(("#", "//"))]
     r = {}
     other = {}  # classical 里的端口 / 网络 / 来源地址 / 进程等条件：各自成条（sing-box 同一条规则里这些字段与域名 / IP 是「且」）
     logic = []  # classical 里的 AND / OR / NOT：转成 headless 逻辑规则（规则集里各条规则之间是「或」）
     tr = SBRules({}, set(), {}, {})
     for x in items:
         # 行内注释（「DOMAIN,a.com # 说明」「a.com ! 说明」）：去掉注释保留规则。以前整条被当成无效值跳过，或注释写进了域名
-        x = strip_comment(x.strip()).strip("'\\"").strip()
+        x = trim_line(strip_comment(trim_line(x)).strip("'\\""))
         if not x or x[0] in "#!":
             continue
+        if behavior in ("domain", "ipcidr") and _CTRL_RX.search(x):
+            continue  # 行中间夹着控制字符（\\x0b、\\x0c 等）的域名 / IP 永远匹配不到：跳过，不写进规则集
         if behavior == "ipcidr":
             try:
                 r.setdefault("ip_cidr", []).append(str(ipaddress.ip_network(x, strict=False)))
@@ -9997,6 +10072,7 @@ from .sysopt import proxy_opener
 from .ruletest import clean_target
 from .logstream import core_stream
 from .ruleutil import DOMAIN_RX, adblock_providers, idna_domain, strip_comment
+from .sb_yaml import text_lines, trim_line
 # 订阅 AdGuard/ABP（||domain^、@@||domain^）、hosts（0.0.0.0 domain）与纯域名列表，转换为 mihomo
 # behavior=domain / format=text 的本地 rule-provider 文件：
 #   ||a.com^ → "+.a.com"（含子域）；hosts / 纯域名 → "a.com"（仅该域名，与 AdGuard Home 语义一致）
@@ -10048,8 +10124,8 @@ def parse_filter(text, plain_suffix=False, imp=None):
     skipped = 0
     abp = []  # [(allow, exact, dom, important)]：$badfilter 可能写在被取消的规则后面，最后统一处理
     bad = set()
-    for raw in text.splitlines():
-        line = raw.strip()
+    for raw in text_lines(text):  # \\r\\n / \\n / 单独 \\r 换行一视同仁，去掉 BOM、首尾控制字符
+        line = trim_line(raw)
         if not line or line[0] in "!#[":
             continue
         line = strip_comment(line)
@@ -12578,15 +12654,15 @@ from urllib.parse import urlparse
 
 from .errlog import log_err
 from . import adblock
-from .base import BUILTIN_POLICIES, SVC, TPROXY_SH, CONF_DIR, wd_hold
+from .base import BUILTIN_POLICIES, LOCK, SVC, TPROXY_SH, CONF_DIR, wd_hold
 from .data import config_version, load, region_lb_set, safe
 from .links import reserved_names
 from .groups import NODE_LIST_MAX, all_node_names, node_name_ok, provider_nodes, provider_rev, rx, sb_sub_outbounds, sub_orig_nodes, sub_removed
-from .mihomo import build_config, dns_cfg, drop_provider_cache
+from .mihomo import build_config, dns_cfg, drop_provider_cache, drop_removed_rulesets, drop_ruleset_cache
 from .corehttp import core
 from .sb_common import active_core
 from .sb_subs import parse_sub_text, sb_update_subs
-from .sb_config import build_singbox, sb_is_fork
+from .sb_config import build_singbox, rs_changed, sb_drop_ruleset_files, sb_is_fork, sb_refresh_rulesets
 from .sysopt import SVC_OP, core_procs, kill_core_procs, rc_run, sh, svc_restart
 from .notify import WD, core_alive, core_proc_alive, set_manual_stop
 from .latency import retest_soon
@@ -12953,6 +13029,36 @@ def sub_caches_sync(prev, d):
         if n not in old:
             drop_provider_cache(n)  # 以前删掉的同名订阅留下的缓存
     return [n for n, s in new.items() if n not in old or any(s.get(k) != old[n].get(k) for k in SUB_FETCH_KEYS)]
+
+
+def rs_caches_sync(prev, d):
+    """保存设置 / 恢复设置 / 配置快照 / 版本备份改动了规则集时，重载之前处理新增、同名替换（换了地址 / 类型 / 格式）的规则集的缓存：
+    mihomo 缓存删掉（按新地址重新下载），sing-box 当前内核时立即按新地址下载转换，否则删掉已转换的文件。
+    以前只有「设置」页保存会这样做，恢复出一份同名换了地址的规则集后 mihomo 最长 24 小时仍按旧地址的缓存分流。返回这些规则集名"""
+    changed = rs_changed(prev, d)
+    for n in changed:
+        drop_ruleset_cache(n)
+    if changed and active_core(d) == "singbox":
+        bad = sb_refresh_rulesets(d, changed)
+        if bad:
+            log_err("下载规则集", "；".join(bad)[:300])
+    elif changed:
+        sb_drop_ruleset_files(d, changed)
+    return changed
+
+
+def rs_drop_removed(prev):
+    """重载成功之后：整个删掉的规则集（prev 里有、当前 data.json 里没有）的缓存文件立即删掉。
+    在 LOCK 内按当前的 data.json 判断：重载期间另一次保存又加回同名规则集的，它的文件不删（drop_removed_rulesets
+    只删没有剩下的规则集认领的文件）。重载失败 / 已回滚时不调用：规则集回来了，缓存还要接着用。
+    以前恢复设置 / 配置快照 / 版本备份删掉的规则集要等下次重载的迁移清理（新文件名的还有 5 分钟宽限），
+    「设置」页则在重载之前就删，被核心拒绝回滚后规则集回来了缓存却没了、sing-box 正在用的文件被提前删掉"""
+    try:
+        with LOCK:
+            return drop_removed_rulesets(prev, load())
+    except Exception as e:
+        log_err("删除规则集缓存", e)
+        return 0
 
 
 def sub_refetch(names):
@@ -13464,7 +13570,7 @@ from .latency import fix_global
 from .ruletest import clean_target, rule_test
 from .adblock import AB_CACHE, AB_STATE, ab_check, ab_compose, ab_meta, adblock_update, list_id, parse_filter
 from .dnsleak import antileak_dns, dns_route, leak_check
-from .webapi_base import tp_apply, api_route, sub_caches_sync, sub_refetch
+from .webapi_base import tp_apply, api_route, rs_caches_sync, rs_drop_removed, sub_caches_sync, sub_refetch
 
 
 class RulesAPI:
@@ -13677,8 +13783,10 @@ class RulesAPI:
         prev = update(apply_snap)
         note = sub_refetch(sub_caches_sync(prev, load()))
         ab_compose(load())
+        rs_caches_sync(prev, load())
         ok, msg = reload_core(prev)
         if ok:
+            rs_drop_removed(prev)
             tp_apply()
         return self.reply(ok, ("已恢复到 " + time.strftime("%m-%d %H:%M", time.localtime(snap["t"])) + " 的配置" + note) if ok else msg)
 
@@ -13713,11 +13821,11 @@ from .base import (
 from .data import config_version, load, migrate_names, normalize, save, update
 from .links import q1
 from .groups import provider_rev
-from .mihomo import dns_cfg, drop_removed_rulesets, drop_ruleset_cache, safe_dev
+from .mihomo import dns_cfg, safe_dev
 from .core import reload_core
 from .corehttp import core
 from .sb_common import CORES, SB_STATE, active_core, core_conf_path
-from .sb_config import build_singbox, rs_changed, sb_drop_ruleset_files, sb_has_gvisor, sb_refresh_rulesets, sb_is_fork, sb_tun_native, tun_stack_tip, sb_version
+from .sb_config import build_singbox, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, sb_version
 from .sb_switch import core_switch_job
 from .panel_update import self_rollback, self_update
 from .core_update import (
@@ -13737,7 +13845,7 @@ from .auth import auth_on, cookie_header, exposure_warning, login_attempt, reque
 from .validate import clean_fields, rename_sub_clashes, rename_sub_refs
 from .webapi_base import (
     _SVC_LOCK, SVC_JOB, SVC_NAMES, tp_apply, _svc_job, _svc_status, api_route, mask_secret, unmask, state_subs, config_view, ad_today,
-    state_groups, state_nodes, sub_caches_sync, sub_refetch, RESTORE_KEYS, renames_note, probe_data
+    state_groups, state_nodes, rs_caches_sync, rs_drop_removed, sub_caches_sync, sub_refetch, RESTORE_KEYS, renames_note, probe_data
 )
 
 
@@ -14146,18 +14254,13 @@ class SysAPI:
         d = load()
         msg = "已保存"
         if "rulesets" in new:  # 新增 / 同名替换（换了地址、类型、格式）的规则集：不再沿用旧地址的缓存文件
-            drop_removed_rulesets(prev, d)  # 整个删掉的规则集：缓存文件一并删掉
-            changed = rs_changed(prev, d)
-            for n in changed:
-                drop_ruleset_cache(n)
-            if changed and active_core(d) == "singbox":
-                sb_refresh_rulesets(d, changed)
-            elif changed:
-                sb_drop_ruleset_files(d, changed)
+            rs_caches_sync(prev, d)
         if set(b) & {"rulesets", "sub_interval", "region_groups", "ipv6", "sniffer"} or ("bypass" in b and d["proxy_mode"] == "tun"):
             ok, msg = reload_core(prev)
             if not ok:
                 return self.send(500, {"message": msg})
+        if "rulesets" in new:  # 整个删掉的规则集：重载成功后缓存文件一并删掉
+            rs_drop_removed(prev)
         if set(b) & {"bypass", "ipv6"} and d["proxy_mode"] != "off":
             tp_apply()
         if "watchdog" in b and not b["watchdog"]:
@@ -14255,8 +14358,10 @@ class SysAPI:
             if note:
                 msg += note.lstrip("；") + "；"
             ab_compose(load())
+            rs_caches_sync(st["prev"], load())
             rok, rmsg = reload_core(st["prev"])
             if rok:
+                rs_drop_removed(st["prev"])
                 tp_apply()
             msg += ("核心已重载：" if rok else "设置已撤销：") + rmsg
             ok = rok
@@ -14357,8 +14462,10 @@ class SysAPI:
         prev = update(apply_backup)
         note = sub_refetch(sub_caches_sync(prev, load()))
         ab_compose(load())
+        rs_caches_sync(prev, load())
         ok, msg = reload_core(prev)
         if ok:
+            rs_drop_removed(prev)
             tp_apply()
         return self.reply(ok, ("已恢复，" if ok else "") + msg + renames_note(renames) + (note if ok else ""))
 
