@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.23"
+PANEL_VERSION = "11.6.24"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.23"
+PANEL_VERSION = "11.6.24"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1267,6 +1267,30 @@ def idn_ascii(s):
     return ".".join(out)
 
 
+# 规则文本的行与空白（与 Go ruleutil.SplitLines / Trim 逐字一致）：以前 Python 用 splitlines() + strip()，Go 用 Split("\\n") +
+# TrimSpace，\\x1c~\\x1f、\\x85、U+2028 / U+2029、\\v / \\f 在 Python 里算换行，Go 里不算；\\x1c~\\x1f Python 当空白去掉、Go 不去；
+# 只有 \\r（旧 Mac 换行）的文件 Go 整个当成一行。现在两边只认 \\r\\n、\\n、\\r 换行，首尾只去 IDN_SPACE 里的字符（含 BOM）
+_LINE_RX = re.compile(r"\\r\\n|\\r|\\n")
+
+
+def split_lines(text):
+    """按 \\r\\n / \\n / \\r 拆行（末尾换行后留一个空串，与 Go strings.Split 一致）"""
+    return _LINE_RX.split(text)
+
+
+def trim(s):
+    """去掉首尾空白（IDN_SPACE 里的字符），与 Go ruleutil.Trim 一致"""
+    return s.strip(IDN_SPACE)
+
+
+_FIELDS_RX = re.compile("[" + IDN_SPACE + "]+")
+
+
+def fields(s):
+    """按 IDN_SPACE 里的字符拆成非空字段（代替 str.split()，它还认 \\x1c~\\x1f），与 Go ruleutil.Fields 一致"""
+    return [x for x in _FIELDS_RX.split(s) if x]
+
+
 # 行内注释前的空白只认空格 / 制表符（与 Go inlineCommentRx 逐字一致）：以前用 \\s，Python 的 \\s 还含 \\v、\\x1c~\\x1f、\\x85、\\xa0、
 # 全角空格等，Go 的 \\s 只有 [\\t\\n\\f\\r ]，同一行两边截得不一样；(?s) 让注释一直截到行尾（含末尾换行，Go 的 $ 不认换行前）
 INLINE_COMMENT_RX = re.compile(r"(?s)[ \\t]+[#!].*")
@@ -1289,12 +1313,13 @@ def strip_inline_comment(line):
 
 def rule_policy_index(parts):
     i = len(parts) - 1
-    while i > 0 and parts[i].strip().lower() in ("no-resolve", "src"):
+    while i > 0 and trim(parts[i]).lower() in ("no-resolve", "src"):
         i -= 1
     return i
 
 
-LOGICAL_RX = re.compile(r"^\\s*(?:AND|OR|NOT)\\s*,\\s*\\(", re.I)
+# 空白写成 [\\t\\n\\f\\r ]（Go RE2 的 \\s）：Python 的 \\s 还含 \\v、\\x1c~\\x1f、\\x85、全角空格等，两边认的逻辑规则不同
+LOGICAL_RX = re.compile(r"^[\\t\\n\\f\\r ]*(?:AND|OR|NOT)[\\t\\n\\f\\r ]*,[\\t\\n\\f\\r ]*\\(", re.I)
 RULE_FLAGS = ("no-resolve", "src")
 
 
@@ -1315,19 +1340,19 @@ def split_rule(rule):
     """规则 → (匹配部分, 策略, 末尾参数列表)。与 mihomo 一致：策略是去掉末尾 no-resolve / src 后的最后一项。
     逻辑规则同样按匹配部分的括号收尾来拆：以前按最后一个「)」拆，策略名本身带括号（如节点「HK(IPLC)」）时
     sing-box 把整条规则当成不支持跳过、mihomo 的失效策略检查也被绕过。逻辑规则没写策略时策略为空"""
-    s = rule.strip()
+    s = trim(rule)
     if LOGICAL_RX.match(s):
         e = _logical_end(s)
         if e < 0:
             return s, "", []
-        tail = [x.strip() for x in s[e + 1:].split(",")[1:]] if s[e + 1:].lstrip().startswith(",") else []
+        tail = [trim(x) for x in s[e + 1:].split(",")[1:]] if s[e + 1:].lstrip(" \\t").startswith(",") else []
         i = len(tail)
         while i > 0 and tail[i - 1].lower() in RULE_FLAGS:
             i -= 1
         return s[:e + 1], (tail[i - 1] if i else ""), tail[i:]
     parts = s.split(",")
     i = rule_policy_index(parts)
-    return ",".join(parts[:i]), parts[i].strip() if i > 0 else "", [x.strip() for x in parts[i + 1:]]
+    return ",".join(parts[:i]), trim(parts[i]) if i > 0 else "", [trim(x) for x in parts[i + 1:]]
 
 
 def dns_policy_of(server):
@@ -1340,7 +1365,7 @@ def dns_policy_of(server):
 
 def _mh_domain(x):
     """mihomo 域名通配（+.a.com / *.a.com / a.*.com / img?.a.com）→ (sing-box 字段, 值)"""
-    x = x.strip().lower()
+    x = trim(x).lower()
     x = idn_ascii(x) or x
     pre = ""
     if x.startswith("+."):  # 自身及所有子域
@@ -1358,7 +1383,7 @@ def _mh_domain(x):
 def _wildcard_regex(x):
     """DOMAIN-WILDCARD 的值 → sing-box domain_regex。mihomo component/wildcard 里「*」匹配任意个字符（含「.」），
     「?」匹配一个字符：*.google.com 也命中 a.b.google.com。以前借用 _mh_domain（「*」只算一级），sing-box 下多级子域不命中"""
-    x = x.strip().lower()
+    x = trim(x).lower()
     # re.escape 会转义「-」而 Go regexp.QuoteMeta 不会：去掉这处差异，Py 与 Go 生成的配置逐字一致
     return "^" + re.escape(x).replace(r"\\-", "-").replace(r"\\*", ".*").replace(r"\\?", ".") + "$"
 
@@ -4012,11 +4037,13 @@ def sb_outbound(p, tag):
         o["network"] = "tcp"
     return o
 '''
-_SRC['shunt.sb_rules'] = '''"""规则：mihomo 规则字符串 → sing-box 路由规则"""
+_SRC['shunt.sb_rules'] = '''"""规则：mihomo 规则字符串 → sing-box 路由规则。
+
+去首尾空白一律用 ruleutil.trim、正则里的空白只写空格 / 制表符 / 换行 / 换页 / 回车（与 Go 逐字一致；str.strip() 与正则的反斜杠 s 比 Go 多认 \\\\x1c~\\\\x1f、\\\\v 等）"""
 import ipaddress
 import re
 
-from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, idn_ascii, split_rule
+from .ruleutil import RULE_FLAGS, _rs_tag, _wildcard_regex, idn_ascii, split_rule, trim
 from .sb_common import SB_GEO
 
 # 值里可能带逗号的规则类型：mihomo 把类型与策略之间的所有项拼回去当值（如 DOMAIN-REGEX,^a{1,3}\\.com$）
@@ -4049,7 +4076,7 @@ def _split_top(s):
 
 def _cidr(val):
     """单个 IP（规则集文件里常见、没经过 norm_rule）补成 /32、/128；「[2001:db8::1]」去掉方括号"""
-    v = val.strip()
+    v = trim(val)
     if "/" in v:
         return v
     try:
@@ -4079,7 +4106,7 @@ class SBRules:
     def cond(self, typ, val, src=False):
         """单个匹配条件 → sing-box 规则字段（dict）；不支持时返回 None。
         src：规则带「,src」参数（mihomo 按来源地址匹配 IP-CIDR / GEOIP / RULE-SET），以前被忽略、当成目标地址匹配"""
-        typ, val = typ.strip().upper(), val.strip()
+        typ, val = trim(typ).upper(), trim(val)
         if typ == "DOMAIN":  # 中文域名转 punycode（sing-box 按 ASCII 域名匹配）
             return {"domain": [idn_ascii(val.lower()) or val.lower()]}
         if typ == "DOMAIN-SUFFIX":  # 规则集文件里的值没经过 norm_rule：「+.a.com」「*.a.com」同样去掉前缀，否则按字面永远不命中
@@ -4101,7 +4128,7 @@ class SBRules:
             key = {"DST-PORT": "port", "SRC-PORT": "source_port", "IN-PORT": "port"}[typ]
             ports, ranges = [], []
             for x in val.replace("/", ",").split(","):
-                x = x.strip()
+                x = trim(x)
                 if re.fullmatch(r"\\d+", x):
                     ports.append(int(x))
                 elif re.fullmatch(r"\\d+-\\d+", x):
@@ -4143,7 +4170,7 @@ class SBRules:
         OR 里的其余条件、NOT 取反后本该永远成立的条件都被一起丢掉"""
         subs = []
         for part in _split_top(inner):
-            part = part.strip()
+            part = trim(part)
             if part.startswith("(") and part.endswith(")"):
                 part = part[1:-1]
             r = self.match(part)
@@ -4182,7 +4209,7 @@ class SBRules:
     def match(self, body, flags=()):
         """不含策略的匹配部分 → 规则 dict / None（不支持）/ False（永不命中）。
         flags：规则末尾的参数（no-resolve / src）；逻辑规则的子规则自带的参数（如 (IP-CIDR,a/24,src)）在这里拆出"""
-        m = re.match(r"^(AND|OR|NOT)\\s*,\\s*\\((.*)\\)$", body.strip(), re.I)
+        m = re.match(r"^(AND|OR|NOT)[\\t\\n\\f\\r ]*,[\\t\\n\\f\\r ]*\\((.*)\\)$", trim(body), re.I)
         if m:
             return self.logical(m.group(1).upper(), m.group(2))
         typ, _, val = body.partition(",")
@@ -4190,15 +4217,15 @@ class SBRules:
             return None
         items = val.split(",")
         k = len(items)
-        while k > 1 and items[k - 1].strip().lower() in RULE_FLAGS:
+        while k > 1 and trim(items[k - 1]).lower() in RULE_FLAGS:
             k -= 1
-        flags = {x.strip().lower() for x in items[k:]} | {x.strip().lower() for x in flags}
+        flags = {trim(x).lower() for x in items[k:]} | {trim(x).lower() for x in flags}
         # DOMAIN-REGEX 等正则的值本身可能带逗号（^a{1,3}\\.com$）：以前只取第一项，被截成「^a{1」永远不命中
-        v = ",".join(items[:k]) if typ.strip().upper() in _REGEX_TYPES else items[0]
+        v = ",".join(items[:k]) if trim(typ).upper() in _REGEX_TYPES else items[0]
         return self.cond(typ, v, src="src" in flags)
 
     def action(self, pol):
-        pol = self.alias.get(pol.strip(), pol.strip())
+        pol = self.alias.get(trim(pol), trim(pol))
         if pol in ("REJECT",):
             return {"action": "reject"}
         if pol == "REJECT-DROP":
@@ -4213,7 +4240,7 @@ class SBRules:
         """完整规则「类型,值,策略[,no-resolve][,src]」→ (规则 dict 或 None, 是否需要先解析域名)"""
         body, pol, flags = split_rule(line)
         flags = [x.lower() for x in flags]
-        typ = body.split(",")[0].strip().upper()
+        typ = trim(body.split(",")[0]).upper()
         if typ == "MATCH":
             return None, False
         act = self.action(pol)
@@ -4231,7 +4258,7 @@ class SBRules:
         elif "no-resolve" in flags or "src" in flags or r.get("ip_is_private"):  # 按来源匹配不需要解析目标域名
             needs = False
         elif typ == "RULE-SET":  # 以前 RULE-SET 一律不解析：ipcidr / classical 规则集里的 IP 条目对域名连接永远不命中
-            needs = body.split(",", 1)[1].strip() in self.ip_sets
+            needs = trim(body.split(",", 1)[1]) in self.ip_sets
         else:
             needs = typ in ("GEOIP", "IP-CIDR", "IP-CIDR6")
         return r, needs
@@ -4240,12 +4267,12 @@ class SBRules:
 def _logical_needs_resolve(body, ip_sets=()):
     """逻辑规则里有不带 no-resolve / src 的 IP 类子条件（含 ipcidr / classical 规则集）时，mihomo 同样会先解析域名再匹配。
     以前只看行首类型：AND,((NETWORK,UDP),(IP-CIDR,1.2.3.0/24)) 在 sing-box 下域名连接永远不解析，规则对域名访问不生效"""
-    for m in re.finditer(r"\\(\\s*(GEOIP|IP-CIDR6?|RULE-SET)\\s*,([^()]*)\\)", body, re.I):
+    for m in re.finditer(r"\\([\\t\\n\\f\\r ]*(GEOIP|IP-CIDR6?|RULE-SET)[\\t\\n\\f\\r ]*,([^()]*)\\)", body, re.I):
         typ = m.group(1).upper()
-        args = [x.strip().lower() for x in m.group(2).split(",")]
+        args = [trim(x).lower() for x in m.group(2).split(",")]
         if "no-resolve" in args[1:] or "src" in args[1:] or (typ == "GEOIP" and args[0] in ("private", "lan")):
             continue
-        if typ == "RULE-SET" and m.group(2).split(",")[0].strip() not in ip_sets:
+        if typ == "RULE-SET" and trim(m.group(2).split(",")[0]) not in ip_sets:
             continue
         return True
     return False
@@ -4487,7 +4514,7 @@ from .sb_yaml import yaml_lite
 from .groups import sb_provider_nodes, sb_sub_cache, sb_sub_outbounds
 from .sb_nodes import sb_outbound
 from .sb_rules import SBRules, geo_srs_entry
-from .ruleutil import LOGICAL_RX, _mh_domain, split_rule, strip_inline_comment
+from .ruleutil import LOGICAL_RX, _mh_domain, split_lines, split_rule, strip_inline_comment, trim
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
@@ -4912,20 +4939,22 @@ def _re2_ok(rx):
 def _rule_lines_to_source(text, behavior, fmt, skipped=None):
     """mihomo 规则集文本（yaml payload / text）→ sing-box source 规则集。
     skipped：传入列表时收集转换不了、被跳过的 classical 条目（以前 GEOSITE / GEOIP / 逻辑规则静默丢掉）"""
-    t = text.strip()
+    t = trim(text)
     items = []
     if fmt == "yaml" or re.search(r"(?m)^payload\\s*:", t):
         y = yaml_lite(t)
         items = [str(x) for x in ((y or {}).get("payload") or [])] if isinstance(y, dict) else []
     else:
         # 行尾注释（「DOMAIN,a.com # 注释」「a.com ! 注释」）去掉，规则保留：以前整行当成无法识别跳过
-        items = [strip_inline_comment(l.strip()) for l in t.splitlines() if l.strip() and not l.strip().startswith(("#", "//", "!"))]
+        # 只认 \\r\\n / \\n / \\r 换行、首尾只去 IDN_SPACE（与 Go 一致，见 ruleutil.split_lines）
+        lines = [trim(l) for l in split_lines(t)]
+        items = [strip_inline_comment(l) for l in lines if l and not l.startswith(("#", "//", "!"))]
     r = {}
     other = {}  # classical 里的端口 / 网络 / 来源地址 / 进程等条件：各自成条（sing-box 同一条规则里这些字段与域名 / IP 是「且」）
     logic = []  # classical 里的 AND / OR / NOT：转成 headless 逻辑规则（规则集里各条规则之间是「或」）
     tr = SBRules({}, set(), {}, {})
     for x in items:
-        x = x.strip().strip("'\\"")
+        x = trim(x).strip("'\\"")
         if behavior == "ipcidr":
             try:
                 r.setdefault("ip_cidr", []).append(str(ipaddress.ip_network(x, strict=False)))
@@ -4939,7 +4968,7 @@ def _rule_lines_to_source(text, behavior, fmt, skipped=None):
             c = _headless(tr.match(body))
             # 规则集文件里不能再引用规则集（GEOSITE / GEOIP / RULE-SET），sing-box 加载会报错：跳过并记下来提示
             if c is None:
-                if skipped is not None and x and x.split(",")[0].strip().upper() not in ("MATCH",):
+                if skipped is not None and x and trim(x.split(",")[0]).upper() not in ("MATCH",):
                     skipped.append(x)
                 continue
             if c.get("type") == "logical" or "invert" in c:
@@ -9371,12 +9400,12 @@ from .sb_config import sb_sync_assets
 from .sysopt import proxy_opener
 from .ruletest import clean_target
 from .logstream import core_stream
-from .ruleutil import DOMAIN_RX, adblock_providers, idn_ascii, strip_inline_comment
+from .ruleutil import DOMAIN_RX, adblock_providers, fields, idn_ascii, split_lines, strip_inline_comment, trim
 # 订阅 AdGuard/ABP（||domain^、@@||domain^）、hosts（0.0.0.0 domain）与纯域名列表，转换为 mihomo
 # behavior=domain / format=text 的本地 rule-provider 文件：
 #   ||a.com^ → "+.a.com"（含子域）；hosts / 纯域名 → "a.com"（仅该域名，与 AdGuard Home 语义一致）
 # 规则：AND,((RULE-SET,ad-xxx),(NOT,((RULE-SET,ad-allow)))),REJECT  —— 白名单优先，且被放行的域名继续走正常分流
-CLASH_RX = re.compile(r"^(domain|domain-suffix),([^,\\s]+)(?:,.*)?$")
+CLASH_RX = re.compile(r"^(domain|domain-suffix),([^,\\t\\n\\f\\r ]+)(?:,.*)?$")  # 空白写成 Go RE2 的 \\s，两边一致
 # ||a.com^ 拦截 a.com 及子域；|a.com^（AdGuard DNS 语法）只拦截 a.com 本身
 ABP_RX = re.compile(r"^(@@)?(\\|\\|?)([^\\^/|$]+)\\^\\|?(?:\\$(.*))?$")
 HOSTS_IPS = {"0.0.0.0", "127.0.0.1", "::", "::1", "0:0:0:0:0:0:0:0", "::0", "0", "255.255.255.255"}
@@ -9398,7 +9427,7 @@ def list_id(url):
 
 
 def norm_domain(s):
-    s = s.strip().lower().rstrip(".")
+    s = trim(s).lower().rstrip(".")
     if not s or "*" in s:
         return None
     s = idn_ascii(s).rstrip(".")  # 中文 / 国际化域名转 punycode（以前当成非法条目跳过）
@@ -9442,8 +9471,8 @@ def parse_filter_ex(text, plain_suffix=False):
     bs, be, as_, ae = set(), set(), set(), set()
     abp = []  # (allow, pipes, 域名, 修饰符集合)：最后统一处理 $badfilter / $important
     skipped = 0
-    for raw in text.splitlines():
-        line = raw.strip()
+    for raw in split_lines(text):  # 只认 \\r\\n / \\n / \\r 换行、首尾只去 IDN_SPACE（与 Go 一致）
+        line = trim(raw)
         if not line or line[0] in "!#[":
             continue
         line = strip_inline_comment(line)
@@ -9454,7 +9483,7 @@ def parse_filter_ex(text, plain_suffix=False):
             skipped += 1
             continue
         if low.startswith("- "):  # Clash YAML payload：  - DOMAIN-SUFFIX,a.com / - '+.a.com'
-            low = low[2:].strip().strip("'\\"")
+            low = trim(low[2:]).strip("'\\"")
             if not low:
                 continue
         cm = CLASH_RX.match(low)
@@ -9478,7 +9507,7 @@ def parse_filter_ex(text, plain_suffix=False):
                     skipped += 1
                 continue
             allow, pipes, dom, mods = m.groups()
-            ms = {x.strip() for x in (mods or "").split(",")} - {""}
+            ms = {trim(x) for x in (mods or "").split(",")} - {""}
             if ms - {"important", "badfilter"}:
                 skipped += 1  # $client= / $dnstype= / $denyallow= 等修饰符无法用域名规则等价表达
                 continue
@@ -9491,7 +9520,7 @@ def parse_filter_ex(text, plain_suffix=False):
         if low[0] in "|/" or any(c in low for c in "$^*/\\\\"):
             skipped += 1  # 正则、URL 规则、通配符等
             continue
-        parts = low.split("#", 1)[0].split()
+        parts = fields(low.split("#", 1)[0])  # 不用 str.split()：它还按 \\x1c~\\x1f 拆（与 Go ruleutil.Fields 一致）
         if len(parts) >= 2 and parts[0] in HOSTS_IPS:
             for h in parts[1:]:
                 dom = norm_domain(h)
@@ -10437,23 +10466,41 @@ def sched_loop():
             print("schedule error", e, flush=True)
 
 
+def _int0(v):
+    """与 Go data.Int 一致：数字取整，数字字符串（可带首尾空白）按十进制解析，其余（含 bool）按 0"""
+    if isinstance(v, bool):
+        return 0
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, str):  # Go strconv.Atoi：只认 [+-]?ASCII 数字（Python int() 还认「1_0」、全角数字）
+        m = re.fullmatch(r"[+-]?[0-9]+", v.strip(" \\t\\n\\v\\f\\r\\x85\\xa0\\u1680\\u2000\\u2001\\u2002\\u2003\\u2004\\u2005\\u2006\\u2007\\u2008\\u2009\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000"))
+        return int(m.group(0)) if m else 0
+    return 0
+
+
 def sched_tick(n):
     """定时任务的一轮（每 20 秒；n 是轮数，每 3 轮检查一次按设备分流）。与 Go schedTick 对应"""
     d = load()
-    sc = d.get("schedule") or {}
+    sc = d.get("schedule") if isinstance(d.get("schedule"), dict) else {}
     now = time.strftime("%H:%M")
     today = time.strftime("%Y-%m-%d")
     due = [k for k in ("sub_update", "core_restart", "geo_update") if daily_due(k, str(sc.get(k) or ""), now, today)]
-    # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
-    hcfg = health_cfg(d)
-    if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
-        due.append("health")
-    mins = int(sc.get("latency") or 0)
-    if mins and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
+    # 下面每项检查都单独兜住异常：上面到点的定点任务已被 daily_due 记成今天执行过，这里抛异常整轮中止就漏一天
+    # （以前 data.json 里 schedule.latency / sub_interval 被手改成非数字、health_cfg / subs 形状不对时整轮跳过；Go 按 0 处理）
+    try:  # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
+        hcfg = health_cfg(d)
+        if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
+            due.append("health")
+    except Exception as e:
+        log_err("节点健康检查定时检查", e)
+    mins = _int0(sc.get("latency"))
+    if mins > 0 and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
         due.append("latency")
-    if active_core(d) == "singbox" and d["subs"]:  # mihomo 的订阅由核心按间隔自动更新；sing-box 由面板代劳
-        iv = max(int(d.get("sub_interval") or 86400), 600)
-        last = min([sb_sub_cache(s["name"]).get("updated", 0) for s in d["subs"]] or [0])
+    raw_subs = d.get("subs") if isinstance(d.get("subs"), list) else []
+    subs = [s for s in raw_subs if isinstance(s, dict)]
+    if active_core(d) == "singbox" and raw_subs:  # mihomo 的订阅由核心按间隔自动更新；sing-box 由面板代劳
+        iv = max(_int0(d.get("sub_interval")) or 86400, 600)
+        last = min([sb_sub_cache(s["name"] if isinstance(s.get("name"), str) else "").get("updated", 0) for s in subs] or [0])
         if time.time() - max(last, SCHED["done"].get("sb_subs", 0)) >= iv:
             SCHED["done"]["sb_subs"] = time.time()
             # 每一步单独兜住异常：一处出错不能打断这一轮的其他任务（到点的定点任务已被 daily_due 记成今天执行过，跳过就漏一天）
@@ -12345,6 +12392,16 @@ def device_route_missing(d):
     return [str(e.get("name") or e.get("ip") or e.get("mac")) for e in d.get("device_routes") or []
             if isinstance(e, dict) and e.get("enabled", True) and e.get("target") not in pol]
 
+def drop_removed_rs(prev):
+    """保存设置 / 导入配置 / 恢复备份重载成功后：整个删掉的规则集删缓存文件。按此刻（锁内）的设置判断还在用的，
+    并发再加回来的不删；出错只记日志（与 Go dropRemovedRs 一致）"""
+    with LOCK:
+        try:
+            return drop_removed_rs_files(prev, load())
+        except Exception as e:
+            log_err("删除规则集缓存", e)
+            return []
+
 
 class H(BaseHTTPRequestHandler):
     # HTTP/1.1 长连接：每秒的 /api/live 等轮询复用同一条 TCP / TLS 连接，不再每次握手。
@@ -13608,11 +13665,7 @@ class H(BaseHTTPRequestHandler):
             if not ok:
                 return self.send(500, {"message": msg})
         if "rulesets" in new:  # 整个删掉的规则集：配置生效后再删缓存（重载失败撤销时还要用）；按此刻的设置判断还在用的，并发再加回来的不删
-            with LOCK:
-                try:
-                    drop_removed_rs_files(prev, load())
-                except Exception as e:
-                    log_err("删除规则集缓存", e)
+            drop_removed_rs(prev)
         if set(b) & {"bypass", "ipv6"} and d["proxy_mode"] != "off":
             tp_apply()
         if "device_routes" in b:
@@ -13683,6 +13736,7 @@ class H(BaseHTTPRequestHandler):
         ab_compose(load())
         rok, rmsg = reload_core(prev)
         if rok:
+            drop_removed_rs(prev)  # 备份里没有的规则集：重载成功后删缓存（与保存设置一致；失败撤销时不删）
             tp_apply()
         msg += ("核心已重载：" if rok else "设置已撤销：") + rmsg
         # index.html 按修改时间立即换成备份版本，正在运行的却还是当前的 server.py：不重启就是新旧前后端混跑。
@@ -13777,6 +13831,7 @@ class H(BaseHTTPRequestHandler):
         ab_compose(load())
         ok, msg = reload_core(prev)
         if ok:
+            drop_removed_rs(prev)  # 导入的配置里没有的规则集：重载成功后删缓存（与保存设置一致；失败撤销时不删）
             tp_apply()
         return self.reply(ok, ("已恢复，" if ok else "") + msg)
 
