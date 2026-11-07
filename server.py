@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.21"
+PANEL_VERSION = "11.6.22"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.21"
+PANEL_VERSION = "11.6.22"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -864,8 +864,13 @@ def rs_safe(name):
 
 
 def adopt_rs_files(names, file):
-    """把按旧文件名（safe）存的规则集缓存接到新文件名（rs_safe）上（硬链接，失败再改名），免得升级后重新下载。
-    file(安全名) 返回完整路径；旧文件名被多个规则集共用（本来就互相覆盖）时不知道是谁的，不接，等重新下载"""
+    """把按旧文件名（safe）存的规则集缓存接到新文件名（rs_safe）上（硬链接），免得升级后重新下载。
+    file(安全名) 返回完整路径；旧文件名被多个规则集共用（本来就互相覆盖）时不知道是谁的，不接，等重新下载。
+    - 只用 os.link（新文件名已存在时失败，不覆盖）：迁移和后台下载同时写新文件名时，绝不会拿旧缓存盖掉刚下载的新文件；
+      不支持硬链接的文件系统不迁移，按正常流程重新下载（以前退回 os.rename 会覆盖）
+    - 接上（或新文件名早已存在）后删掉旧文件名：以前留着，之后再加一个名字恰好就是旧文件名的规则集（如「A.B」的旧文件
+      rs-A_B.json 与规则集「A_B」）会直接拿别人的旧内容开始用。只有这一个规则集用到这个旧名时才删
+      （有规则集的当前文件名就是它时 count 必然 ≥ 2，不会走到这里）"""
     count = {}
     for n in names:
         count[safe(n)] = count.get(safe(n), 0) + 1
@@ -874,16 +879,40 @@ def adopt_rs_files(names, file):
         if old == cur or count[old] != 1:
             continue
         op, np = file(old), file(cur)
-        if os.path.exists(np) or not os.path.isfile(op):
+        if not os.path.isfile(op) or os.path.islink(op):
+            continue
+        if not os.path.lexists(np):
+            try:
+                os.link(op, np)
+            except OSError:
+                if not os.path.lexists(np):
+                    continue  # 其他错误留着旧文件，等重新下载
+        try:
+            os.remove(op)
+        except OSError:
+            pass
+
+
+def drop_legacy_rs_files(names, all_names, file):
+    """新增 / 同名替换（换了地址、类型、格式）的规则集：删掉它旧文件名（safe）的缓存，免得随后 adopt_rs_files 把旧地址的内容
+    接到新文件名上（新地址下载失败、或之后切换到 sing-box 时照样按旧列表分流）。旧文件名同时是别的规则集的当前文件名
+    （如「A.B」与「A_B」并存）时不动"""
+    count = {}
+    for n in all_names:
+        count[safe(n)] = count.get(safe(n), 0) + 1
+    for n in names:
+        old = safe(n)
+        if old == rs_safe(n) or count.get(old, 0) != 1:
             continue
         try:
-            os.link(op, np)
+            os.remove(file(old))
         except OSError:
-            try:
-                os.rename(op, np)
-            except OSError:
-                pass
+            pass
 
+
+def write_bytes(path, raw, mode=0o644):
+    """原子写二进制文件（唯一临时文件 + os.replace），并发写同一文件不会互相截断"""
+    _atomic_write(path, raw, mode)
 '''
 _SRC['shunt.links'] = '''"""单节点链接解析"""
 import base64, json, re
@@ -1194,13 +1223,17 @@ DOMAIN_RX = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_\\-]{0,61}[a-z0-9_
 
 
 _IDN_DOTS = str.maketrans({"\\u3002": ".", "\\uff0e": ".", "\\uff61": "."})  # 。．｡ 按 IDNA 当成点
+# 去掉首尾空白用的字符：与 Go ruleutil.idnSpace 逐字一致（不用 str.strip()，两边对「空白」的定义不同）
+IDN_SPACE = " \\t\\n\\v\\f\\r\\x85\\xa0\\u1680\\u2000\\u2001\\u2002\\u2003\\u2004\\u2005\\u2006\\u2007\\u2008\\u2009\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
 
 
 def idn_ascii(s):
     """中文 / 国际化域名 → punycode（例子.中国 → xn--fsqu00a.xn--fiqs8s）；本来就是 ASCII 的原样返回，转换不了返回空串。
     逐段转换（xn-- + RFC 3492 punycode），ASCII 段（含通配符「*」「?」）不动；与 Go ruleutil.IdnASCII 逐字一致。
     sing-box / mihomo 按 ASCII 域名匹配：以前「DOMAIN-SUFFIX,例子.中国」「||例子.cn^」原样写进配置永远不命中，
-    广告列表里的中文域名被当成非法条目跳过"""
+    广告列表里的中文域名被当成非法条目跳过。
+    首尾空白先去掉：以前「 例子.中国」的空格被当成标签的一部分一起编码，得到错误的 xn-- 域名"""
+    s = s.strip(IDN_SPACE)
     if s.isascii():
         return s
     out = []
@@ -1216,11 +1249,21 @@ def idn_ascii(s):
 
 
 INLINE_COMMENT_RX = re.compile(r"\\s+[#!].*$")
+# 值本身可能含「 #」「 !」的规则类型（正则、进程名 / 路径），含逻辑规则里的子规则：整行不按行内注释截断
+RAW_VALUE_RX = re.compile(r"(?:^|[(,])\\s*(?:DOMAIN-REGEX|URL-REGEX|PROCESS-(?:NAME|PATH)(?:-REGEX|-WILDCARD)?)\\s*,", re.I)
 
 
 def strip_inline_comment(line):
-    """「规则 # 注释」「规则 ! 注释」：去掉空白后的行尾注释，保留规则（以前整行被当成无法识别跳过）"""
-    return INLINE_COMMENT_RX.sub("", line)
+    """「规则 # 注释」「规则 ! 注释」：去掉空白后的行尾注释，保留规则（以前整行被当成无法识别跳过）。
+    DOMAIN-REGEX / PROCESS-PATH / PROCESS-NAME(-REGEX / -WILDCARD) 的值、广告列表的 /正则/ 本身可能含「 #」「 !」
+    （如「DOMAIN-REGEX,^a #b$」「PROCESS-PATH,C:\\\\My Apps !\\\\x.exe」），以前被截断成另一条规则：这些行原样保留"""
+    m = INLINE_COMMENT_RX.search(line)
+    if not m:
+        return line
+    head = line[:m.start()]
+    if head.lstrip(" \\t\\n\\v\\f\\r").startswith("/") or RAW_VALUE_RX.search(head):
+        return line
+    return line[:m.start()]
 
 
 def rule_policy_index(parts):
@@ -1799,7 +1842,7 @@ from .base import (
     G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
     TUN_DEFAULT, TUN_STACKS
 )
-from .data import LB_KINDS, auto_name, lb_name, region_label, rs_safe, safe
+from .data import LB_KINDS, adopt_rs_files, auto_name, lb_name, region_label, rs_safe, safe
 from .devroute import device_route_rules, mark_applied
 from .groups import clean_custom_group, gcfg, group_opts, region_plan, rx
 from .ruleutil import DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, dns_policy_of, rule_policy_index, split_rule
@@ -2279,9 +2322,30 @@ def bad_rule_policies(rules, d):
     return bad
 
 
+MH_RS_EXTS = ("yaml", "list", "mrs")  # mihomo 规则集缓存 rules/<名>.<扩展名>（见 build_rule_providers）
+
+
+def mh_rs_file(s, ext):
+    return os.path.join(CONF_DIR, "rules", f"{s}.{ext}")
+
+
+def adopt_mh_rs(d):
+    """v11.6.20 规则集缓存改名（rs_safe）：mihomo 的 rules/<旧文件名> 接到新文件名上（与 sing-box 的 _adopt_rs 一致）。
+    以前只改了 sing-box 的，mihomo 升级后按新文件名找不到缓存，规则集全部重新下载，下载不到（GitHub 不通）时对应分流规则失效。
+    在 write_config 里做：热重载写的是临时文件（_gen_config），同样会先改名"""
+    names = [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]]
+    if names:
+        for ext in MH_RS_EXTS:
+            adopt_rs_files(names, lambda s, ext=ext: mh_rs_file(s, ext))
+
+
 def write_config(d, path=None):
     os.makedirs(os.path.join(CONF_DIR, "providers"), exist_ok=True)
     path = path or os.path.join(CONF_DIR, "config.yaml")
+    try:
+        adopt_mh_rs(d)
+    except Exception as e:
+        print("mihomo rule-set cache adopt", e, flush=True)
     write_atomic(path, build_config(d))  # JSON 是 YAML 的子集，mihomo 可直接读取
     mark_applied()
     return path
@@ -2606,7 +2670,7 @@ def clean_fields(b, keys):
     return out
 '''
 _SRC['shunt.core'] = '''"""核心交互"""
-import itertools, json, os, shutil, threading, time
+import glob, itertools, json, os, shutil, threading, time
 
 from .base import CONF_DIR, LOCK, wd_hold
 from .errlog import log_err
@@ -2676,6 +2740,10 @@ def _rollback(prev, sb=None):
 
 
 _TMP_SEQ = itertools.count(1)
+_OLD_SEQ = itertools.count(1)
+# 替换正式配置 → 热重载 → 被拒时放回原文件，整段串行：以前两次保存并发时共用一个 config.json.old，
+# 第 1 次的新配置被 sing-box 拒绝时，第 2 次可能已经把 .old 换成了第 1 次写的文件，撤销放回去的是错的配置
+_RELOAD_LOCK = threading.RLock()
 RELOAD_TRIES = 3  # 校验期间配置又被改了：重新生成再校验，最后一次在锁内校验（退回旧做法，保证能结束）
 
 
@@ -2698,8 +2766,6 @@ def _reload_core(prev, force=False):
     # 断流：sing-box 的 SIGHUP 重载会关掉旧实例，所有连接一起断开。定时更新广告规则、GEO / 规则集时配置文件
     # 往往一个字节都没变，变的只是规则集文件，而 sing-box 1.10+ 会自动重新加载被修改的本地规则集文件。
     # 新配置与磁盘上的完全相同、且运行中的进程加载的就是这份文件时，跳过重载，连接不断
-    tmp = None
-    unchanged = False
     if prev is not None and not os.environ.get("PANEL_OFFLINE"):
         # 新引用的规则集（如刚加的 GEOSITE 规则）先下载好再生成配置，否则这次生成时会被当成「尚未下载」跳过。
         # 在锁外下载；PANEL_OFFLINE（单元测试 / 生成配置自检）不联网
@@ -2709,6 +2775,14 @@ def _reload_core(prev, force=False):
                 _fetch_new_bounded(prev, d0)
         except Exception as e:
             log_err("下载新引用的规则集", e)
+    with _RELOAD_LOCK:  # 下载在锁外；生成 / 替换 / 热重载 / 撤销串行（见 _RELOAD_LOCK）
+        return _reload_locked(prev, force)
+
+
+def _reload_locked(prev, force):
+    tmp = None
+    unchanged = False
+    old = written = None
     try:
         for i in range(RELOAD_TRIES):
             last = i == RELOAD_TRIES - 1
@@ -2739,9 +2813,14 @@ def _reload_core(prev, force=False):
                     unchanged = True
                     break
                 if sb:
-                    _keep_old(final)
-                os.replace(tmp, final)
+                    old = _keep_old(final)
+                try:
+                    os.replace(tmp, final)
+                except OSError:
+                    _drop_old(old)
+                    raise
                 tmp = None
+                written = _file_id(final)  # 撤销前核对 config.json 还是本次写入的这份
                 break
     finally:
         if tmp:
@@ -2752,14 +2831,14 @@ def _reload_core(prev, force=False):
     if unchanged:
         return True, "配置无变化，规则集文件已由 sing-box 自动重新加载（连接不中断）"
     if WD["manual_stop"]:  # 用户手动停止了核心：只写配置，不替用户把核心拉起来（与 refresh_regions 一致）
-        _drop_old(final)
+        _drop_old(old)
         return True, "配置已保存；核心已手动停止，下次启动时生效"
     retest_soon()
     if sb:
         pid0 = core_pid()
         ok, msg = sb_hot_reload()
         if ok or prev is None:
-            _drop_old(final)
+            _drop_old(old)
             return ok, msg
         # 配置能通过 sing-box check 但运行时被拒 / 启动失败（如内核缺少模块）：撤销并恢复。
         # sing-box 收到 SIGHUP 先 check 新配置，被拒时旧实例原样继续运行（同一进程、控制端口照常应答）：
@@ -2767,9 +2846,9 @@ def _reload_core(prev, force=False):
         # 白白再断一次网。进程退出 / 换了进程 / 控制端口不应答（核心真的挂了）才重启
         tail = sb_log_error()
         suffix = "：" + tail if tail else ""
-        if pid0 and core_pid() == pid0 and core_alive() and _restore_old(prev, final):
+        if pid0 and core_pid() == pid0 and core_alive() and _restore_old(prev, final, old, written):
             return False, "sing-box 拒绝了新配置，已撤销本次修改（核心仍在用原配置运行，未重启）" + suffix
-        _drop_old(final)
+        _drop_old(old)
         _rollback(prev, sb=True)
         svc_restart(timeout=90)
         return False, "sing-box 启动失败，已撤销本次修改" + suffix
@@ -2824,36 +2903,56 @@ def _fetch_new_bounded(prev, d0, wait=None):
 
 def _keep_old(final):
     """替换 sing-box 正式配置前留一份原文件（硬链接，保留原 inode 与修改时间）：新配置被运行中的核心拒绝时原样放回，
-    sb_running_current 仍能判断出「运行中的进程加载的就是磁盘上这份」，下次不必为相同配置再 SIGHUP"""
-    old = final + ".old"
+    sb_running_current 仍能判断出「运行中的进程加载的就是磁盘上这份」，下次不必为相同配置再 SIGHUP。
+    每次重载各用各的备份名（config.json.old<序号>），返回备份路径（留不下返回 None）。在 _RELOAD_LOCK 内调用，
+    此时没有别的重载在进行，顺手清掉异常退出留下的旧备份"""
+    for stale in glob.glob(glob.escape(final) + ".old*"):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+    old = f"{final}.old{next(_OLD_SEQ)}"
+    try:
+        os.link(final, old)
+        return old
+    except OSError:
+        try:
+            shutil.copy2(final, old)
+            return old
+        except OSError:
+            return None
+
+
+def _file_id(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _drop_old(old):
+    if not old:
+        return
     try:
         os.remove(old)
     except OSError:
         pass
-    try:
-        os.link(final, old)
-    except OSError:
-        try:
-            shutil.copy2(final, old)
-        except OSError:
-            pass
 
 
-def _drop_old(final):
-    try:
-        os.remove(final + ".old")
-    except OSError:
-        pass
-
-
-def _restore_old(prev, final):
-    """data.json 退回 prev，配置文件换回 _keep_old 留下的原文件；没有原文件返回 False（交给 _rollback 重新生成）"""
+def _restore_old(prev, final, old, written):
+    """data.json 退回 prev，配置文件换回 _keep_old 留下的原文件；没有原文件、或 config.json 已不是本次重载写入的那份
+    （被别处改写过，放回去会盖掉别人的配置）返回 False（交给 _rollback 重新生成）"""
     with LOCK:
-        if not os.path.exists(final + ".old"):
+        if not old or not os.path.exists(old):
+            return False
+        if written is None or _file_id(final) != written:
+            log_err("撤销 sing-box 配置", "配置文件已被其他操作改写，改为按原设置重新生成")
+            _drop_old(old)
             return False
         save(prev)
         try:
-            os.replace(final + ".old", final)
+            os.replace(old, final)
         except OSError as e:
             log_err("撤销 sing-box 配置", e)
             return False
@@ -4329,9 +4428,9 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, wd_hold)
 from .errlog import log_tail
-from .data import adopt_rs_files, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_safe, write_json
+from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, lb_names, lb_old_name, load, rs_safe, write_bytes, write_json
 from .groups import gcfg, prov_set, rx
-from .mihomo import BUILTIN_GEO, build_config, build_rule_providers, dns_cfg, policy_parts, tun_params, write_atomic, write_config
+from .mihomo import BUILTIN_GEO, MH_RS_EXTS, build_config, build_rule_providers, dns_cfg, mh_rs_file, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .devroute import mark_applied
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
@@ -4899,9 +4998,7 @@ def sb_sync_assets(d, force=False, need=None):
             if rsd["kind"] in ("geo", "srs"):
                 if not data.startswith(b"SRS"):
                     raise ValueError("不是有效的 .srs 文件")
-                with open(path + ".tmp", "wb") as f:
-                    f.write(data)
-                os.replace(path + ".tmp", path)
+                write_bytes(path, data)  # 唯一临时文件 + 改名：与并发下载 / 缓存迁移同时写同一文件也不会写坏
             else:
                 skipped = []
                 src = _rule_lines_to_source(data.decode("utf-8", "ignore"), rsd["behavior"], rsd["format"], skipped)
@@ -4937,6 +5034,12 @@ def sb_refresh_rulesets(d, names):
     以前本地已有同名文件（rs-<名>.json）就一直沿用旧地址、旧类型转换出的内容，要等定时更新或手动「更新」才换；
     新加的规则集也要等到那时才下载，这期间引用它的规则被当成「尚未下载」跳过"""
     want = set(names)
+    alln = [r["name"] for r in d.get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]]
+    changed = [n for n in names if isinstance(n, str)]
+    for ext in (".json", ".srs"):  # 旧文件名的缓存是旧地址的内容：先删掉，不让生成配置时改名接上（mihomo 的同样处理）
+        drop_legacy_rs_files(changed, alln, lambda s, ext=ext: os.path.join(SB_RULE_DIR, f"rs-{s}{ext}"))
+    for ext in MH_RS_EXTS:
+        drop_legacy_rs_files(changed, alln, lambda s, ext=ext: mh_rs_file(s, ext))
     need = {k: v for k, v in sb_rule_need(d).items() if k in want and v.get("kind") != "adblock"}
     return sb_sync_assets(d, force=True, need=need) if need else []
 
@@ -10255,66 +10358,91 @@ def sched_loop():
         time.sleep(20)
         n += 1
         try:
-            d = load()
-            sc = d.get("schedule") or {}
-            now = time.strftime("%H:%M")
-            today = time.strftime("%Y-%m-%d")
-            due = [k for k in ("sub_update", "core_restart", "geo_update") if daily_due(k, str(sc.get(k) or ""), now, today)]
-            # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
-            hcfg = health_cfg(d)
-            if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
-                due.append("health")
-            mins = int(sc.get("latency") or 0)
-            if mins and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
-                due.append("latency")
-            if active_core(d) == "singbox" and d["subs"]:  # mihomo 的订阅由核心按间隔自动更新；sing-box 由面板代劳
-                iv = max(int(d.get("sub_interval") or 86400), 600)
-                last = min([sb_sub_cache(s["name"]).get("updated", 0) for s in d["subs"]] or [0])
-                if time.time() - max(last, SCHED["done"].get("sb_subs", 0)) >= iv:
-                    SCHED["done"]["sb_subs"] = time.time()
-                    _, bad_, _ = subs_update(d=d)
-                    if bad_:
-                        sched_event("订阅自动更新：✗ " + "；".join(bad_)[:200])
-            bm = bg_meta()
-            if bm.get("daily") and bm.get("url") and time.time() - max(int(bm.get("t") or 0), SCHED["done"].get("bg", 0)) >= 86400:
-                SCHED["done"]["bg"] = time.time()  # 失败也等一天，避免反复重试
-                if bg_fetch(bm["url"])[0]:
-                    bm["t"] = int(time.time())
-                    bg_meta_save(bm)
-            ab = d["adblock"]
-            if ab.get("enabled") and ab.get("lists") and int(ab.get("interval") or 0):
-                if time.time() - max(AB_STATE["last"], ab_last_update()) >= int(ab["interval"]):
-                    due.append("adblock")
-                elif AB_STATE.get("retry") and time.time() >= AB_STATE["retry"]:
-                    due.append("adblock")  # 上次有列表下载失败：10 分钟后补一次，最多 AB_RETRY_MAX 次
-            if n % 3 == 0:  # 每分钟：按设备分流里 MAC 对应的 IP 变了就重新生成配置
-                devroute_tick(d)
-            try:
-                from .core_cache import prefetch_due, prefetch_job
-                if prefetch_due():  # 自动下载 / 更新全部 sing-box 版本（不动正在运行的那个）
-                    threading.Thread(target=prefetch_job, args=(d.get("gh_proxy") or "",), daemon=True).start()
-            except Exception as e:
-                print("core prefetch error", e, flush=True)
-            for k in due:
-                if k == "latency":
-                    SCHED["done"][k] = time.time()
-                if k == "adblock":
-                    AB_STATE["last"] = int(time.time())  # 失败也等下一个周期，避免频繁重试
-                    AB_STATE["retry"] = 0
-                    if not core_alive():  # 刚开机 / 核心重启中：先等核心起来，否则国外列表只能直连（常被污染）
-                        AB_STATE["retry"] = time.time() + 60
-                        continue
-                ok, msg = run_task(k)
-                if k == "adblock":
-                    n = AB_STATE.get("retries", 0)
-                    if not ok and n < AB_RETRY_MAX:
-                        AB_STATE.update(retry=time.time() + 600, retries=n + 1)
-                    elif ok:
-                        AB_STATE["retries"] = 0
-                if k != "latency" or not ok:
-                    sched_event(f"{TASK_NAMES[k]}：{'✓' if ok else '✗'} {msg}")
+            sched_tick(n)
         except Exception as e:
             print("schedule error", e, flush=True)
+
+
+def sched_tick(n):
+    """定时任务的一轮（每 20 秒；n 是轮数，每 3 轮检查一次按设备分流）。与 Go schedTick 对应"""
+    d = load()
+    sc = d.get("schedule") or {}
+    now = time.strftime("%H:%M")
+    today = time.strftime("%Y-%m-%d")
+    due = [k for k in ("sub_update", "core_restart", "geo_update") if daily_due(k, str(sc.get(k) or ""), now, today)]
+    # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
+    hcfg = health_cfg(d)
+    if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
+        due.append("health")
+    mins = int(sc.get("latency") or 0)
+    if mins and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
+        due.append("latency")
+    if active_core(d) == "singbox" and d["subs"]:  # mihomo 的订阅由核心按间隔自动更新；sing-box 由面板代劳
+        iv = max(int(d.get("sub_interval") or 86400), 600)
+        last = min([sb_sub_cache(s["name"]).get("updated", 0) for s in d["subs"]] or [0])
+        if time.time() - max(last, SCHED["done"].get("sb_subs", 0)) >= iv:
+            SCHED["done"]["sb_subs"] = time.time()
+            # 每一步单独兜住异常：一处出错不能打断这一轮的其他任务（到点的定点任务已被 daily_due 记成今天执行过，跳过就漏一天）
+            try:
+                _, bad_, _ = subs_update(d=d)
+                if bad_:
+                    sched_event("订阅自动更新：✗ " + "；".join(bad_)[:200])
+            except Exception as e:
+                log_err("订阅自动更新", e)
+    try:
+        _bg_tick()
+    except Exception as e:
+        log_err("每日背景图", e)
+    ab = d["adblock"]
+    if ab.get("enabled") and ab.get("lists") and int(ab.get("interval") or 0):
+        if time.time() - max(AB_STATE["last"], ab_last_update()) >= int(ab["interval"]):
+            due.append("adblock")
+        elif AB_STATE.get("retry") and time.time() >= AB_STATE["retry"]:
+            due.append("adblock")  # 上次有列表下载失败：10 分钟后补一次，最多 AB_RETRY_MAX 次
+    if n % 3 == 0:  # 每分钟：按设备分流里 MAC 对应的 IP 变了就重新生成配置
+        try:
+            devroute_tick(d)
+        except Exception as e:
+            log_err("按设备分流", e)
+    try:
+        from .core_cache import prefetch_due, prefetch_job
+        if prefetch_due():  # 自动下载 / 更新全部 sing-box 版本（不动正在运行的那个）
+            threading.Thread(target=prefetch_job, args=(d.get("gh_proxy") or "",), daemon=True).start()
+    except Exception as e:
+        print("core prefetch error", e, flush=True)
+    for k in due:
+        if k == "latency":
+            SCHED["done"][k] = time.time()
+        if k == "adblock":
+            AB_STATE["last"] = int(time.time())  # 失败也等下一个周期，避免频繁重试
+            AB_STATE["retry"] = 0
+            if not core_alive():  # 刚开机 / 核心重启中：先等核心起来，否则国外列表只能直连（常被污染）
+                AB_STATE["retry"] = time.time() + 60
+                continue
+        try:  # 一个任务抛异常不能连累同一轮的其他任务
+            ok, msg = run_task(k)
+        except Exception as e:
+            log_err("定时任务：" + TASK_NAMES[k], e)
+            ok, msg = False, f"执行出错：{str(e)[:150]}"
+        if k == "adblock":
+            # 补下次数用自己的变量：以前复用循环计数 n，跑完广告更新后 n 被改成补下次数，每分钟一次的设备分流检查乱了节拍
+            tries = AB_STATE.get("retries", 0)
+            if not ok and tries < AB_RETRY_MAX:
+                AB_STATE.update(retry=time.time() + 600, retries=tries + 1)
+            elif ok:
+                AB_STATE["retries"] = 0
+        if k != "latency" or not ok:
+            sched_event(f"{TASK_NAMES[k]}：{'✓' if ok else '✗'} {msg}")
+
+
+def _bg_tick():
+    """每天更新一次背景图（sched_loop 里调用；出错不影响同一轮的定时任务）"""
+    bm = bg_meta()
+    if bm.get("daily") and bm.get("url") and time.time() - max(int(bm.get("t") or 0), SCHED["done"].get("bg", 0)) >= 86400:
+        SCHED["done"]["bg"] = time.time()  # 失败也等一天，避免反复重试
+        if bg_fetch(bm["url"])[0]:
+            bm["t"] = int(time.time())
+            bg_meta_save(bm)
 
 
 # tried：上次因设备 IP 变化而重载时的设备规则（重载失败也不对同一结果反复重试）；
