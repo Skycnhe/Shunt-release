@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.20"
+PANEL_VERSION = "11.6.21"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.20"
+PANEL_VERSION = "11.6.21"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1417,10 +1417,20 @@ def provider_nodes(fresh=False):
     j = None if os.environ.get("PANEL_OFFLINE") else core_json("/providers/proxies", timeout=3)
     if j is not None:
         data = {}
+        cached = read_json(PROV_FILE, None)
+        cached = cached if isinstance(cached, dict) else {}
         for name, p in (j.get("providers") or {}).items():
             if p.get("vehicleType") in ("HTTP", "File", "Inline") and p.get("proxies") is not None:
-                data[name] = [x.get("name") for x in p["proxies"] if x.get("name")]
-        if data != read_json(PROV_FILE, None):
+                lst = [x.get("name") for x in p["proxies"] if isinstance(x, dict) and x.get("name")]
+                if not lst:
+                    # 核心刚重启、订阅还没加载完时节点列表是空的：以前当成「订阅没有节点」，刷新地区组时把地区组全删了。
+                    # 空列表一律当成「还没加载」：沿用上次缓存的名单；没有缓存就不列出（region_plan 视为未知，保留常用地区）
+                    old = cached.get(name)
+                    if isinstance(old, list) and old:
+                        data[name] = old
+                    continue
+                data[name] = lst
+        if data != cached:
             try:
                 write_json(PROV_FILE, data)
             except OSError as e:
@@ -2696,9 +2706,7 @@ def _reload_core(prev, force=False):
         try:
             d0 = load()
             if active_core(d0) == "singbox":
-                bad = sb_fetch_new(prev, d0)
-                if bad:
-                    log_err("下载新引用的规则集", "；".join(bad)[:300])
+                _fetch_new_bounded(prev, d0)
         except Exception as e:
             log_err("下载新引用的规则集", e)
     try:
@@ -2781,6 +2789,39 @@ def _reload_core(prev, force=False):
     return True, text or "配置已重载"
 
 
+FETCH_NEW_WAIT = 20  # 保存时下载新引用的规则集最多等这么多秒
+
+
+def _fetch_new_bounded(prev, d0, wait=None):
+    """sb_fetch_new 最多等 FETCH_NEW_WAIT 秒：断网 / GitHub 不通时每个规则集要试 加速地址 × 直连 / 代理，每次 30 秒，
+    以前保存设置的请求要卡一两分钟。超时就先按现有文件生成配置（新规则暂时跳过），下载在后台继续，完成后再重载一次
+    （配置没变时不发 SIGHUP，连接不断）。返回 True = 在等待时间内下载完"""
+    done = threading.Event()
+    late = threading.Event()
+
+    def run():
+        try:
+            bad = sb_fetch_new(prev, d0)
+            if bad:
+                log_err("下载新引用的规则集", "；".join(bad)[:300])
+        except Exception as e:
+            log_err("下载新引用的规则集", e)
+        finally:
+            done.set()
+        if late.is_set():
+            try:
+                reload_core()
+            except Exception as e:
+                log_err("下载新引用的规则集后重载", e)
+    threading.Thread(target=run, daemon=True).start()
+    if done.wait(FETCH_NEW_WAIT if wait is None else wait):
+        return True
+    late.set()
+    if done.is_set():  # 恰好在置 late 前后完成：后台线程可能没看到 late，这里不再重载（本次 reload 马上就用上新文件）
+        return True
+    return False
+
+
 def _keep_old(final):
     """替换 sing-box 正式配置前留一份原文件（硬链接，保留原 inode 与修改时间）：新配置被运行中的核心拒绝时原样放回，
     sb_running_current 仍能判断出「运行中的进程加载的就是磁盘上这份」，下次不必为相同配置再 SIGHUP"""
@@ -2850,7 +2891,14 @@ def refresh_regions():
     cur = read_json(os.path.join(CONF_DIR, "config.yaml"), None)
     if not cur:
         return False, "当前配置不存在"
-    if group_sig(cur) == group_sig(build_config(load())):
+    d = load()
+    pn = provider_nodes()
+    subs = d.get("subs") or []
+    if subs and not any(s["name"] in pn for s in subs):
+        # 核心刚重启、订阅全都还没加载完（节点列表为空，也没有缓存）：这时按「没有节点」重新生成会把地区组删掉，等加载完下次再比较。
+        # 只有部分订阅没加载（如某个订阅地址一直失效）时照常刷新，不让一个坏订阅卡住其他订阅的地区组
+        return True, "订阅尚未加载完成，暂不更新地区分组"
+    if group_sig(cur) == group_sig(build_config(d)):
         return True, "地区分组无变化"
     ok, msg = reload_core()
     print(time.strftime("%F %T"), "[groups] 订阅节点变化，已重新生成地区分组：", ok, msg[:120], flush=True)
