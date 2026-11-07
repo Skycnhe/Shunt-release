@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.22"
+PANEL_VERSION = "11.6.23"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -324,7 +324,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.22"
+PANEL_VERSION = "11.6.23"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -910,6 +910,25 @@ def drop_legacy_rs_files(names, all_names, file):
             pass
 
 
+def removed_rs_stems(prev_names, cur_names):
+    """整个删掉的规则集（prev 里有、cur 里没有）的缓存文件名（rs_safe 新文件名与 safe 旧文件名）中，没有任何剩下的规则集
+    用到的那些。剩下的规则集的新文件名、旧文件名（可能还等着 adopt_rs_files 接过去）一律保留：改名（删 A 加 B）、
+    删「A.B」留「A_B」时不会删掉还在用的文件。返回排好序的列表（与 Go RemovedRsStems 一致）"""
+    cur = {n for n in cur_names if isinstance(n, str) and n}
+    keep = set()
+    for n in cur:
+        keep.add(rs_safe(n))
+        keep.add(safe(n))
+    out = set()
+    for n in prev_names:
+        if not isinstance(n, str) or not n or n in cur:
+            continue
+        for s in (rs_safe(n), safe(n)):
+            if s not in keep:
+                out.add(s)
+    return sorted(out)
+
+
 def write_bytes(path, raw, mode=0o644):
     """原子写二进制文件（唯一临时文件 + os.replace），并发写同一文件不会互相截断"""
     _atomic_write(path, raw, mode)
@@ -1248,9 +1267,11 @@ def idn_ascii(s):
     return ".".join(out)
 
 
-INLINE_COMMENT_RX = re.compile(r"\\s+[#!].*$")
+# 行内注释前的空白只认空格 / 制表符（与 Go inlineCommentRx 逐字一致）：以前用 \\s，Python 的 \\s 还含 \\v、\\x1c~\\x1f、\\x85、\\xa0、
+# 全角空格等，Go 的 \\s 只有 [\\t\\n\\f\\r ]，同一行两边截得不一样；(?s) 让注释一直截到行尾（含末尾换行，Go 的 $ 不认换行前）
+INLINE_COMMENT_RX = re.compile(r"(?s)[ \\t]+[#!].*")
 # 值本身可能含「 #」「 !」的规则类型（正则、进程名 / 路径），含逻辑规则里的子规则：整行不按行内注释截断
-RAW_VALUE_RX = re.compile(r"(?:^|[(,])\\s*(?:DOMAIN-REGEX|URL-REGEX|PROCESS-(?:NAME|PATH)(?:-REGEX|-WILDCARD)?)\\s*,", re.I)
+RAW_VALUE_RX = re.compile(r"(?:^|[(,])[ \\t]*(?:DOMAIN-REGEX|URL-REGEX|PROCESS-(?:NAME|PATH)(?:-REGEX|-WILDCARD)?)[ \\t]*,", re.I)
 
 
 def strip_inline_comment(line):
@@ -2846,8 +2867,22 @@ def _reload_locked(prev, force):
         # 白白再断一次网。进程退出 / 换了进程 / 控制端口不应答（核心真的挂了）才重启
         tail = sb_log_error()
         suffix = "：" + tail if tail else ""
-        if pid0 and core_pid() == pid0 and core_alive() and _restore_old(prev, final, old, written):
-            return False, "sing-box 拒绝了新配置，已撤销本次修改（核心仍在用原配置运行，未重启）" + suffix
+        if pid0 and core_pid() == pid0 and core_alive():
+            if _restore_old(prev, final, old, written):
+                return False, "sing-box 拒绝了新配置，已撤销本次修改（核心仍在用原配置运行，未重启）" + suffix
+            # 原文件放不回（config.json 被别处改写过 / 没留下备份）：按原设置重新生成。旧实例还活着，先试热重载，
+            # 被拒 / 进程退出 / 不应答才重启（以前一律重启，多断一次网、重启期间 DNS 也不通）
+            same = _rollback_keep(prev, final, old)
+            _drop_old(old)
+            if same:
+                return False, "sing-box 拒绝了新配置，已撤销本次修改（核心仍在用原配置运行，未重启）" + suffix
+            ok2, msg2 = sb_hot_reload()
+            if ok2 and msg2 == "配置已重载":
+                return False, "sing-box 拒绝了新配置，已撤销本次修改（已按原设置重新生成配置并热重载，未重启核心）" + suffix
+            if not ok2:
+                log_err("撤销后热重载原设置", msg2)
+                svc_restart(timeout=90)
+            return False, "sing-box 启动失败，已撤销本次修改" + suffix
         _drop_old(old)
         _rollback(prev, sb=True)
         svc_restart(timeout=90)
@@ -2948,8 +2983,7 @@ def _restore_old(prev, final, old, written):
             return False
         if written is None or _file_id(final) != written:
             log_err("撤销 sing-box 配置", "配置文件已被其他操作改写，改为按原设置重新生成")
-            _drop_old(old)
-            return False
+            return False  # 备份由调用方删（_rollback_keep 还要拿它比对）
         save(prev)
         try:
             os.replace(old, final)
@@ -2957,6 +2991,21 @@ def _restore_old(prev, final, old, written):
             log_err("撤销 sing-box 配置", e)
             return False
     return True
+
+
+def _rollback_keep(prev, final, old):
+    """sing-box 拒绝了新配置、旧实例仍在跑，但原配置文件放不回时：data.json 退回 prev 并按它重新生成 config.json。
+    重新生成的与备份（运行中的进程加载的那份）一字不差时换回备份（保留原修改时间，sb_running_current 仍成立），返回 True：
+    不用重载；否则返回 False，由调用方热重载"""
+    with LOCK:
+        _rollback(prev, sb=True)
+        if old and os.path.isfile(old) and _same_file(old, final):
+            try:
+                os.replace(old, final)
+                return True
+            except OSError as e:
+                log_err("撤销 sing-box 配置", e)
+    return False
 
 
 def _same_file(a, b):
@@ -4428,7 +4477,7 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, wd_hold)
 from .errlog import log_tail
-from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, lb_names, lb_old_name, load, rs_safe, write_bytes, write_json
+from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, removed_rs_stems, lb_names, lb_old_name, load, rs_safe, write_bytes, write_json
 from .groups import gcfg, prov_set, rx
 from .mihomo import BUILTIN_GEO, MH_RS_EXTS, build_config, build_rule_providers, dns_cfg, mh_rs_file, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
@@ -5042,6 +5091,31 @@ def sb_refresh_rulesets(d, names):
         drop_legacy_rs_files(changed, alln, lambda s, ext=ext: mh_rs_file(s, ext))
     need = {k: v for k, v in sb_rule_need(d).items() if k in want and v.get("kind") != "adblock"}
     return sb_sync_assets(d, force=True, need=need) if need else []
+
+
+SB_RS_EXTS = (".json", ".json.skip", ".srs")  # sing-box 规则集缓存 rs-<名><扩展名>（.json.skip 是转换时跳过条目的记录）
+
+
+def _rs_names(d):
+    return [r["name"] for r in (d or {}).get("rulesets") or [] if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]]
+
+
+def drop_removed_rs_files(prev, d):
+    """设置里整个删掉的规则集：删掉它的缓存文件（sing-box rs-<名>.json / .json.skip / .srs，mihomo rules/<名>.yaml / .list / .mrs；
+    新文件名与旧文件名都删）。以前一直留在路由器上占空间，之后再加回同名规则集时还会先拿到旧内容。
+    只删按规则集名拼出来的 rs-* 与 rules/* 文件，geosite-* / geoip-* / ad-* 等系统文件从不碰；仍被剩下的规则集用到的文件名不删
+    （见 removed_rs_stems）。返回删掉的文件列表"""
+    gone = []
+    for s in removed_rs_stems(_rs_names(prev), _rs_names(d)):
+        paths = [os.path.join(SB_RULE_DIR, f"rs-{s}{ext}") for ext in SB_RS_EXTS] + [mh_rs_file(s, ext) for ext in MH_RS_EXTS]
+        for p in paths:
+            try:
+                if os.path.isfile(p) or os.path.islink(p):
+                    os.remove(p)
+                    gone.append(p)
+            except OSError:
+                pass
+    return gone
 
 
 def sb_fetch_new(prev, d):
@@ -10393,12 +10467,15 @@ def sched_tick(n):
         _bg_tick()
     except Exception as e:
         log_err("每日背景图", e)
-    ab = d["adblock"]
-    if ab.get("enabled") and ab.get("lists") and int(ab.get("interval") or 0):
-        if time.time() - max(AB_STATE["last"], ab_last_update()) >= int(ab["interval"]):
-            due.append("adblock")
-        elif AB_STATE.get("retry") and time.time() >= AB_STATE["retry"]:
-            due.append("adblock")  # 上次有列表下载失败：10 分钟后补一次，最多 AB_RETRY_MAX 次
+    try:  # 广告列表元数据（ab_meta）坏了也不能让已记成「今天执行过」的定点任务被跳过
+        ab = d["adblock"]
+        if ab.get("enabled") and ab.get("lists") and int(ab.get("interval") or 0):
+            if time.time() - max(AB_STATE["last"], ab_last_update()) >= int(ab["interval"]):
+                due.append("adblock")
+            elif AB_STATE.get("retry") and time.time() >= AB_STATE["retry"]:
+                due.append("adblock")  # 上次有列表下载失败：10 分钟后补一次，最多 AB_RETRY_MAX 次
+    except Exception as e:
+        log_err("广告规则定时更新检查", e)
     if n % 3 == 0:  # 每分钟：按设备分流里 MAC 对应的 IP 变了就重新生成配置
         try:
             devroute_tick(d)
@@ -11909,7 +11986,7 @@ from .core import conns_snapshot, refresh_after_sub, refresh_regions, reload_cor
 from .corehttp import core, core_json
 from .sb_common import CORES, SB_BIN, SB_ONLY, SB_STATE, active_core, core_conf_path
 from .sb_subs import sb_update_subs
-from .sb_config import build_singbox, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, rs_changed, sb_refresh_rulesets, sb_rule_need, sb_sync_assets, sb_version, write_active_config
+from .sb_config import build_singbox, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, rs_changed, drop_removed_rs_files, sb_refresh_rulesets, sb_rule_need, sb_sync_assets, sb_version, write_active_config
 from .sb_switch import CHANNELS as SB_CHANNELS, sb_arch, sb_remote_version, sb_update_job
 from .panel_update import self_rollback, self_update
 from .core_update import CORE_UPD, core_job_start, core_upd_status
@@ -13530,6 +13607,12 @@ class H(BaseHTTPRequestHandler):
             ok, msg = reload_core(prev)
             if not ok:
                 return self.send(500, {"message": msg})
+        if "rulesets" in new:  # 整个删掉的规则集：配置生效后再删缓存（重载失败撤销时还要用）；按此刻的设置判断还在用的，并发再加回来的不删
+            with LOCK:
+                try:
+                    drop_removed_rs_files(prev, load())
+                except Exception as e:
+                    log_err("删除规则集缓存", e)
         if set(b) & {"bypass", "ipv6"} and d["proxy_mode"] != "off":
             tp_apply()
         if "device_routes" in b:
