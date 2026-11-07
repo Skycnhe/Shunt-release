@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.27"
+PANEL_VERSION = "8.10.28"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -336,7 +336,7 @@ AB_PRESETS = [
      "dsc": "伪装成网站子域名的追踪器"}]
 TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False}
 GROUPS_DEFAULT = {"type": "url-test", "lb": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
-                  "tolerance": 0, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
+                  "tolerance": 50, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
                   "lgbm": False}
 SCHED_DEFAULT = {"sub_update": "", "core_restart": "", "geo_update": "", "latency": 0}
 DEFAULT = {"secret": "", "mode": "rule", "tproxy": True, "subs": [], "rules": [],
@@ -362,7 +362,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.27"
+PANEL_VERSION = "8.10.28"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1650,6 +1650,9 @@ def gcfg(d):
     return gc
 
 
+URLTEST_TOL = 50
+
+
 def group_opts(t, gc, extra=None):
     """各类型策略组的公共参数"""
     e = extra or {}
@@ -1658,6 +1661,11 @@ def group_opts(t, gc, extra=None):
         g.update({"url": e.get("url") or gc["url"], "interval": int(e.get("interval") or gc["interval"]), "lazy": bool(gc["lazy"])})
         if t in ("url-test", "smart"):
             g["tolerance"] = int(e.get("tolerance") if e.get("tolerance") not in (None, "") else gc["tolerance"])
+            if t == "url-test" and e.get("tolerance") in (None, "") and g["tolerance"] <= 0:
+                # 容差 0：mihomo 只要有节点快 1 ms 就换节点（每 60 秒测一次，延迟抖动下几乎每轮都换），新连接出口 IP 来回变，
+                # 网站掉登录、视频 / 游戏 / 长连接重连，表现为断流。sing-box 的 urltest 容差 0 本来就按 50 ms 处理，两个内核统一成 50。
+                # 只改全局默认（旧版本默认就是 0，几乎没人改过）；单个策略组明确写了 0 的照用户的
+                g["tolerance"] = URLTEST_TOL
         if t == "load-balance":
             st = e.get("strategy")
             g["strategy"] = st if st in LB_STRATEGIES else "consistent-hashing"
