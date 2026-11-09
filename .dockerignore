@@ -1,0 +1,13 @@
+.git
+**/__pycache__
+*.pyc
+tests
+docs
+tools
+web
+shunt
+.corecheck
+internal
+cmd
+go.mod
+go.sum

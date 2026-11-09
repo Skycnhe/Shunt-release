@@ -23,3 +23,16 @@ wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-rel
 # 国外网络
 wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh
 ```
+
+## Docker 安装
+
+Linux 宿主机，host 网络（镜像只含 sing-box 内核，与 shunt 分支同一仓库，标签 `singbox`）：
+
+```sh
+docker run -d --name shunt --restart unless-stopped --network host \
+  --cap-add NET_ADMIN --cap-add NET_RAW --device /dev/net/tun \
+  -v shunt-data:/data -e TZ=Asia/Shanghai --stop-timeout 30 \
+  skycn2022/shunt:singbox
+```
+
+也可用 `ghcr.io/skycnhe/shunt-release:singbox`；固定版本用 `singbox-v<面板版本>`。宿主机需 `modprobe nft_tproxy tun` 并开启 `net.ipv4.ip_forward=1`；老内核（群晖等）TProxy 不可用时面板改用 TUN。
