@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.28"
+PANEL_VERSION = "8.10.29"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -362,7 +362,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.28"
+PANEL_VERSION = "8.10.29"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -10849,7 +10849,6 @@ _SRC['shunt.live'] = '''"""实时速率 / 内存（订阅 /traffic 与 /memory �
 import json, socket, time
 
 from .errlog import log_err
-from .core import conns_snapshot
 from .logstream import core_stream
 
 
@@ -10868,11 +10867,9 @@ def live_loop(path):
         else:
             LIVE.update({k: j.get(k, 0) for k in ("up", "down")})
             if "upTotal" in j or "downTotal" in j:
-                LIVE.update(upTotal=j.get("upTotal", 0), downTotal=j.get("downTotal", 0))
-            elif time.time() - LIVE.get("_tt", 0) > 2:  # sing-box 的 /traffic 不带累计值，从 /connections 取
-                LIVE["_tt"] = time.time()
-                c = conns_snapshot(timeout=3) or {}
-                LIVE.update(upTotal=int(c.get("uploadTotal") or 0), downTotal=int(c.get("downloadTotal") or 0))
+                LIVE.update(upTotal=j.get("upTotal", 0), downTotal=j.get("downTotal", 0), _nototal=False)
+            else:  # sing-box 的 /traffic 不带累计值：改由 /api/live 按需从连接快照取。以前这里每 2 秒全量抓一次 /connections，
+                LIVE["_nototal"] = True  # 没人打开面板也 24 小时不停（几百个连接时每次几百 KB JSON）
             LIVE["t"] = time.time()
     while True:
         try:
@@ -13403,6 +13400,10 @@ class NodesAPI:
             c = conns_snapshot(timeout=3)
             out.update(up=0, down=0, upTotal=(c or {}).get("uploadTotal", 0), downTotal=(c or {}).get("downloadTotal", 0))
             out["stale"] = True
+        elif out.pop("_nototal", False):  # sing-box：累计流量只在有人看时从连接快照取（与流量统计共用 2 秒快照）
+            c = conns_snapshot(timeout=3) or {}
+            out.update(upTotal=int(c.get("uploadTotal") or 0), downTotal=int(c.get("downloadTotal") or 0))
+        out.pop("_nototal", None)
         if not out["inuse"]:
             out.update(memory_once())
         out["running"] = time.time() - LIVE["t"] < 5 or bool(out.get("inuse"))
