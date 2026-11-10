@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.29"
+PANEL_VERSION = "8.10.30"
 import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -362,7 +362,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.29"
+PANEL_VERSION = "8.10.30"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -6470,6 +6470,15 @@ from .sysopt import proxy_opener, sh
 from .https import restart_self
 from .update_guard import start_update_guard
 PANEL_RAW = os.environ.get("PANEL_RAW", "https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt")
+CHANNELS = ("stable", "preview")  # 更新通道：正式版（PANEL_RAW 分支）/ 预览版（同仓库「<分支>-preview」分支，由 tools/publish.sh --preview 发布）
+CHANNEL = {"v": "stable"}  # 本次检查 / 更新所用的通道（self_update 开头按 data.json 的 update_channel 设置）
+
+
+def panel_raw():
+    """当前通道的面板文件地址：预览版是正式版分支名加 -preview"""
+    return PANEL_RAW.rstrip("/") + ("-preview" if CHANNEL["v"] == "preview" else "")
+
+
 UPD_FILES = ["server.py", "index.html", "tproxy.sh", "selftest.sh", "init.d/shunt", "init.d/shunt-core"]
 UPD_LIST = "update-files.txt"  # 仓库里的部署文件清单：以后增减文件只改清单，不用再改更新程序
 
@@ -6497,7 +6506,7 @@ def remote_file_list(gh, commit, shas):
 
 def panel_manifest():
     """返回 (commit, {路径: git blob sha1})；失败返回 (None, {})"""
-    m = re.match(r"https://raw\\.githubusercontent\\.com/([^/]+/[^/]+)/(.+?)/?$", PANEL_RAW)
+    m = re.match(r"https://raw\\.githubusercontent\\.com/([^/]+/[^/]+)/(.+?)/?$", panel_raw())
     if not m:
         return None, {}
     try:
@@ -6516,7 +6525,7 @@ def git_blob_sha(data):
 
 def fetch_raw(f, gh, commit=None, sha=None):
     """下载面板文件。有 GitHub 给的校验值时可以走加速镜像，下载后逐个比对；没有校验值时不走镜像"""
-    base = PANEL_RAW.rstrip("/")
+    base = panel_raw()
     if commit:
         base = base.rsplit("/", 1)[0] + "/" + commit
     url = base + "/" + f
@@ -6576,14 +6585,17 @@ def remote_version(src):
     return m.group(1).decode() if m else "?"
 
 
-def self_update(apply=False, gh=""):
+def self_update(apply=False, gh="", channel="stable"):
     """检查 / 应用 GitHub 上的新版面板：下载全部文件 → 校验 → 备份 → 替换 → 重启面板"""
     # 只检查不替换时不占用忙标志；真正更新时与内核更新 / 切换 / 回滚互斥（内核替换到一半时重启面板会留下半截二进制）
     if apply and not upd_begin("panel"):
         return False, {"message": upd_busy_msg()}
+    CHANNEL["v"] = channel if channel in CHANNELS else "stable"
     try:
         files, changed = {}, []
         commit, shas = panel_manifest()
+        if not commit and CHANNEL["v"] == "preview":
+            raise ValueError("预览通道暂时没有可用版本（或 GitHub API 受限），可切回正式版")
         flist = remote_file_list(gh, commit, shas)
         for f in flist:
             data = fetch_raw(f, gh, commit, shas.get(f))
@@ -6596,7 +6608,7 @@ def self_update(apply=False, gh=""):
             if not same:
                 changed.append(f)
         info = {"current": PANEL_VERSION, "remote": remote_version(files["server.py"]), "changed": changed,
-                "source": PANEL_RAW, "verified": bool(shas), "commit": (commit or "")[:10]}
+                "source": panel_raw(), "channel": CHANNEL["v"], "verified": bool(shas), "commit": (commit or "")[:10]}
         if not apply:
             info["message"] = "已是最新" if not changed else f"有 {len(changed)} 个文件可更新"
             return True, info
@@ -13881,7 +13893,7 @@ from .corehttp import core
 from .sb_common import CORES, SB_STATE, active_core, core_conf_path
 from .sb_config import build_singbox, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, sb_version
 from .sb_switch import core_switch_job
-from .panel_update import self_rollback, self_update
+from .panel_update import CHANNELS, self_rollback, self_update
 from .core_update import (
     CORE_CHANNELS, CORE_UPD, LGBM_FILE, bin_version, core_check, core_job_start, core_rollback_job, core_upd_status, core_update_job, lgbm_fetch
 )
@@ -13962,7 +13974,7 @@ class SysAPI:
         groups, gmeta = state_groups(d)
         out = {"running": "started" in st or code == 200, "version": version, "groups": groups, "group_meta": gmeta,
                "nodes": state_nodes(d), "default_exclude": DEFAULT_EXCLUDE, "sched_events": list(SCHED["events"])[:20],
-               "panel_version": PANEL_VERSION, "core": active_core(d), "sb_fork": sb_is_fork(),
+               "panel_version": PANEL_VERSION, "update_channel": "preview" if d.get("update_channel") == "preview" else "stable", "core": active_core(d), "sb_fork": sb_is_fork(),
                "tun_gvisor": active_core(d) != "singbox" or sb_has_gvisor(),
                "tun_native": active_core(d) == "singbox" and sb_tun_native(),
                "wd": {"status": WD["status"], "last_check": WD["last_check"], "events": list(WD["events"]),
@@ -14192,14 +14204,22 @@ class SysAPI:
 
     @api_route("/api/selfupdate", "GET")
     def api_selfupdate_get(self, m, p, b, q):
-        ok, info = self_update(False, load().get("gh_proxy") or "")
+        d = load()
+        ok, info = self_update(False, d.get("gh_proxy") or "", d.get("update_channel") or "stable")
         return self.send(200 if ok else 502, info)
 
     @api_route("/api/selfupdate", "POST")
     def api_selfupdate_post(self, m, p, b, q):
         if b.get("action") == "rollback":
             return self.reply(*self_rollback())
-        ok, info = self_update(True, load().get("gh_proxy") or "")
+        if b.get("action") == "channel":  # 切换更新通道（正式版 / 预览版），只保存选择，不下载
+            ch = b.get("channel")
+            if ch not in CHANNELS:
+                return self.send(400, {"message": "未知的更新通道"})
+            update(lambda d: d.__setitem__("update_channel", ch))
+            return self.send(200, {"message": "已切换到" + ("预览版" if ch == "preview" else "正式版") + "通道", "channel": ch})
+        d = load()
+        ok, info = self_update(True, d.get("gh_proxy") or "", d.get("update_channel") or "stable")
         return self.send(200 if ok else 500, info)
 
     @api_route("/api/stats", "GET")
