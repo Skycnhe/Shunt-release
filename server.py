@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.29"
+PANEL_VERSION = "11.6.30"
 import importlib.abc, importlib.util, linecache, os, sys, types
 
 _SRC = {}
@@ -330,7 +330,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.29"
+PANEL_VERSION = "11.6.30"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -5508,7 +5508,7 @@ from .mihomo import dns_cfg
 from .sb_common import FORK2_API, FORK2_REPO, FORK_API, FORK_ARCHES, FORK_NAME, FORK_REPO, SB_API, SB_BIN, SB_CONF, SB_REPO, active_core, write_core_file
 from .sb_subs import sb_update_subs
 from .sb_config import check_sb_config, sb_is_fork, sb_sync_assets, sb_version, write_sb_config
-from .core_update import QUIET, CORE_FAIL_LOG, _cu, copy_replace, core_fail_log, gh_atom_tags, gh_get, open_url, pick_tag, release_digest
+from .core_update import QUIET, CORE_FAIL_LOG, _cu, copy_replace, core_fail_log, gh_atom_tags, gh_get, open_url, pick_tag, release_digest, PRE_TAG
 from .sysopt import sh, svc_restart
 from .notify import WD, core_alive
 def sb_arch():
@@ -5608,6 +5608,41 @@ def sb_remote_version(channel, gh):
     raise IOError("获取 sing-box 版本号失败" + ("：" + "；".join(errs) if errs else ""))
 
 
+VER_RE = re.compile(r"^[0-9][\\w.\\-]{0,63}$")  # 手动选的版本号：只允许字母数字和 . - _，拼进下载地址前先校验
+
+
+def sb_release_list(channel, gh="", n=20):
+    """手动选版本用：这一路 sing-box 最近发布的版本（新 → 旧），[{"version": 版本号, "pre": 是否预发布}]。
+    官方版（stable / alpha）正式版和预发布都列；reF1nd 正式版只列正式版、预览版只列预发布；MiChongs 全列。
+    API 受限时改读发布订阅源（按标签名里的 -alpha / -beta / -rc 认预发布）"""
+    if channel in FORK_CHANNELS:
+        repo, api, want = fork_src(channel=channel)
+    else:
+        repo, api, want = SB_REPO, SB_API, "any"
+    try:
+        rel = gh_get(f"{api}?per_page=40", opener=open_url)
+        if not isinstance(rel, list):
+            raise IOError("GitHub API 返回格式不对")
+        items = [(str(x.get("tag_name") or ""), bool(x.get("prerelease"))) for x in rel if isinstance(x, dict) and not x.get("draft")]
+    except Exception as e:
+        try:
+            tags = gh_atom_tags(repo, opener=open_url)
+        except Exception as e2:
+            raise IOError(f"获取版本列表失败：{_short(e)}；发布页：{_short(e2)}") from e2
+        items = [(t, bool(PRE_TAG.search(t))) for t in tags]
+    out = []
+    for t, pre in items:
+        v = t.lstrip("v")
+        if not VER_RE.match(v) or (want != "any" and pre != (want == "alpha")) or any(o["version"] == v for o in out):
+            continue
+        out.append({"version": v, "pre": pre})
+        if len(out) >= n:
+            break
+    if not out:
+        raise IOError(FORK_NONE_MSG if channel in FORK_CHANNELS else "获取 sing-box 版本列表失败")
+    return out
+
+
 def is_musl():
     import glob
     return bool(glob.glob("/lib/ld-musl-*")) or os.path.isfile("/etc/alpine-release")
@@ -5659,14 +5694,17 @@ def is_sb_member(name):
     return b == "sing-box" or (b.startswith("sing-box-") and "-linux-" in b and not b.endswith((".txt", ".md", ".json")))
 
 
-def sb_install(channel, gh, force=False, dest=None):
-    """下载 sing-box 到 dest（默认 SB_BIN，旧版本备份为 .bak；内核缓存目录里的不备份）；返回 (版本号, 是否换了新程序)"""
+def sb_install(channel, gh, force=False, dest=None, version=""):
+    """下载 sing-box 到 dest（默认 SB_BIN，旧版本备份为 .bak；内核缓存目录里的不备份）；返回 (版本号, 是否换了新程序)。
+    version：手动选的版本（调用方已按 sb_release_list 校验过），空串取这一路的最新版本"""
     dest = dest or SB_BIN
     import tarfile
     arch = sb_arch()
     if not arch:
         raise ValueError(f"sing-box 不支持当前 CPU 架构：{os.uname().machine}")
-    ver = sb_remote_version(channel, gh)
+    if version and not VER_RE.match(version):
+        raise ValueError("版本号格式不对：" + str(version)[:40])
+    ver = version or sb_remote_version(channel, gh)
     cur = sb_version(dest)
     if cur == ver and not force:
         return ver, False
@@ -5755,13 +5793,14 @@ def sb_prepare(gh="", log=None):
     return True
 
 
-def sb_update_job(channel, gh, force=False):
+def sb_update_job(channel, gh, force=False, version=""):
+    """更新 sing-box：version 为空装这一路的最新版本；指定版本时装那个版本（可以比现在的旧，用来降级）"""
     try:
         cur = sb_version()
-        _cu("获取版本", 3, "正在获取 sing-box 最新版本号")
-        nv, changed = sb_install(channel, gh, force)
+        _cu("获取版本", 3, f"准备安装 sing-box {version}" if version else "正在获取 sing-box 最新版本号")
+        nv, changed = sb_install(channel, gh, force, version=version)
         if not changed:
-            CORE_UPD.update(ok=True, message=f"已是最新版本 {nv}，无需更新")
+            CORE_UPD.update(ok=True, message=f"当前已经是 {nv}，无需更换" if version else f"已是最新版本 {nv}，无需更新")
             return
         note = sb_apply_new(nv)
         try:
@@ -5770,7 +5809,7 @@ def sb_update_job(channel, gh, force=False):
         except Exception as e:
             print("cache sing-box error", e, flush=True)
         kind = fork_name(sb_version()) + "，已开启多节点聚合" if sb_is_fork() else "官方版"
-        CORE_UPD.update(ok=True, message=f"sing-box 已从 {cur or '未安装'} 更新到 {nv}（{kind}）" + ("，旧版本已备份" if cur else "") + (f"（{note}）" if note else ""))
+        CORE_UPD.update(ok=True, message=f"sing-box 已从 {cur or '未安装'} {'换成' if version else '更新到'} {nv}（{kind}）" + ("，旧版本已备份" if cur else "") + (f"（{note}）" if note else ""))
     except Exception as e:
         CORE_UPD.update(ok=False, message=str(e))
     finally:
@@ -12096,7 +12135,7 @@ from .corehttp import core, core_json
 from .sb_common import CORES, SB_BIN, SB_ONLY, SB_STATE, active_core, core_conf_path
 from .sb_subs import sb_update_subs
 from .sb_config import build_singbox, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, rs_changed, drop_removed_rs_files, sb_refresh_rulesets, sb_rule_need, sb_sync_assets, sb_version, write_active_config
-from .sb_switch import CHANNELS as SB_CHANNELS, sb_arch, sb_remote_version, sb_update_job
+from .sb_switch import CHANNELS as SB_CHANNELS, VER_RE as SB_VER_RE, sb_arch, sb_release_list, sb_remote_version, sb_update_job
 from .panel_update import CHANNELS, self_rollback, self_update
 from .core_update import CORE_UPD, core_job_start, core_upd_status
 from .sysopt import SVC_OP, core_procs, delay_test, favicon, kill_core_procs, nft_ok, opt_apply, opt_status, rc_run, sh, speed_test, svc_restart
@@ -13070,7 +13109,17 @@ class H(BaseHTTPRequestHandler):
             ch = b.get("channel") or "stable"
             if ch not in SB_CHANNELS:
                 return self.send(400, {"message": "未知的内核版本：" + str(ch)})
-            ok, msg = core_job_start(sb_update_job, ch, load().get("gh_proxy") or "", bool(b.get("force")))
+            gh, ver = load().get("gh_proxy") or "", b.get("version") or ""
+            if ver:  # 手动选的版本：必须是这一路 sing-box 发布过的版本
+                if not isinstance(ver, str) or not SB_VER_RE.match(ver):
+                    return self.send(400, {"message": "版本号格式不对"})
+                try:
+                    have = [x["version"] for x in sb_release_list(ch, gh)]
+                except Exception as e:
+                    return self.send(502, {"message": str(e)})
+                if ver not in have:
+                    return self.send(400, {"message": f"没有找到 sing-box {ver}（只能选最近发布的版本）"})
+            ok, msg = core_job_start(sb_update_job, ch, gh, bool(b.get("force")), ver)
             return self.send(200 if ok else 409, {"message": msg})
         if p == "/api/delay":
             return self.send(200, delay_test(force=q1(parse_qs(q), "force") == "1"))
@@ -13345,6 +13394,18 @@ class H(BaseHTTPRequestHandler):
             return self.send(400, {"message": f"当前已经是 {SB_VARIANTS[var][0]}"})
         ok, msg = core_job_start(sb_switch_variant_job, var, gh)
         return self.send(200 if ok else 409, {"message": msg})
+
+    @api_route("/api/coreupdate/versions", "GET")
+    def api_coreupdate_versions_get(self, m, p, b, q):
+        """手动选版本：这一路 sing-box（channel 同 /api/coreupdate）最近发布的版本列表"""
+        ch = q1(parse_qs(q), "channel", default="stable")
+        if ch not in SB_CHANNELS:
+            return self.send(400, {"message": "未知的内核版本：" + ch})
+        try:
+            vs = sb_release_list(ch, load().get("gh_proxy") or "")
+        except Exception as e:
+            return self.send(502, {"message": str(e)})
+        return self.send(200, {"channel": ch, "current": sb_version() or "", "versions": vs})
 
     @api_route("/api/coreupdate/status", "GET")
     def api_coreupdate_status_get(self, m, p, b, q):

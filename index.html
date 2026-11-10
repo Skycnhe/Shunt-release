@@ -700,9 +700,10 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
       <div id="sw-prog" class="hide mt"><div style="height:6px;border-radius:3px;background:rgba(127,127,127,.2);overflow:hidden"><div id="sw-bar" style="height:6px;width:0;background:var(--pri);transition:width .3s"></div></div>
         <div id="sw-log" class="mut small mt" style="white-space:pre-line;max-height:120px;overflow:auto"></div></div>
       <div class="row mt"><span class="sp"></span><button class="btn" id="sw-btn" onclick="swSwitch()" disabled>切换版本</button></div>
-      <div class="row mt" style="margin-top:14px"><h4 class="sp" style="margin:0">已下载的内核</h4><button class="btn g sm" id="sw-chk" onclick="swCheck()">检查更新</button><button class="btn g sm" onclick="swDl()">全部更新</button></div>
+      <div class="row mt" style="margin-top:14px"><h4 class="sp" style="margin:0">已下载的内核</h4><button class="btn g sm" onclick="swPick()" title="正在使用的 sing-box：从最近发布的版本里选一个安装，可以降级">选择版本</button><button class="btn g sm" id="sw-chk" onclick="swCheck()">检查更新</button><button class="btn g sm" onclick="swDl()">全部更新</button></div>
       <div class="mut small" style="margin:4px 0">官方版（SagerNet）、reF1nd、reF1nd 预览版、MiChongs 各存一份，切换时直接使用，不用重新下载。从 GitHub 下载对应 CPU 架构的程序，使用「备份与更新 → 面板更新」里填写的 GitHub 加速地址。「全部更新」只更新已下载过、有新版本、没在使用的版本；正在使用的点它那一行的「更新」：新程序先校验能否运行、能否读取当前配置，通过后才替换并重启，30 秒内没响应自动换回旧版本。</div>
       <div id="sw-cache"></div>
+      <div id="sw-pick" class="hide mt"></div>
       <div class="row mt"><span class="sp mut small" id="sw-usage"></span><button class="btn g sm" onclick="swClean()">清理旧内核</button></div>
       <div class="row mt"><span class="sp small">自动更新已下载的内核（每 12 小时检查，有新版本才下载；没用过的版本不下载）</span><label class="sw"><input type="checkbox" id="sw-auto" onchange="swAuto(this.checked)"><span></span></label></div>
       <div id="sw-cache-log" class="mut small mt" style="white-space:pre-line;max-height:120px;overflow:auto"></div></div>
@@ -1715,6 +1716,16 @@ function swCache(c){const r=c.remote||{},cur=SW_J?SW_J.variant:'';
       return `<tr><td>${esc(x.label)}</td><td>${st}</td><td>${lt}</td><td style="text-align:right">${x.variant===cur?`<button class="btn g sm" onclick="swRb('${x.id}')">回滚</button> <button class="btn sm" onclick="swUpd('${x.id}',${rv===x.version})">${rv===x.version?'重新安装':'更新'}</button>`:`<button class="btn g sm" onclick="swDl('${x.id}',${x.version&&rv===x.version?'true':'false'})">${x.version?(rv&&rv===x.version?'重新下载':'下载最新'):'下载'}</button>`}</td></tr>`}).join('')+'</tbody></table></div>';
   {const u=c.usage||{},mb=n=>(n/1048576).toFixed(1)+' MB';$('#sw-usage').textContent=`内核占用：缓存的其他版本 ${mb(u.cache||0)} · 旧版本备份(.bak) ${mb(u.bak||0)}`}
   $('#sw-cache-log').textContent=(c.log||[]).join('\n')+(c.last?`${(c.log||[]).length?'\n':''}上次检查 ${new Date(c.last*1000).toLocaleString()}`:'')}
+// 正在使用的那一路 sing-box：从最近发布的版本里选一个安装（可以降级）；自动更新不会替换正在运行的程序
+async function swPick(id){const el=$('#sw-pick'),x=SW_J&&SW_J.cache.items.find(i=>id?i.id===id:i.variant===SW_J.variant&&i.version);
+  if(!x){toast('还没有正在使用的 sing-box，先下载安装一个');return}const ch=swCh(x);el.classList.remove('hide');el.innerHTML='<span class="mut small">正在获取 '+esc(x.label)+' 的版本列表…</span>';
+  try{const j=await api('/api/coreupdate/versions?channel='+ch),cur=j.current||'';
+    el.innerHTML=`<div class="row" style="flex-wrap:wrap;gap:6px"><span class="small">安装 ${esc(x.label)} 的指定版本</span><select id="sw-pick-v" class="sp" style="min-width:12em">${j.versions.map(v=>`<option value="${esc(v.version)}"${v.version===cur?' selected':''}>${esc(v.version)}${v.pre?'（预发布）':''}${v.version===cur?'（使用中）':''}</option>`).join('')}</select><button class="btn sm" onclick="swPickGo('${ch}')">安装</button><button class="btn g sm" onclick="$('#sw-pick').classList.add('hide')">取消</button></div>`+
+      '<div class="mut small mt">列出最近发布的 '+j.versions.length+' 个版本。换版本前会用它校验当前配置，不兼容或起不来会自动换回；旧版本会备份，可以「回滚」。选了旧版本后自动更新不会替换它，想回到最新版点「更新」。</div>'}
+  catch(e){el.innerHTML=`<span class="bad small">${esc(e.message)}</span>`}}
+async function swPickGo(ch){const v=$('#sw-pick-v').value;if(!v)return;const same=v===(SW_J.versions||{}).singbox;
+  if(!confirm(`${same?'重新安装':'安装'} sing-box ${v}？\n核心会重启，网络中断几秒。`))return;
+  try{await saveGhProxy();await api('/api/coreupdate','POST',{channel:ch,version:v,force:same,core:'singbox'});$('#sw-pick').classList.add('hide');corePoll()}catch(e){toast(e.message)}}
 async function swCheck(){$('#sw-chk').disabled=true;try{const j=await api('/api/coreswitch','POST',{action:'check'});SW_J.cache.remote=j.remote;swCache(SW_J.cache);
     const a=SW_J.cache.items.find(x=>x.variant===SW_J.variant),rv=a&&j.remote[a.id];if(a&&a.version&&rv&&!rv.startsWith('✗'))verSave('core-singbox',a.version,rv,rv!==a.version)}catch(e){toast(e.message)}$('#sw-chk').disabled=false}
 async function swDl(item,force){if(force&&!confirm('已是最新版本，仍要重新下载？'))return;try{await saveGhProxy();const j=await api('/api/coreswitch','POST',item?{action:'download',item,force}:{action:'prefetch'});toast(j.message);swCachePoll()}catch(e){toast(e.message)}}
