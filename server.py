@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.31"
+PANEL_VERSION = "11.6.32-preview.753+22cb758"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -47,6 +47,7 @@ MODULES = [
     "core_cache",
     "sysopt",
     "notify",
+    "warp",
     "landing",
     "gguard",
     "latency",
@@ -332,7 +333,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.31"
+PANEL_VERSION = "11.6.32-preview.753+22cb758"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -8575,9 +8576,555 @@ def check_nodes():
         write_json(NOTIFY_FILE, st)
         notify("⚠️ 节点选择中的所有节点均测速超时，请检查订阅或网络" if all_down else "✅ 节点已恢复可用")
 '''
+_SRC['shunt.warp'] = '''"""Cloudflare WARP（WireGuard）：注册 / 导入账号、生成 WireGuard 节点、本地优选端点 IP（预览版功能）
+
+- 账号保存在 data.json 的 warp：{private_key, peer_public_key, v4, v6, reserved, endpoint, name, ...}
+- 节点以普通手动节点的形式放进 d["nodes"]（mihomo 的 wireguard 写法；sing-box 由 sb_nodes 转成 endpoints），
+  可以和其他手动节点一样加入策略组
+- 优选：对端点 IP:端口发真正的 WireGuard 握手（Noise IK，用本账号的密钥），收到握手应答算通，统计延迟和丢包。
+  核心在 TUN 模式时，测速包打 fwmark 并临时加一条「fwmark → main 表」的策略路由绕过 TUN，测完删掉；
+  TProxy 只拦局域网经过本机转发的流量（prerouting），本机自己发的包本来就直连
+"""
+import base64, hashlib, hmac, ipaddress, json, os, random, socket, struct, threading, time, urllib.request
+
+from .errlog import log_err
+from .sysopt import proxy_opener, sh
+
+WARP_PEER = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="  # Cloudflare WARP 服务端公钥（所有端点相同）
+WARP_ENDPOINT = "162.159.192.1:2408"
+WARP_API = "https://api.cloudflareclient.com/v0a2158/reg"
+WARP_RANGES = ["162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24", "188.114.96.0/24", "188.114.97.0/24",
+               "188.114.98.0/24", "188.114.99.0/24"]
+WARP_PORTS = [2408, 500, 1701, 4500, 854, 859, 864, 878, 880, 890, 891, 894, 903, 908, 928, 934, 939, 942, 943, 945, 946,
+              955, 968, 987, 988, 1002, 1010, 1014, 1018, 1070, 1074, 1180, 1387, 1843, 2371, 2506, 3138, 3476, 3581, 3854,
+              4177, 4198, 4233, 5279, 5956, 7103, 7152, 7156, 7281, 7559, 8319, 8742, 8854, 8886]
+BYPASS_MARK = 0x5a17   # 优选测速包的 fwmark
+BYPASS_PREF = 8990     # 排在核心 TUN 的策略路由（9000 起）之前
+SCAN = {"running": False, "done": 0, "total": 0, "results": [], "mode": "", "msg": "", "t": 0}
+_SCAN_LOCK = threading.Lock()
+
+# ---------------------------------------------------------------- X25519（RFC 7748）
+_P = 2 ** 255 - 19
+
+
+def _x25519(k, u):
+    k = bytearray(k)
+    k[0] &= 248
+    k[31] = (k[31] & 127) | 64
+    k = int.from_bytes(k, "little")
+    x1 = int.from_bytes(u, "little") & ((1 << 255) - 1)
+    x2, z2, x3, z3, swap = 1, 0, x1, 1, 0
+    for t in range(254, -1, -1):
+        kt = (k >> t) & 1
+        swap ^= kt
+        if swap:
+            x2, x3, z2, z3 = x3, x2, z3, z2
+        swap = kt
+        a, b = (x2 + z2) % _P, (x2 - z2) % _P
+        aa, bb = a * a % _P, b * b % _P
+        e = (aa - bb) % _P
+        c, d = (x3 + z3) % _P, (x3 - z3) % _P
+        da, cb = d * a % _P, c * b % _P
+        x3, z3 = (da + cb) ** 2 % _P, x1 * (da - cb) ** 2 % _P
+        x2, z2 = aa * bb % _P, e * (aa + 121665 * e) % _P
+    if swap:
+        x2, z2 = x3, z3
+    return (x2 * pow(z2, _P - 2, _P) % _P).to_bytes(32, "little")
+
+
+def pubkey(priv):
+    return _x25519(priv, (9).to_bytes(32, "little"))
+
+
+def keypair():
+    priv = bytearray(os.urandom(32))
+    priv[0] &= 248
+    priv[31] = (priv[31] & 127) | 64
+    return bytes(priv), pubkey(bytes(priv))
+
+
+# ---------------------------------------------------------------- ChaCha20-Poly1305（RFC 8439，只做加密）
+def _rotl(v, c):
+    return ((v << c) & 0xffffffff) | (v >> (32 - c))
+
+
+def _chacha_block(key, counter, nonce):
+    s = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574] + list(struct.unpack("<8I", key)) + [counter] + list(struct.unpack("<3I", nonce))
+    x = s[:]
+    for _ in range(10):
+        for a, b, c, d in ((0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
+                           (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)):
+            x[a] = (x[a] + x[b]) & 0xffffffff
+            x[d] = _rotl(x[d] ^ x[a], 16)
+            x[c] = (x[c] + x[d]) & 0xffffffff
+            x[b] = _rotl(x[b] ^ x[c], 12)
+            x[a] = (x[a] + x[b]) & 0xffffffff
+            x[d] = _rotl(x[d] ^ x[a], 8)
+            x[c] = (x[c] + x[d]) & 0xffffffff
+            x[b] = _rotl(x[b] ^ x[c], 7)
+    return struct.pack("<16I", *((x[i] + s[i]) & 0xffffffff for i in range(16)))
+
+
+def _chacha20(key, counter, nonce, data):
+    out = bytearray()
+    for i in range(0, len(data), 64):
+        ks = _chacha_block(key, counter + i // 64, nonce)
+        out += bytes(a ^ b for a, b in zip(data[i:i + 64], ks))
+    return bytes(out)
+
+
+def _poly1305(key, msg):
+    r = int.from_bytes(key[:16], "little") & 0x0ffffffc0ffffffc0ffffffc0fffffff
+    s = int.from_bytes(key[16:], "little")
+    p, acc = (1 << 130) - 5, 0
+    for i in range(0, len(msg), 16):
+        acc = (acc + int.from_bytes(msg[i:i + 16] + b"\\x01", "little")) * r % p
+    return ((acc + s) & ((1 << 128) - 1)).to_bytes(16, "little")
+
+
+def aead_seal(key, counter, plain, aad):
+    nonce = b"\\0\\0\\0\\0" + struct.pack("<Q", counter)
+    otk = _chacha_block(key, 0, nonce)[:32]
+    ct = _chacha20(key, 1, nonce, plain)
+    pad = lambda b: b + b"\\0" * (-len(b) % 16)
+    tag = _poly1305(otk, pad(aad) + pad(ct) + struct.pack("<QQ", len(aad), len(ct)))
+    return ct + tag
+
+
+# ---------------------------------------------------------------- WireGuard 握手发起包（Noise_IKpsk2）
+_CONSTRUCTION = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
+_IDENTIFIER = b"WireGuard v1 zx2c4 Jason@zx2c4.com"
+
+
+def _h(*parts):
+    return hashlib.blake2s(b"".join(parts)).digest()
+
+
+def _hmac(k, d):
+    return hmac.new(k, d, hashlib.blake2s).digest()
+
+
+def _kdf(c, inp, n):
+    t0 = _hmac(c, inp)
+    t1 = _hmac(t0, b"\\x01")
+    if n == 1:
+        return t1,
+    return t1, _hmac(t0, t1 + b"\\x02")
+
+
+class Initiator:
+    """预先算好与本账号相关的部分（静态 DH），每次只算临时密钥：纯 Python 的 X25519 在路由器上要几十毫秒"""
+
+    def __init__(self, priv, peer_pub, reserved=(0, 0, 0)):
+        self.priv, self.peer = priv, peer_pub
+        self.pub = pubkey(priv)
+        self.ss = _x25519(priv, peer_pub)
+        self.reserved = bytes(int(x) & 255 for x in (list(reserved) + [0, 0, 0])[:3])
+        self.mac1_key = _h(b"mac1----", peer_pub)
+        c = _h(_CONSTRUCTION)
+        self.c0, self.h0 = c, _h(_h(c, _IDENTIFIER), peer_pub)
+
+    def packet(self):
+        sender = random.getrandbits(32)
+        e_priv, e_pub = keypair()
+        c = _kdf(self.c0, e_pub, 1)[0]
+        h = _h(self.h0, e_pub)
+        c, k = _kdf(c, _x25519(e_priv, self.peer), 2)
+        enc_static = aead_seal(k, 0, self.pub, h)
+        h = _h(h, enc_static)
+        c, k = _kdf(c, self.ss, 2)
+        now = time.time()
+        ts = struct.pack(">QI", int(now) + 2 ** 62 + 10, int((now % 1) * 1e9))
+        enc_ts = aead_seal(k, 0, ts, h)
+        msg = b"\\x01" + self.reserved + struct.pack("<I", sender) + e_pub + enc_static + enc_ts
+        mac1 = hashlib.blake2s(msg, key=self.mac1_key, digest_size=16).digest()
+        return sender, msg + mac1 + b"\\0" * 16
+
+
+# ---------------------------------------------------------------- 账号与节点
+def b64(b):
+    return base64.b64encode(b).decode()
+
+
+def _b64key(s, what):
+    try:
+        b = base64.b64decode(str(s or "").strip(), validate=True)
+    except Exception:
+        b = b""
+    if len(b) != 32:
+        raise ValueError(f"{what}格式不对（应为 44 个字符的 base64 WireGuard 密钥）")
+    return b
+
+
+def split_ep(ep):
+    """「IP:端口」/「[IPv6]:端口」/「域名:端口」→ (主机, 端口)"""
+    ep = str(ep or "").strip()
+    if ep.startswith("["):
+        host, _, port = ep[1:].partition("]:")
+    else:
+        host, _, port = ep.rpartition(":")
+    try:
+        port = int(port)
+    except ValueError:
+        port = 0
+    if not host or not 1 <= port <= 65535 or any(c in host for c in " /\\\\@,"):
+        raise ValueError(f"端点格式不对：{ep}（应为 IP:端口，如 {WARP_ENDPOINT}）")
+    return host, port
+
+
+def join_ep(host, port):
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def parse_reserved(v):
+    if isinstance(v, list) and len(v) == 3:
+        return [int(x) & 255 for x in v]
+    s = str(v or "").strip()
+    if not s:
+        return [0, 0, 0]
+    if "," in s:
+        try:
+            r = [int(x) for x in s.split(",")]
+        except ValueError:
+            raise ValueError("reserved 应为 3 个 0–255 的数字，如 12,34,56")
+        if len(r) != 3 or not all(0 <= x <= 255 for x in r):
+            raise ValueError("reserved 应为 3 个 0–255 的数字，如 12,34,56")
+        return r
+    try:  # WARP 注册返回的 client_id（base64，3 字节）
+        b = base64.b64decode(s, validate=True)
+    except Exception:
+        b = b""
+    if len(b) != 3:
+        raise ValueError("reserved 应为 3 个数字（如 12,34,56）或 client_id（4 个字符的 base64）")
+    return list(b)
+
+
+def clean_cfg(b):
+    """校验导入 / 修改的 WARP 账号；返回规范化后的 warp 设置"""
+    name = str(b.get("name") or "WARP").strip()[:40] or "WARP"
+    if any(c in name for c in ",:#\\n\\r\\"'"):
+        raise ValueError("节点名称不能包含逗号、冒号、# 或引号")
+    priv = _b64key(b.get("private_key"), "私钥")
+    peer = _b64key(b.get("peer_public_key") or WARP_PEER, "对端公钥")
+    v4 = str(b.get("v4") or "172.16.0.2").strip().split("/")[0]
+    v6 = str(b.get("v6") or "").strip().split("/")[0]
+    try:
+        if ipaddress.ip_address(v4).version != 4 or (v6 and ipaddress.ip_address(v6).version != 6):
+            raise ValueError
+    except ValueError:
+        raise ValueError("本机地址格式不对：IPv4 如 172.16.0.2，IPv6 如 2606:4700:110:8a36::1（可空）")
+    host, port = split_ep(b.get("endpoint") or WARP_ENDPOINT)
+    try:
+        mtu = int(b.get("mtu") or 1280)
+    except (TypeError, ValueError):
+        mtu = 0
+    if not 1100 <= mtu <= 1500:
+        raise ValueError("MTU 应在 1100–1500 之间")
+    out = {"name": name, "private_key": b64(priv), "peer_public_key": b64(peer), "v4": v4, "v6": v6,
+           "reserved": parse_reserved(b.get("reserved")), "endpoint": join_ep(host, port), "mtu": mtu}
+    for k in ("account_id", "token", "license", "created"):
+        if b.get(k):
+            out[k] = str(b[k])[:200]
+    return out
+
+
+def node_proxy(w):
+    """mihomo 的 wireguard 节点（sing-box 由 sb_nodes.sb_outbound 转换成 endpoints）"""
+    host, port = split_ep(w["endpoint"])
+    p = {"name": w["name"], "type": "wireguard", "server": host, "port": port, "ip": w["v4"],
+         "private-key": w["private_key"], "public-key": w["peer_public_key"], "reserved": list(w["reserved"]),
+         "udp": True, "mtu": int(w.get("mtu") or 1280), "remote-dns-resolve": False}
+    if w.get("v6"):
+        p["ipv6"] = w["v6"]
+    return p
+
+
+def sync_node(d, old_name=None):
+    """把 d["warp"] 写成手动节点（同名的替换，改名时替换旧名字的那个）"""
+    w = d.get("warp")
+    names = {old_name, (w or {}).get("name")} - {None}
+    d["nodes"] = [n for n in d.get("nodes") or [] if (n.get("proxy") or {}).get("name") not in names]
+    if w:
+        d["nodes"].append({"link": "", "proxy": node_proxy(w), "warp": True})
+
+
+def register(via_proxy=None):
+    """向 Cloudflare 注册一个免费 WARP 账号（先经核心代理，失败再直连）"""
+    priv, pub = keypair()
+    body = json.dumps({"key": b64(pub), "install_id": "", "fcm_token": "", "tos": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                       "model": "PC", "serial_number": "", "locale": "zh_CN"}).encode()
+    errs = []
+    for proxy in ((via_proxy,) if via_proxy is not None else (True, False)):
+        req = urllib.request.Request(WARP_API, data=body, method="POST", headers={
+            "Content-Type": "application/json; charset=UTF-8", "User-Agent": "okhttp/3.12.1", "CF-Client-Version": "a-6.30-3596"})
+        try:
+            with proxy_opener(proxy).open(req, timeout=20) as r:
+                j = json.loads(r.read(1 << 20))
+            cfg = j.get("config") or {}
+            peer = (cfg.get("peers") or [{}])[0]
+            addr = (cfg.get("interface") or {}).get("addresses") or {}
+            return clean_cfg({"private_key": b64(priv), "peer_public_key": peer.get("public_key") or WARP_PEER,
+                              "v4": addr.get("v4"), "v6": addr.get("v6"), "reserved": cfg.get("client_id") or "",
+                              "endpoint": WARP_ENDPOINT, "account_id": j.get("id"), "token": j.get("token"),
+                              "license": (j.get("account") or {}).get("license"), "created": time.strftime("%Y-%m-%d %H:%M")})
+        except Exception as e:
+            errs.append(("经代理" if proxy else "直连") + "：" + str(e)[:150])
+    raise IOError("注册 WARP 失败：" + "；".join(errs))
+
+
+# ---------------------------------------------------------------- 本地优选（测速走直连）
+def _default_dev():
+    code, out = sh("ip -4 route show default table main 2>/dev/null | head -n 1", timeout=5)
+    p = out.split()
+    return p[p.index("dev") + 1] if "dev" in p and p.index("dev") + 1 < len(p) else ""
+
+
+class Bypass:
+    """TUN 模式下让测速包绕过核心：打 fwmark + 临时策略路由「fwmark → main 表」，退出时删掉。
+    TProxy / 未开代理时什么都不做（本机自己发出的包不经过 prerouting，本来就直连）"""
+
+    def __init__(self, mode):
+        self.mode, self.added = mode, False
+
+    def __enter__(self):
+        if self.mode == "tun":
+            for v in ("-4", "-6"):
+                sh(f"ip {v} rule del fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF} 2>/dev/null", timeout=5)
+            code, out = sh(f"ip -4 rule add fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF}", timeout=5)
+            sh(f"ip -6 rule add fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF} 2>/dev/null", timeout=5)  # IPv6 端点；没开 IPv6 时失败无妨
+            self.added = code == 0
+            if not self.added:
+                log_err("WARP 优选", "添加直连策略路由失败：" + out[-120:])
+        return self
+
+    def __exit__(self, *a):
+        if self.added:
+            for v in ("-4", "-6"):
+                sh(f"ip {v} rule del fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF} 2>/dev/null", timeout=5)
+        return False
+
+
+def bypass_active():
+    code, out = sh("ip -4 rule show 2>/dev/null; ip -6 rule show 2>/dev/null", timeout=5)
+    return f"fwmark {hex(BYPASS_MARK)}" in out or f"fwmark {BYPASS_MARK}" in out
+
+
+def probe(ini, host, port, tries=3, timeout=1.0, mark=False, dev=""):
+    """发 tries 次握手，返回 (平均延迟 ms 或 0, 丢包率 0–1)"""
+    fam = socket.AF_INET6 if ":" in host else socket.AF_INET
+    rtts = []
+    s = socket.socket(fam, socket.SOCK_DGRAM)
+    try:
+        if mark:
+            try:
+                s.setsockopt(socket.SOL_SOCKET, 36, BYPASS_MARK)  # SO_MARK
+            except OSError:
+                pass
+            if dev:
+                try:
+                    s.setsockopt(socket.SOL_SOCKET, 25, dev.encode())  # SO_BINDTODEVICE：再保险，直接从物理网卡发
+                except OSError:
+                    pass
+        s.settimeout(timeout)
+        for _ in range(tries):
+            sender, pkt = ini.packet()
+            t0 = time.perf_counter()
+            try:
+                s.sendto(pkt, (host, port))
+                while True:
+                    data, _ = s.recvfrom(256)
+                    # 握手应答：type 2、92 字节、receiver 是我们的 sender
+                    if len(data) == 92 and data[0] == 2 and struct.unpack("<I", data[8:12])[0] == sender:
+                        rtts.append((time.perf_counter() - t0) * 1000)
+                        break
+            except (socket.timeout, OSError):
+                pass
+    finally:
+        s.close()
+    return (round(sum(rtts) / len(rtts), 1) if rtts else 0), round(1 - len(rtts) / tries, 2)
+
+
+def candidates(n=80, ports=None, extra=()):
+    """随机抽 n 个「IP:端口」：IP 来自 WARP 网段，端口优先 2408"""
+    ports = ports or WARP_PORTS
+    ips = [str(ip) for r in WARP_RANGES for ip in list(ipaddress.ip_network(r).hosts())]
+    out = list(dict.fromkeys(extra))
+    rnd = random.Random()
+    while len(out) < n:
+        p = 2408 if rnd.random() < 0.4 else rnd.choice(ports)
+        out.append(join_ep(rnd.choice(ips), p))
+        out = list(dict.fromkeys(out))
+    return out[:max(n, len(extra))]
+
+
+def proxy_state(d, core_ok):
+    """(mode, 说明)：mode 为 tun 时测速要绕过核心"""
+    pm = d.get("proxy_mode") or "off"
+    if not core_ok or pm == "off":
+        return "direct", "未开启透明代理（或核心未运行）：直接测本地线路"
+    if pm == "tun":
+        return "tun", "检测到 TUN 代理模式：测速包已用 fwmark 临时绕过 TUN 直连，测完自动恢复"
+    return "tproxy", "检测到 TProxy 代理模式：TProxy 只接管局域网转发流量，本机发出的测速包本来就直连"
+
+
+def scan(d, core_ok, n=80, tries=3, eps=None):
+    """后台优选：结果写入 SCAN（按丢包、延迟排序）"""
+    w = d.get("warp")
+    if not w:
+        return False, "还没有 WARP 账号，先注册或导入"
+    with _SCAN_LOCK:
+        if SCAN["running"]:
+            return False, "优选正在进行"
+        SCAN.update(running=True, done=0, results=[], t=time.time())
+    try:
+        # 握手包的 reserved 填 0：实测带账号 client_id 的握手 Cloudflare 不回应（数据包才需要 reserved）
+        ini = Initiator(_b64key(w["private_key"], "私钥"), _b64key(w["peer_public_key"], "对端公钥"))
+        lst = [e for e in (eps or []) if e] or candidates(n, extra=[w["endpoint"]])
+        lst = [split_ep(e) for e in lst][:300]
+    except ValueError as e:
+        SCAN["running"] = False
+        return False, str(e)
+    mode, msg = proxy_state(d, core_ok)
+    SCAN.update(total=len(lst), mode=mode, msg=msg)
+
+    def run():
+        res = []
+        try:
+            dev = _default_dev() if mode == "tun" else ""
+            with Bypass(mode) as bp:
+                def one(hp):
+                    rtt, loss = probe(ini, hp[0], hp[1], tries, mark=mode == "tun", dev=dev)
+                    with _SCAN_LOCK:
+                        SCAN["done"] += 1
+                    return {"endpoint": join_ep(*hp), "delay": rtt, "loss": loss}
+                from concurrent.futures import ThreadPoolExecutor  # 按需导入：只有扫描端点时用到
+                with ThreadPoolExecutor(16) as ex:
+                    res = list(ex.map(one, lst))
+                SCAN["bypass"] = bool(bp.added) if mode == "tun" else None
+            ok = sorted((r for r in res if r["delay"]), key=lambda r: (r["loss"], r["delay"]))
+            SCAN["results"] = ok[:30]
+            if mode == "tun" and not SCAN.get("bypass"):
+                msg = "TUN 模式下没能加直连策略路由（需要 root），测速包可能经过了核心，结果仅供参考"
+            SCAN["msg"] = msg + f"。共测 {len(res)} 个，{len(ok)} 个可用" + ("" if ok else "（全部不通：本地 UDP 被限制，或账号已失效）")
+        except Exception as e:
+            log_err("WARP 优选", e)
+            SCAN["msg"] = "优选失败：" + str(e)[:200]
+        finally:
+            SCAN["running"] = False
+            SCAN["restored"] = not bypass_active()
+    threading.Thread(target=run, daemon=True).start()
+    return True, f"开始优选 {len(lst)} 个端点"
+
+
+def view(d):
+    """给前端的状态（私钥打码）"""
+    w = d.get("warp")
+    if not w:
+        return {"account": None}
+    a = {k: w.get(k) for k in ("name", "v4", "v6", "reserved", "endpoint", "mtu", "created", "license", "peer_public_key")}
+    a["private_key"] = w["private_key"][:4] + "…" + w["private_key"][-4:]
+    a["registered"] = bool(w.get("account_id"))
+    a["in_nodes"] = any((n.get("proxy") or {}).get("name") == w["name"] for n in d.get("nodes") or [])
+    return {"account": a}
+
+
+# ---------------------------------------------------------------- 接口（webapi 里的 /api/warp 调这里）
+def api_get():
+    from .data import load
+    return 200, dict(view(load()), scan={k: SCAN.get(k) for k in ("running", "done", "total", "results", "mode", "msg", "bypass", "restored")})
+
+
+def api_post(b):
+    """action: register | import | edit（手动修改）| delete | endpoint | scan | node（重新写入节点）"""
+    from .data import load, update
+    from .core import reload_core
+    from .notify import core_alive
+    act = b.get("action")
+    d = load()
+    w = d.get("warp")
+    if act == "scan":
+        eps = b.get("endpoints")
+        eps = [str(x) for x in eps] if isinstance(eps, list) else [x for x in str(eps or "").replace(",", "\\n").split() if x]
+        try:
+            n = max(10, min(int(b.get("count") or 80), 300))
+        except (TypeError, ValueError):
+            n = 80
+        ok, msg = scan(d, core_alive(), n=n, eps=eps)
+        return (200 if ok else 409), {"message": msg}
+    if act in ("register", "import"):
+        try:
+            nw = register() if act == "register" else clean_cfg(b)
+        except ValueError as e:
+            return 400, {"message": str(e)}
+        except IOError as e:
+            return 502, {"message": str(e)}
+        taken = {(n.get("proxy") or {}).get("name") for n in d.get("nodes") or [] if not n.get("warp")}
+        if nw["name"] in taken:
+            return 400, {"message": f"已有同名节点「{nw['name']}」，换个名称"}
+        old = (w or {}).get("name")
+        prev = update(lambda d: (d.__setitem__("warp", nw), sync_node(d, old)))
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": ("已" + ("注册" if act == "register" else "导入") + f" WARP 账号，节点「{nw['name']}」已加入手动节点，可在策略组里使用") if ok else msg}
+    if not w:
+        return 400, {"message": "还没有 WARP 账号，先注册或导入"}
+    if act == "delete":
+        def rm(d):
+            d.pop("warp", None)
+            sync_node(d, w["name"])
+        prev = update(rm)
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": "已删除 WARP 账号和节点" if ok else msg}
+    if act == "endpoint":
+        try:
+            host, port = split_ep(b.get("endpoint"))
+        except ValueError as e:
+            return 400, {"message": str(e)}
+        ep = join_ep(host, port)
+
+        def fn(d):
+            d["warp"]["endpoint"] = ep
+            sync_node(d)
+        prev = update(fn)
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": f"WARP 端点已换成 {ep}，配置已重新加载" if ok else msg}
+    if act == "edit":  # 手动修改：没填的字段保留原值，私钥留空表示不改
+        cur = dict(w)
+        for k in ("name", "endpoint", "private_key", "peer_public_key", "v4", "v6", "reserved", "mtu"):
+            v = b.get(k)
+            if k in b and v is not None and (str(v).strip() or k == "v6"):
+                cur[k] = v.strip() if isinstance(v, str) else v
+        try:
+            nw = clean_cfg(cur)
+        except (ValueError, TypeError) as e:
+            return 400, {"message": str(e) if isinstance(e, ValueError) else "参数格式不对"}
+        taken = {(n.get("proxy") or {}).get("name") for n in d.get("nodes") or [] if not n.get("warp")}
+        if nw["name"] in taken:
+            return 400, {"message": f"已有同名节点「{nw['name']}」，换个名称"}
+        if all(nw.get(k) == w.get(k) for k in nw) and set(nw) == set(w):
+            return 200, {"message": "配置没有变化"}
+        def fe(d):
+            d["warp"] = nw
+            sync_node(d, w["name"])
+            if nw["name"] != w["name"] and d.get("landings"):  # 改名：以 WARP 为前置的 SOCKS5 落地跟着改
+                from .landing import sync_nodes
+                for x in d["landings"]:
+                    if x.get("via") == w["name"]:
+                        x["via"] = nw["name"]
+                sync_nodes(d)
+        prev = update(fe)
+        ok, msg = reload_core(prev)  # 核心不认新配置时 reload_core 自动换回 prev
+        if not ok:
+            return 500, {"message": "修改后的配置没能加载，已保留原配置：" + str(msg)}
+        return 200, {"message": f"WARP 配置已保存，节点「{nw['name']}」已重新生成并加载"}
+    if act == "node":
+        prev = update(lambda d: sync_node(d))
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": "WARP 节点已重新写入" if ok else msg}
+    return 400, {"message": "未知操作"}
+'''
 _SRC['shunt.landing'] = '''"""SOCKS5 落地（预览版）：指定国家的出口 IP。
 
-每个落地是一个 socks5 手动节点，可选「前置节点」（默认直连；旧数据里有 WARP 节点时默认它，也可选其它手动节点、地区竞技组），
+每个落地是一个 socks5 手动节点，可选「前置节点」（默认 WARP，也可选其它手动节点、地区竞技组或直连），
 mihomo 用 dialer-proxy、sing-box 用 detour 做链式代理：设备 → 前置节点 → SOCKS5 落地 → 目标网站。
 落地节点和 WARP 一样直接进 🚀 节点选择 / 🖐️ 手动选择 / 各分流组，不进地区竞技和全局自动。
 检测：每个落地在本机 127.0.0.1:<LD_PORT0+序号> 开一个只走该落地的 mixed 入站，curl 经它查出口 IP / 国家 / 延迟。
@@ -12622,7 +13169,7 @@ from collections import deque
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .errlog import log_err
-from . import adblock, landing, stats
+from . import adblock, landing, stats, warp
 from . import gguard
 from .base import (
     AB_DIR, AB_PRESETS, BUILTIN_POLICIES, CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, GROUP_TYPES, G_MANUAL, G_SEL, HC, KEY,
@@ -13913,6 +14460,14 @@ class H(BaseHTTPRequestHandler):
     @api_route("/api/coreupdate/status", "GET")
     def api_coreupdate_status_get(self, m, p, b, q):
         return self.send(200, core_upd_status())
+
+    @api_route("/api/warp", "GET")
+    def api_warp_get(self, m, p, b, q):
+        return self.send(*warp.api_get())
+
+    @api_route("/api/warp", "POST")
+    def api_warp_post(self, m, p, b, q):
+        return self.send(*warp.api_post(b if isinstance(b, dict) else {}))
 
     @api_route("/api/gguard", "GET")
     def api_gguard_get(self, m, p, b, q):
