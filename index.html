@@ -920,9 +920,25 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
     </div>
   </section>
   <!-- 测速 -->
-  <section data-tab="落地">
-    <div class="card"><div class="row"><h3 class="sp" style="margin:0">🌍 SOCKS5 落地</h3><button class="btn g sm" id="ld-chk" onclick="ldCheck()">检测全部</button><button class="btn g sm" onclick="loadLanding()">刷新</button></div>
-      <div class="mut small" style="margin:4px 0 8px">想要指定国家的出口 IP：添加 SOCKS5 落地，流量走「设备 → 前置节点（默认直连，也可选手动节点或地区竞技组）→ 落地 → 网站」。落地节点自动加入「🚀 节点选择」「🖐️ 手动选择」和各分流组（不进自动测速组），在里面选中即可使用。</div>
+  <section data-tab="WARP">
+    <div class="card"><div class="row"><h3 class="sp" style="margin:0">☁️ Cloudflare WARP <span class="tag">预览</span></h3><button class="btn g sm" onclick="loadWarp()">刷新</button></div>
+      <div class="mut small" style="margin:4px 0 8px">注册免费 WARP 账号（或导入已有 WireGuard 配置），生成名为 WARP 的 WireGuard 手动节点（mihomo / sing-box 各用自己的格式），可以在「策略组」里像普通节点一样使用。</div>
+      <div id="warp-acc"></div>
+      <div class="row mt" style="flex-wrap:wrap;gap:6px"><button class="btn" onclick="warpReg(this)">注册新账号</button><button class="btn g" onclick="warpForm('import')">导入配置</button><button class="btn g" id="warp-editb" onclick="warpForm('edit')">修改配置</button><span class="sp"></span><button class="btn g" id="warp-node" onclick="warpAct({action:'node'},this)">重新加入节点</button><button class="btn g" onclick="warpDel(this)">删除</button></div>
+      <div id="warp-imp" class="hide mt"><style>.wl{display:flex;flex-direction:column;gap:3px;min-width:0}</style>
+        <div class="small mut" id="wi-title" style="margin-bottom:6px"></div>
+        <div class="row"><label class="sp wl"><span class="small mut">节点名称</span><input style="width:100%" id="wi-name" placeholder="节点名称（默认 WARP）"></label><label class="sp wl"><span class="small mut">端点</span><input style="width:100%" id="wi-ep" placeholder="端点，如 162.159.192.1:2408"></label></div>
+        <div class="row mt"><label class="sp wl"><span class="small mut">私钥</span><input style="width:100%" id="wi-key" type="password" autocomplete="off" placeholder="私钥 PrivateKey（必填）"></label><label class="sp wl"><span class="small mut">对端公钥</span><input style="width:100%" id="wi-peer" placeholder="对端公钥（空 = WARP 默认）"></label></div>
+        <div class="row mt"><label class="sp wl"><span class="small mut">本机 IPv4</span><input style="width:100%" id="wi-v4" placeholder="本机 IPv4（默认 172.16.0.2）"></label><label class="sp wl"><span class="small mut">本机 IPv6</span><input style="width:100%" id="wi-v6" placeholder="本机 IPv6（可空）"></label><label class="sp wl"><span class="small mut">reserved</span><input style="width:100%" id="wi-res" placeholder="reserved，如 12,34,56 或 client_id"></label></div>
+        <div class="row mt"><label class="wl" style="width:150px"><span class="small mut">MTU</span><input id="wi-mtu" type="number" min="1100" max="1500" placeholder="MTU（默认 1280）" style="width:100%"></label><span class="sp"></span><button class="btn" id="wi-go" style="align-self:flex-end" onclick="warpImport(this)">导入</button></div></div></div>
+    <div class="card"><div class="row"><h3 class="sp" style="margin:0">🎯 本地优选 IP</h3><input id="warp-n" type="number" min="10" max="300" value="80" style="width:80px" title="随机抽测的端点数"><button class="btn" id="warp-scan" onclick="warpScan(this)">开始优选</button></div>
+      <div class="mut small" style="margin:4px 0 8px">对 WARP 端点（162.159.192–195.x、188.114.96–99.x 及常用端口）发真实 WireGuard 握手，测延迟和丢包。自动识别代理模式：TUN 模式下测速包临时绕过核心直连，测完恢复；TProxy 下本机发出的包本来就直连。也可以在下面填要测的端点（每行一个）。优选期间 WARP 节点可能短暂重连。</div>
+      <textarea id="warp-eps" rows="2" placeholder="可选：只测这些端点，每行一个 IP:端口" style="width:100%"></textarea>
+      <div id="warp-st" class="small mt"></div>
+      <div class="tw mt"><table><thead><tr><th>端点</th><th>延迟</th><th>丢包</th><th></th></tr></thead><tbody id="warp-res"></tbody></table></div>
+      <div class="row mt"><input id="warp-ep" placeholder="手动输入端点 IP:端口" class="sp"><button class="btn" onclick="warpSetEp($('#warp-ep').value,this)">替换端点</button></div></div>
+      <div class="card"><div class="row"><h3 class="sp" style="margin:0">🌍 SOCKS5 落地 <span class="tag">预览</span></h3><button class="btn g sm" id="ld-chk" onclick="ldCheck()">检测全部</button><button class="btn g sm" onclick="loadLanding()">刷新</button></div>
+      <div class="mut small" style="margin:4px 0 8px">想要指定国家的出口 IP：添加 SOCKS5 落地，流量走「设备 → 前置节点（默认 WARP）→ 落地 → 网站」。落地节点自动加入「🚀 节点选择」「🖐️ 手动选择」和各分流组（不进自动测速组），在里面选中即可使用。</div>
       <textarea id="ld-text" rows="3" style="width:100%" placeholder="每行一个，可批量粘贴：&#10;socks5://用户名:密码@地址:端口#名称&#10;地址:端口:用户名:密码（无账号写 地址:端口）"></textarea>
       <div class="row mt" style="gap:6px;flex-wrap:wrap"><span class="small mut">前置节点</span><select id="ld-via" style="max-width:220px"></select><span class="sp"></span><button class="btn" onclick="ldAdd(this)">添加</button></div>
       <div class="tw mt"><table><thead><tr><th>落地</th><th>前置</th><th>出口 IP</th><th>延迟</th><th></th></tr></thead><tbody id="ld-list"></tbody></table></div></div>
@@ -946,10 +962,10 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
 <script>
 const $=s=>document.querySelector(s);
 let STATE={},TAB='概览',ACTIVE_RULES=[],timers=[],DEVS={},LIVE={},CONNS=[];
-const TABS=['概览','节点','策略组','订阅','规则','DNS','广告拦截','连接','统计','日志','测速','落地','设置'];
+const TABS=['概览','节点','策略组','订阅','规则','DNS','广告拦截','连接','统计','日志','测速','WARP','设置'];
 const HOME='概览';  // 主页：不在抽屉菜单里列出，点抽屉顶部的 Shunt 图标回来
 // 地址栏 #hash ↔ 页面：#nodes 等英文名或中文页名都能直达；#overview / #home / 空 hash / 不认识的都回主页
-const TAB_SLUG={节点:'nodes',策略组:'groups',订阅:'subs',规则:'rules',DNS:'dns',广告拦截:'adblock',连接:'conns',统计:'stats',日志:'logs',设置:'settings',测速:'speed',落地:'landing'};
+const TAB_SLUG={节点:'nodes',策略组:'groups',订阅:'subs',规则:'rules',DNS:'dns',广告拦截:'adblock',连接:'conns',统计:'stats',日志:'logs',设置:'settings',测速:'speed',WARP:'warp'};
 const SLUG_ALIAS={proxies:'节点',node:'节点',group:'策略组',proxygroups:'策略组',sub:'订阅',subscriptions:'订阅',subscription:'订阅',rule:'规则',
   ad:'广告拦截',ads:'广告拦截',connections:'连接',connection:'连接',conn:'连接',stat:'统计',statistics:'统计',log:'日志',setting:'设置',speedtest:'测速',test:'测速'};
 function tabFromHash(h){h=String(h??'').replace(/^#\/?/,'').split(/[?&/]/)[0];try{h=decodeURIComponent(h)}catch(e){}
@@ -1073,7 +1089,7 @@ const NAV_ICO={"概览": "<path d=\"M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 
   "统计": "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>",
   "日志": "<path d=\"M6 3h9l4 4v14H6z\"/><path d=\"M9 11h7M9 15h7\"/>",
   "测速": "<path d=\"M4 18a9 9 0 1 1 16 0\"/><path d=\"M12 14l4-5\"/><circle cx=\"12\" cy=\"14\" r=\"1.3\"/>",
-  "落地": "<path d=\"M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4.2 4.2 0 0 1-.5 8.5z\"/>",
+  "WARP": "<path d=\"M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4.2 4.2 0 0 1-.5 8.5z\"/>",
   "设置": "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z\"/>"};
 const svgI=t=>`<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICO[t]||''}</svg>`;
 // 切页 / 换布局后重画：抽屉里的页面列表或经典标签栏（当前页高亮）、顶栏 Shunt 旁的当前页名、只显示当前页的 section
@@ -1145,7 +1161,7 @@ function setHash(t,replace){const h=t===HOME?'':'#'+(TAB_SLUG[t]||encodeURICompo
 addEventListener('hashchange',()=>{closeDrawer(false);const t=tabFromHash(location.hash);if(t!==TAB)go(t,1)});
 addEventListener('popstate',()=>{const t=tabFromHash(location.hash);if(t!==TAB)go(t,1)});
 function go(t,fromHash){if(!TABS.includes(t))t=HOME;if(TAB==='日志'&&t!=='日志')stopLive();TAB=t;nav();scrollTo({top:0});setHash(t,fromHash);
-  ({节点:loadProxies,策略组:loadGroupsPage,订阅:loadSubs,规则:loadRules,DNS:loadDNSPage,广告拦截:loadAB,统计:loadStats,日志:openLogs,设置:renderSettings,概览:renderOverview,连接:loadDevs,测速:()=>loadSpeed(),落地:()=>loadLanding()})[t]?.()}
+  ({节点:loadProxies,策略组:loadGroupsPage,订阅:loadSubs,规则:loadRules,DNS:loadDNSPage,广告拦截:loadAB,统计:loadStats,日志:openLogs,设置:renderSettings,概览:renderOverview,连接:loadDevs,测速:()=>loadSpeed(),WARP:()=>loadWarp()})[t]?.()}
 // Chrome「桌面版网站」：手机按约 980px 宽的电脑布局显示、整体缩得很小（这个模式下浏览器不认 viewport 设置，网页改不了）。
 // 认出来后加 dsk 类（顶栏、抽屉再放大一档），并在抽屉底部提示怎么关
 const DSK=(()=>{try{const sw=Math.min(screen.width,screen.height);return matchMedia('(hover:none) and (pointer:coarse)').matches&&innerWidth>720&&sw<=540&&innerWidth>=sw*1.5}catch(e){return false}})();
@@ -2146,7 +2162,33 @@ async function loadSpeed(){clearTimeout(SPD_T);try{SPD=await api('/api/speed');r
   if(SPD.running&&TAB==='测速')SPD_T=setTimeout(loadSpeed,600)}
 async function spdStart(kind,b){b.disabled=true;try{const j=await api('/api/speed','POST',{kind});if(!j.ok)toast(j.message);SPD=j;renderSpeed()}
   catch(e){toast(e.message);b.disabled=false}loadSpeed()}
-// SOCKS5 落地：指定国家的出口 IP，经前置节点链式代理
+// WARP（预览版）：账号 / 节点 / 本地优选端点
+let WARP={},WARP_T=null,WARP_T0=0;
+async function loadWarp(){clearTimeout(WARP_T);if(typeof loadLanding==='function'&&!WARP_T0){WARP_T0=1;loadLanding()}try{WARP=await api('/api/warp')}catch(e){return toast(e.message)}renderWarp();
+  if(WARP.scan&&WARP.scan.running&&TAB==='WARP')WARP_T=setTimeout(loadWarp,1000)}
+function renderWarp(){const a=WARP.account,s=WARP.scan||{};
+  $('#warp-acc').innerHTML=a?`<div class="small">节点 <b>${esc(a.name)}</b>${a.in_nodes?'':' <span class="warn">（不在手动节点里，点「重新加入节点」）</span>'} · 端点 <b>${esc(a.endpoint)}</b> · 地址 ${esc(a.v4)}${a.v6?' / '+esc(a.v6):''} · reserved ${esc((a.reserved||[]).join(','))} · 私钥 ${esc(a.private_key)}${a.created?' · 注册于 '+esc(a.created):''}</div>`:'<div class="mut small">还没有 WARP 账号</div>';
+  $('#warp-node').disabled=!a;$('#warp-editb').disabled=!a;
+  const run=!!s.running;$('#warp-scan').disabled=run;
+  $('#warp-st').innerHTML=run?`<span class="mut">● 优选中 ${s.done||0} / ${s.total||0}… ${esc(s.msg||'')}</span>`:(s.msg?`<span class="${(s.results||[]).length?'ok':'warn'}">● ${esc(s.msg)}</span>${s.restored===false?' <span class="bad">直连策略路由未撤销</span>':''}`:'');
+  $('#warp-res').innerHTML=(s.results||[]).map(r=>`<tr><td>${esc(r.endpoint)}${a&&r.endpoint===a.endpoint?' <span class="tag">当前</span>':''}</td><td>${r.delay} ms</td><td>${Math.round(r.loss*100)}%</td><td><button class="btn g sm" onclick="warpSetEp(${jsq(r.endpoint)},this)">使用</button></td></tr>`).join('')}
+async function warpAct(body,btn,conf){if(conf&&!confirm(conf))return false;if(btn)btn.disabled=true;let ok=false;try{const j=await api('/api/warp','POST',body);toast(j.message);ok=true}catch(e){toast(e.message)}if(btn)btn.disabled=false;loadWarp();return ok}
+function warpReg(b){warpAct({action:'register'},b,WARP.account?'重新注册会替换当前 WARP 账号，继续？':'')}
+function warpDel(b){warpAct({action:'delete'},b,'删除 WARP 账号和节点？引用它的策略组会改用其他节点。')}
+// 导入 / 手动修改共用一张表单：修改时填入当前值，私钥留空表示不改
+let WF_MODE='import';
+function warpForm(mode){const f=$('#warp-imp'),a=WARP.account,e=mode==='edit'&&!!a;if(mode==='edit'&&!a)return toast('还没有 WARP 账号，先注册或导入');
+  if(!f.classList.contains('hide')&&WF_MODE===mode){f.classList.add('hide');return}WF_MODE=mode;f.classList.remove('hide');
+  const set=(id,v)=>{$(id).value=v==null?'':String(v)};set('#wi-name',e?a.name:'');set('#wi-ep',e?a.endpoint:'');set('#wi-key','');set('#wi-peer',e?a.peer_public_key:'');
+  set('#wi-v4',e?a.v4:'');set('#wi-v6',e?a.v6:'');set('#wi-res',e?(a.reserved||[]).join(','):'');set('#wi-mtu',e?(a.mtu||1280):'');
+  $('#wi-key').placeholder=e?`私钥（留空 = 不改，当前 ${a.private_key}）`:'私钥 PrivateKey（必填）';
+  $('#wi-title').textContent=e?'修改 WARP 配置：保存后重新生成节点并热重载，核心不认会自动换回原配置':'导入已有的 WireGuard / WARP 配置';$('#wi-go').textContent=e?'保存修改':'导入'}
+async function warpImport(b){const v=id=>$(id).value.trim(),body={action:WF_MODE==='edit'?'edit':'import',name:v('#wi-name'),endpoint:v('#wi-ep'),private_key:v('#wi-key'),
+  peer_public_key:v('#wi-peer'),v4:v('#wi-v4'),v6:v('#wi-v6'),reserved:v('#wi-res'),mtu:v('#wi-mtu')};
+  if(await warpAct(body,b,body.action==='import'&&WARP.account?'导入会替换当前 WARP 账号，继续？':''))$('#warp-imp').classList.add('hide')}
+function warpSetEp(ep,b){ep=String(ep||'').trim();if(!ep)return toast('先填端点');warpAct({action:'endpoint',endpoint:ep},b)}
+async function warpScan(b){b.disabled=true;try{const j=await api('/api/warp','POST',{action:'scan',count:+$('#warp-n').value||80,endpoints:$('#warp-eps').value});toast(j.message)}catch(e){toast(e.message)}loadWarp()}
+// SOCKS5 落地（预览版）：指定国家的出口 IP，经前置节点（默认 WARP）链式代理
 let LD={landings:[],via_options:[]},LDR={};
 async function loadLanding(){try{LD=await api('/api/landing')}catch(e){return toast(e.message)}renderLanding()}
 function ldVia(cur){return LD.via_options.map(v=>`<option value="${esc(v)}" ${v===cur?'selected':''}>${v==='DIRECT'?'直连（不经前置）':esc(v)}</option>`).join('')}
@@ -2159,7 +2201,7 @@ function renderLanding(){const ls=LD.landings||[];
     <td><select onchange="ldEdit(${jsq(x.name)},{via:this.value})">${ldVia(x.via)}</select></td><td>${out}</td><td>${r&&r.ok?r.delay+' ms':'-'}</td>
     <td style="white-space:nowrap"><button class="btn g sm" onclick="ldCheck([${jsq(x.name)}])">检测</button> <button class="btn g sm" onclick="ldDel(${jsq(x.name)})">删除</button></td></tr>`}).join(''):'<tr><td colspan="5" class="mut small">还没有落地</td></tr>'}
 async function ldPost(body,btn){if(btn)btn.disabled=true;let j=null;try{j=await api('/api/landing','POST',body);if(j.message)toast(j.message)}catch(e){toast(e.message)}if(btn)btn.disabled=false;return j}
-async function ldAdd(b){const t=$('#ld-text').value.trim();if(!t)return toast('先粘贴落地');if(await ldPost({action:'add',text:t,via:$('#ld-via').value},b)){$('#ld-text').value='';await loadLanding()}}
+async function ldAdd(b){const t=$('#ld-text').value.trim();if(!t)return toast('先粘贴落地');if(await ldPost({action:'add',text:t,via:$('#ld-via').value},b)){$('#ld-text').value='';await loadLanding();if(TAB==='WARP')loadWarp()}}
 async function ldEdit(n,f){await ldPost(Object.assign({action:'edit',old_name:n},f));loadLanding()}
 async function ldDel(n){if(!confirm(`删除落地「${n}」？引用它的策略组会改用其他节点。`))return;await ldPost({action:'delete',name:n});delete LDR[n];loadLanding()}
 async function ldCheck(names){const ls=names||(LD.landings||[]).map(x=>x.name);ls.forEach(n=>LDR[n]={busy:1});renderLanding();
