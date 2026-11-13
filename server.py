@@ -4,8 +4,8 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.30"
-import importlib.abc, importlib.util, linecache, marshal, os, sys, types, zlib
+PANEL_VERSION = "8.10.31"
+import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
 _SRC['shunt'] = '''"""Shunt 分流面板后端。
@@ -46,6 +46,8 @@ MODULES = [
     "core_cache",
     "sysopt",
     "notify",
+    "landing",
+    "gguard",
     "latency",
     "stats",
     "unlock",
@@ -362,7 +364,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.30"
+PANEL_VERSION = "8.10.31"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1858,14 +1860,16 @@ def clean_custom_group(b):
     return g
 '''
 _SRC['shunt.mihomo'] = '''"""生成配置"""
-import ipaddress, json, os, re, threading, time
+import ipaddress, json, os, re, shlex, threading, time
 
 from .base import (
+    REGIONS,
     AUTO_ORDER, BUILTIN_POLICIES, CN_APP_DOMAINS, CONF_DIR, CTRL_HOST, CTRL_PORT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, DOH_DOMAINS, DOH_IPS, G_AI,
     G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
     LAN_DNS_SUFFIX, LAN_PTR_ZONES, TUN_DEFAULT, TUN_STACKS
 )
 from .data import LB_KINDS, auto_name, lb_name, region_label, rs_file, safe
+from . import gguard, landing
 from .groups import clean_custom_group, gcfg, group_opts, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
 from .ruleutil import AB_RULE_ONLY, DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, complete_rule, dns_policy_of, norm_rule, \\
     rule_policy_index, split_rule
@@ -2062,6 +2066,9 @@ def build_config(d, strict=False):
     use = list(providers)
     proxies = [n["proxy"] for n in d.get("nodes", [])]
     names = [p["name"] for p in proxies]
+    # WARP 与 SOCKS5 落地节点（预览）：直接放进 🚀 节点选择 / 🖐️ 手动选择 / 各分流组，但不进地区竞技 / 全局自动（免得自动测速把流量切过去）
+    warpn = landing.chain_names(d)
+    pool = [n for n in names if n not in warpn]
     gc = gcfg(d)
     race = "smart" if active_core(d) == "smart" else "url-test"  # 竞技组：mihomo 用 url-test，Smart 内核用 smart
 
@@ -2076,7 +2083,7 @@ def build_config(d, strict=False):
 
     # 地区分组：「<旗> <地区>竞技」(url-test，选延迟最低) + 「⚖️ <地区>哈希」(load-balance，一致性哈希)
     autos, lbs = [], []
-    for rname, flt, exc, matched, total, unknown in region_plan(d, names, use):
+    for rname, flt, exc, matched, total, unknown in region_plan(d, pool, use):
         label = region_label(rname)[1]
         variants = [(auto_name(rname), race, autos, None)]
         if gc["lb"] and (total >= 2 or unknown):  # 地区有 ≥2 个节点时生成负载均衡组（一致性哈希）
@@ -2129,19 +2136,23 @@ def build_config(d, strict=False):
         if cg["expose"]:
             exposed.append(cg["name"])
 
-    # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → ⚡ 全局自动选择 → 🏠 直连
+    # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → WARP → ⚡ 全局自动选择 → 🏠 直连
     have = bool(use or names)
     direct_g = {"name": G_DIRECT, "type": "select", "proxies": ["DIRECT"]}
     if have:
-        groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL, G_AUTO, G_DIRECT]}] + region_groups + [
+        groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL] + warpn + [G_AUTO, G_DIRECT]}] + region_groups + [
             with_src({"name": G_MANUAL, "type": "select"}, names),
-            with_src(dict({"name": G_AUTO}, **group_opts(race, gc)), names), direct_g]
+            with_src(dict({"name": G_AUTO}, **group_opts(race, gc)), pool), direct_g]
         side = [G_SEL] + rnames + [G_MANUAL, G_AUTO] + exposed + ["DIRECT"] + names
     else:
         groups = [{"name": G_SEL, "type": "select", "proxies": [G_DIRECT]}, direct_g]
         side = [G_SEL] + exposed + ["DIRECT"]
+    gg = []
+    if have and gguard.enabled(d):  # 🛡️ Google 专用（预览）：排除名字带中国 / 中转等的节点，🔍 Google / 📹 YouTube 的第一个选项
+        gg = gguard.groups(d, pool, warpn, use, with_src, lambda t: group_opts(t, gc), race, rx, REGIONS)
     for g in SIDE_GROUPS:
-        groups.append(with_src({"name": g, "type": "select"}, list(side)))
+        groups.append(with_src({"name": g, "type": "select"}, ([gguard.G_GOOG] if gg and g in (G_GG, G_YT) else []) + list(side)))
+    groups += gg
     known = {g["name"] for g in groups} | region_set | set(cnames) | BUILTIN_POLICIES | set(names)
     for g in custom_groups:
         members = g.pop("_members")
@@ -2153,6 +2164,14 @@ def build_config(d, strict=False):
             g["proxies"] = ["COMPATIBLE"]
         groups.append(g)
     policies = {g["name"] for g in groups} | BUILTIN_POLICIES | set(names)
+    extra = {}
+    if any(p.get("dialer-proxy") for p in proxies):  # 落地的前置节点被删 / 改名时去掉，免得整份配置加载失败
+        proxies = [dict(p) for p in proxies]
+        landing.fix_dialers(proxies, policies)
+    ld = landing.listeners(d)
+    if ld:  # 每个落地一个只走它的本机入站，给「检测」用
+        extra["listeners"] = [{"name": f"landing-{i}", "type": "mixed", "port": port, "listen": "127.0.0.1", "proxy": n}
+                              for i, (n, port) in enumerate(ld) if n in names]
 
     dc = dns_cfg(d)
     rule_providers, rules, ab_prov = mihomo_rules(d, policies, dc)
@@ -2160,10 +2179,9 @@ def build_config(d, strict=False):
     dns = mihomo_dns(d, dc, policies, ab_prov)
     hosts = mihomo_hosts(dc)
     tun = mihomo_tun(d)
-    extra = {}
     if active_core(d) == "smart" and gcfg(d).get("lgbm"):  # 模型放在 -d 目录（/etc/mihomo/Model.bin），内核每 72 小时自动更新
         gh = (d.get("gh_proxy") or "").rstrip("/")
-        extra = {"lgbm-auto-update": True, "lgbm-update-interval": 72, "lgbm-url": (gh + "/" if gh else "") + LGBM_URL}
+        extra.update({"lgbm-auto-update": True, "lgbm-update-interval": 72, "lgbm-url": (gh + "/" if gh else "") + LGBM_URL})
     return dict(extra, **{
         "mixed-port": MIXED, "tproxy-port": 7893, "allow-lan": True, "bind-address": "*",
         "mode": d.get("mode", "rule"), "log-level": "info", "ipv6": v6,
@@ -2246,14 +2264,14 @@ def mihomo_rules(d, policies, dc):
     # 节点不支持 UDP 时电视 / 盒子永远对不上时间，证书校验和 Google Play 安装前验证跟着失败（下载到 99% 卡住）
     rules = pre + guard + [NTP_RULE] + ab_rules + [x for x in custom if x] + rs_rules + [
         "GEOSITE,private,DIRECT", "GEOIP,private,DIRECT,no-resolve", "RULE-SET,cn-apps,DIRECT",
-        f"GEOSITE,category-ai-!cn,{G_AI}", f"GEOSITE,netflix,{G_NF}", f"GEOIP,netflix,{G_NF},no-resolve",
+        *([f"DOMAIN-SUFFIX,{x},{G_GG}" for x in gguard.GEMINI] if gguard.enabled(d) else []), f"GEOSITE,category-ai-!cn,{G_AI}", f"GEOSITE,netflix,{G_NF}", f"GEOIP,netflix,{G_NF},no-resolve",
         # 国行机的 Play 下载走 services.googleapis.cn，直连时被指到 Google 国内 CDN（*.xn--ngstr-lra8j.com），下载卡在 99%：两者走 Google 组
         f"DOMAIN-SUFFIX,googleapis.cn,{G_GG}", f"DOMAIN-SUFFIX,xn--ngstr-lra8j.com,{G_GG}",
         f"GEOSITE,youtube,{G_YT}", f"GEOSITE,google,{G_GG}", f"GEOIP,google,{G_GG},no-resolve",
         f"GEOSITE,telegram,{G_TG}", f"GEOIP,telegram,{G_TG},no-resolve",
         # Cloudflare 1.1.1.1 / 1.0.0.1 国内直连常被运营商干扰：固定走节点选择，不随漏网之鱼直连
         f"IP-CIDR,1.1.1.1/32,{G_SEL},no-resolve", f"IP-CIDR,1.0.0.1/32,{G_SEL},no-resolve",
-        f"GEOSITE,geolocation-!cn,{G_SEL}", "DOMAIN-SUFFIX,dangbei.com,DIRECT",
+        f"GEOSITE,geolocation-!cn,{G_SEL}",
         "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT", f"MATCH,{G_FINAL}",
     ]
     return rule_providers, rules, ab_prov
@@ -2358,9 +2376,36 @@ def mihomo_tun(d):
     p = tun_params(d)
     if not p["enable"]:
         return {"enable": False}
-    return {"enable": True, "stack": "mixed" if p["stack"] == "auto" else p["stack"], "device": p["device"], "auto-route": True,
+    return {"enable": True, "stack": mh_tun_stack(p["stack"]), "device": p["device"], "auto-route": True,
             "auto-redirect": p["auto_redirect"], "auto-detect-interface": True, "dns-hijack": ["any:53", "tcp://any:53"],
             "strict-route": p["strict_route"]}
+
+
+def mh_tun_stack(stack, path=None):
+    """mihomo 实际要写的协议栈：没有 sing-tun 自有协议栈，「默认」按 mixed；内核没编译 gVisor（-v 的 Use tags 里没有 with_gvisor）时
+    gvisor / mixed 启动即报错、TUN 起不来，改用 system"""
+    stack = "mixed" if stack == "auto" else stack
+    if stack in ("gvisor", "mixed") and not mh_has_gvisor(path):
+        return "system"
+    return stack
+
+
+_MH_GVISOR = {"key": None, "v": True}
+
+
+def mh_has_gvisor(path=None):
+    """mihomo 有没有编译 gVisor：-v 输出「Use tags: with_gvisor」（没有任何 tag 时不输出这一行 = 没有）。
+    没装、执行失败时按有处理，不改用户的设置"""
+    from .sb_config import _cap_cached
+    path = path or mh_bin()
+
+    def probe():
+        code, out = sh(f"{shlex.quote(path)} -v", timeout=15)
+        if code != 0 or not re.search(r"mihomo|clash", out, re.I):
+            return False, True
+        m = re.search(r"^Use tags:\\s*(.*)$", out, re.M)
+        return True, bool(m) and "with_gvisor" in re.split(r"[,\\s]+", m.group(1))
+    return _cap_cached(_MH_GVISOR, path, True, probe)
 
 
 
@@ -3390,7 +3435,6 @@ notify.check_nodes（全部超时告警前复核）、health.run_check（节点�
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from urllib.parse import quote
 
 from .base import BUILTIN_POLICIES, HC, mass_begin, mass_end
@@ -3459,6 +3503,7 @@ def probe_nodes(names, budget=PROBE_BUDGET, stop=None, progress=None):
     if not names:
         return out
     tok = mass_begin()  # 测速期间核心负载高，看门狗暂停判定
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed  # 按需导入
     ex = ThreadPoolExecutor(min(PROBE_WORKERS, len(names)))
     deadline = time.monotonic() + budget
     try:
@@ -4371,6 +4416,19 @@ def sb_outbound(p, tag):
     o = {"tag": tag, "server": str(p.get("server") or ""), "server_port": int(p.get("port") or 0)}
     if not o["server"] or not o["server_port"]:
         raise ValueError("缺少服务器或端口")
+    if t == "wireguard":  # sing-box 1.11 起 WireGuard 是 endpoint（build_singbox 把它挪到 endpoints），可像出站一样被策略组引用
+        addr = [a for a in (str(p.get("ip") or "").split("/")[0], str(p.get("ipv6") or "").split("/")[0]) if a]
+        if not addr or not p.get("private-key") or not p.get("public-key"):
+            raise ValueError("WireGuard 缺少本机地址或密钥")
+        peer = {"address": o["server"], "port": o["server_port"], "public_key": str(p["public-key"]),
+                "allowed_ips": ["0.0.0.0/0", "::/0"], "persistent_keepalive_interval": 30}
+        if p.get("pre-shared-key"):
+            peer["pre_shared_key"] = str(p["pre-shared-key"])
+        r = p.get("reserved")
+        if isinstance(r, list) and len(r) == 3:
+            peer["reserved"] = [int(x) & 255 for x in r]
+        return {"type": "wireguard", "tag": tag, "mtu": int(p.get("mtu") or 1280), "private_key": str(p["private-key"]),
+                "address": [a + ("/128" if ":" in a else "/32") for a in addr], "peers": [peer]}
     if t == "ss":
         o.update(type="shadowsocks", method=str(p.get("cipher") or ""), password=str(p.get("password") or ""))
         pl, po = p.get("plugin"), p.get("plugin-opts") or {}
@@ -4455,6 +4513,8 @@ def sb_outbound(p, tag):
         o["tls"].pop("utls", None)
     if p.get("udp") is False and t in ("ss",):
         o["network"] = "tcp"
+    if p.get("dialer-proxy") and p["dialer-proxy"] != "DIRECT":  # 链式代理（SOCKS5 落地的前置节点）
+        o["detour"] = str(p["dialer-proxy"])
     return o
 '''
 _SRC['shunt.sb_rules'] = '''"""规则：mihomo 规则字符串 → sing-box 路由规则"""
@@ -4935,7 +4995,7 @@ from .base import (
 from .errlog import log_err
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
 from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes
-from .mihomo import BUILTIN_GEO, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
+from .mihomo import BUILTIN_GEO, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
 from .sb_yaml import text_lines, trim_line, yaml_lite
@@ -4964,16 +5024,24 @@ def build_singbox(d):
     outbounds = group_out + [o for o in outbounds if o["type"] not in gt] + [{"type": "direct", "tag": "DIRECT"}]
     policies = {o["tag"] for o in outbounds} | BUILTIN_POLICIES
     inbounds = sb_inbounds(d, v6, warn)
+    ld_in = [{"type": "mixed", "tag": l["name"], "listen": "127.0.0.1", "listen_port": l["port"]}
+             for l in cfg.get("listeners") or [] if l.get("proxy") in policies]  # SOCKS5 落地检测入站（预览）
+    inbounds += ld_in
     in_tags = {i["tag"] for i in inbounds}
     rule_sets = sb_rule_sets(cfg, warn)
     tr = SBRules(cfg, in_tags, alias, rule_sets)
     tr.warn = warn
     tr.ip_sets = sb_ip_sets(tr.ip_sets, rule_sets)
     # 路由规则
-    route_rules = []
-    if d.get("sniffer", True) or dns_cfg(d)["mode"] == "fake-ip":
+    route_rules = [{"inbound": [i["tag"] for i in ld_in if i["tag"] == l["name"]], "action": "route", "outbound": l["proxy"]}
+                   for l in cfg.get("listeners") or [] if l.get("proxy") in policies]
+    sniff = d.get("sniffer", True) or dns_cfg(d)["mode"] == "fake-ip"
+    if sniff:
         route_rules.append({"action": "sniff"})
-    route_rules += [{"inbound": ["dns-in"], "action": "hijack-dns"}, {"protocol": ["dns"], "action": "hijack-dns"},
+    # protocol: dns 要靠 sniff 识别：嗅探关闭时（redir-host）TUN 收到的 53 端口 DNS 以前不被劫持、直接按 IP 分流发出去，
+    # 不经面板 DNS（广告拦截 / 分流 DNS 失效）。与 mihomo 的 dns-hijack any:53 一致，改按目标端口 53 劫持
+    route_rules += [{"inbound": ["dns-in"], "action": "hijack-dns"},
+                    {"protocol": ["dns"], "action": "hijack-dns"} if sniff else {"port": [53], "action": "hijack-dns"},
                     {"clash_mode": "Direct", "action": "route", "outbound": "DIRECT"}]
     route_rules += sb_global_direct(d)
     route_rules.append({"clash_mode": "Global", "action": "route", "outbound": G_SEL if G_SEL in policies else "DIRECT"})
@@ -5014,6 +5082,8 @@ def build_singbox(d):
     route_rules = sb_prune_rules(route_rules, missing)
     dns["rules"] = sb_prune_rules(dns["rules"], missing)
     mode = {"global": "Global", "direct": "Direct"}.get(d.get("mode"), "Rule")
+    endpoints = [o for o in outbounds if o.get("type") == "wireguard"]  # WireGuard（WARP 等）在 sing-box 里是 endpoint
+    outbounds = [o for o in outbounds if o.get("type") != "wireguard"]
     conf = {
         "log": {"level": "info", "timestamp": True},
         "dns": dns,
@@ -5025,6 +5095,8 @@ def build_singbox(d):
                                        "default_mode": mode},
                          "cache_file": {"enabled": True, "path": os.path.join(SB_DIR, "cache.db"), "store_fakeip": True}},
     }
+    if endpoints:
+        conf["endpoints"] = endpoints
     need = {tag: rsd for tag, rsd in rule_sets.items() if rsd["kind"] != "inline"}
     return conf, list(dict.fromkeys(warn)), need
 
@@ -5967,9 +6039,12 @@ def sb_has_gvisor(path=None):
 
 
 def tun_stack_tip():
-    """TUN 起不来时的协议栈建议：没编译 gVisor 的 sing-box 选 gvisor 会被自动改掉，建议了也没用"""
-    if active_core() == "singbox" and not sb_has_gvisor():
-        return "换用「默认」或 system 协议栈" if sb_tun_native() else "换用 system 协议栈"
+    """TUN 起不来时的协议栈建议：没编译 gVisor 的内核选 gvisor 会被自动改掉，建议了也没用"""
+    if active_core() == "singbox":
+        if not sb_has_gvisor():
+            return "换用「默认」或 system 协议栈" if sb_tun_native() else "换用 system 协议栈"
+    elif not mh_has_gvisor():
+        return "换用 system 协议栈"
     return "换用 gvisor 协议栈"
 OFFICIAL_VER = re.compile(r"^\\d+\\.\\d+\\.\\d+(?:-(?:alpha|beta|rc)\\.\\d+)?$")
 
@@ -6682,7 +6757,6 @@ import json
 import os
 import re
 import shutil
-import tarfile
 import tempfile
 import time
 
@@ -6751,6 +6825,7 @@ def create(version=None, auto=False, keep=None):
         # 一开始就以 600 创建（不经过默认 umask 的 644 窗口）；O_EXCL 防止同名覆盖
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
+            import tarfile  # 按需导入：只有备份 / 恢复用到
             with os.fdopen(fd, "wb") as fo, tarfile.open(fileobj=fo, mode="w:gz") as tf:
                 for kind, rel in _FILES:
                     src = os.path.join(BASE, rel) if kind == "base" else rel
@@ -6838,6 +6913,7 @@ def restore(name, check_data=None, apply_data=None):
     if not os.path.isfile(fp):
         return False, "备份不存在"
     try:
+        import tarfile
         with tarfile.open(fp, "r:gz") as tf:
             members = tf.getmembers()
             # 安全检查：不允许绝对路径、..、symlink/hardlink
@@ -9119,6 +9195,401 @@ def check_nodes():
         write_json(NOTIFY_FILE, st)
         notify("⚠️ 节点选择中的所有节点均测速超时，请检查订阅或网络" if all_down else "✅ 节点已恢复可用")
 '''
+_SRC['shunt.landing'] = '''"""SOCKS5 落地（预览版）：指定国家的出口 IP。
+
+每个落地是一个 socks5 手动节点，可选「前置节点」（默认直连；旧数据里有 WARP 节点时默认它，也可选其它手动节点、地区竞技组），
+mihomo 用 dialer-proxy、sing-box 用 detour 做链式代理：设备 → 前置节点 → SOCKS5 落地 → 目标网站。
+落地节点和 WARP 一样直接进 🚀 节点选择 / 🖐️ 手动选择 / 各分流组，不进地区竞技和全局自动。
+检测：每个落地在本机 127.0.0.1:<LD_PORT0+序号> 开一个只走该落地的 mixed 入站，curl 经它查出口 IP / 国家 / 延迟。
+"""
+import json, re, shlex, time, urllib.parse
+
+from .sysopt import sh
+
+LD_PORT0 = 17900  # 检测入站端口起点（只监听 127.0.0.1）
+LD_MAX = 50
+DIRECT = "DIRECT"
+_NAME_BAD = re.compile(r"[,:#\\n\\r\\"']")
+
+
+def parse_line(line):
+    """socks5://user:pass@host:port#名称 / host:port:user:pass / host:port → dict；空行返回 None"""
+    s = str(line or "").strip()
+    if not s or s.startswith("//"):
+        return None
+    name = ""
+    if "://" in s:
+        u = urllib.parse.urlsplit(s)
+        if u.scheme.lower() not in ("socks5", "socks5h", "socks"):
+            raise ValueError(f"只支持 socks5 链接：{s[:60]}")
+        try:
+            host, port = u.hostname or "", u.port or 0
+        except ValueError:
+            host, port = "", 0
+        user, pw = urllib.parse.unquote(u.username or ""), urllib.parse.unquote(u.password or "")
+        name = urllib.parse.unquote(u.fragment or "")
+    else:
+        parts = s.split(":")
+        if len(parts) not in (2, 4):
+            raise ValueError(f"格式不对：{s[:60]}（应为 socks5://用户:密码@地址:端口 或 地址:端口:用户:密码）")
+        host, port = parts[0], parts[1]
+        user, pw = (parts[2], parts[3]) if len(parts) == 4 else ("", "")
+    return {"name": name, "server": host, "port": port, "username": user, "password": pw}
+
+
+def clean(b, taken=()):
+    """校验一个落地；返回规范化后的 dict"""
+    host = str(b.get("server") or "").strip().strip("[]")
+    if not host or len(host) > 253 or any(c in host for c in " /\\\\@,#"):
+        raise ValueError("落地地址不对")
+    try:
+        port = int(b.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if not 1 <= port <= 65535:
+        raise ValueError(f"落地 {host} 的端口不对")
+    name = str(b.get("name") or "").strip()[:40] or f"落地-{host}"
+    if _NAME_BAD.search(name):
+        raise ValueError("落地名称不能包含逗号、冒号、# 或引号")
+    if name in taken:
+        raise ValueError(f"已有同名节点「{name}」，换个名称")
+    via = str(b.get("via") or "").strip() or DIRECT
+    return {"name": name, "server": host, "port": port, "username": str(b.get("username") or "")[:200],
+            "password": str(b.get("password") or "")[:200], "via": via[:80]}
+
+
+def node_proxy(x):
+    p = {"name": x["name"], "type": "socks5", "server": x["server"], "port": x["port"], "udp": True}
+    if x.get("username"):
+        p["username"], p["password"] = x["username"], x.get("password") or ""
+    if x.get("via") and x["via"] != DIRECT:
+        p["dialer-proxy"] = x["via"]
+    return p
+
+
+def sync_nodes(d):
+    """把 d["landings"] 写成手动节点（先删掉旧的落地节点）"""
+    d["nodes"] = [n for n in d.get("nodes") or [] if not n.get("landing")]
+    for x in d.get("landings") or []:
+        d["nodes"].append({"link": "", "proxy": node_proxy(x), "landing": True})
+
+
+def chain_names(d):
+    """WARP 与落地节点名：直接进节点选择，不进地区竞技 / 全局自动"""
+    return [n["proxy"]["name"] for n in d.get("nodes") or [] if n.get("warp") or n.get("landing")]
+
+
+def fix_dialers(proxies, valid):
+    """前置节点已不存在（节点被删 / 改名）时去掉 dialer-proxy，免得整份配置加载失败"""
+    for p in proxies:
+        if p.get("dialer-proxy") and p["dialer-proxy"] not in valid:
+            p.pop("dialer-proxy")
+
+
+def listeners(d):
+    """[(落地节点名, 检测端口)]"""
+    return [(x["name"], LD_PORT0 + i) for i, x in enumerate((d.get("landings") or [])[:LD_MAX])]
+
+
+def via_options(d, cfg=None):
+    """可选的前置：直连、WARP 等非落地手动节点、地区竞技组、全局自动"""
+    out = [DIRECT] + [n["proxy"]["name"] for n in d.get("nodes") or [] if not n.get("landing")]
+    if cfg:
+        from .base import G_AUTO
+        race = ("url-test", "smart", "load-balance", "fallback")
+        out += [g["name"] for g in cfg.get("proxy-groups") or [] if g.get("type") in race and g["name"] not in out]
+        if G_AUTO not in out and any(g["name"] == G_AUTO for g in cfg.get("proxy-groups") or []):
+            out.append(G_AUTO)
+    return out
+
+
+def default_via(d):
+    w = d.get("warp")
+    return w["name"] if w else DIRECT
+
+
+# ---------------------------------------------------------------- 检测
+TEST_URL = "http://ip-api.com/json/?fields=status,query,country,countryCode,city&lang=zh-CN"
+
+
+def check_one(port, timeout=12):
+    t0 = time.time()
+    rc, out = sh(f"curl -s -m {int(timeout)} -x socks5h://127.0.0.1:{int(port)} {shlex.quote(TEST_URL)}", timeout=timeout + 3)
+    ms = int((time.time() - t0) * 1000)
+    try:
+        j = json.loads(out)
+    except ValueError:
+        j = {}
+    if rc != 0 or j.get("status") != "success":
+        return {"ok": False, "error": "连不上（检查落地地址 / 账号，或前置节点是否可用）" if rc else "出口查询失败"}
+    rc2, o2 = sh(f"curl -s -o /dev/null -m 8 -w '%{{time_total}}' -x socks5h://127.0.0.1:{int(port)} http://www.gstatic.com/generate_204", timeout=11)
+    try:
+        delay = int(float(o2) * 1000) if rc2 == 0 else ms
+    except ValueError:
+        delay = ms
+    return {"ok": True, "ip": j.get("query"), "country": j.get("country"), "cc": j.get("countryCode"), "city": j.get("city"), "delay": delay}
+
+
+def check(d, names=None):
+    ls = [(n, p) for n, p in listeners(d) if not names or n in names]
+    from concurrent.futures import ThreadPoolExecutor  # 按需导入：只有检测落地节点时用到
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        res = list(ex.map(lambda np: check_one(np[1]), ls))
+    return {n: r for (n, _), r in zip(ls, res)}
+
+
+# ---------------------------------------------------------------- 接口（/api/landing）
+def view(d):
+    out = []
+    for x in d.get("landings") or []:
+        y = {k: x.get(k) for k in ("name", "server", "port", "username", "via")}
+        y["has_password"] = bool(x.get("password"))
+        out.append(y)
+    return out
+
+
+def api_get():
+    from .data import load
+    from .mihomo import build_config
+    d = load()
+    try:
+        opts = via_options(d, build_config(d))
+    except Exception:
+        opts = via_options(d)
+    return 200, {"landings": view(d), "via_options": opts, "default_via": default_via(d)}
+
+
+def _others(d, skip=()):
+    return {(n.get("proxy") or {}).get("name") for n in d.get("nodes") or [] if not n.get("landing")} | set(skip)
+
+
+def api_post(b):
+    """action: add（text 批量 / 单个字段）| edit（old_name + 字段）| delete（name）| check（names 可空）"""
+    from .data import load, update
+    from .core import reload_core
+    act = b.get("action")
+    d = load()
+    cur = list(d.get("landings") or [])
+    if act == "check":
+        if not cur:
+            return 400, {"message": "还没有落地"}
+        from .notify import core_alive
+        if not core_alive():
+            return 409, {"message": "核心没在运行，先启动核心再检测"}
+        names = b.get("names") if isinstance(b.get("names"), list) else None
+        return 200, {"results": check(d, names)}
+    try:
+        if act == "add":
+            via = str(b.get("via") or "").strip() or default_via(d)
+            items = []
+            if str(b.get("text") or "").strip():
+                for line in str(b["text"]).splitlines():
+                    x = parse_line(line)
+                    if x:
+                        items.append(x)
+            else:
+                items.append({k: b.get(k) for k in ("name", "server", "port", "username", "password")})
+            if not items:
+                return 400, {"message": "没有可添加的落地"}
+            taken = _others(d) | {x["name"] for x in cur}
+            new = []
+            for x in items:
+                x["via"] = via
+                if not x.get("name"):  # 批量导入没写名称：落地-地址，重复时加序号
+                    base, i = f"落地-{str(x.get('server') or '').strip('[]')}", 2
+                    x["name"] = base
+                    while x["name"] in taken:
+                        x["name"], i = f"{base}-{i}", i + 1
+                y = clean(x, taken)
+                taken.add(y["name"])
+                new.append(y)
+            if len(cur) + len(new) > LD_MAX:
+                return 400, {"message": f"落地最多 {LD_MAX} 个"}
+            nl = cur + new
+            msg = f"已添加 {len(new)} 个落地，已加入节点选择和各分流组"
+        elif act == "edit":
+            old = str(b.get("old_name") or "")
+            i = next((k for k, x in enumerate(cur) if x["name"] == old), -1)
+            if i < 0:
+                return 404, {"message": "找不到这个落地"}
+            x = dict(cur[i])
+            for k in ("name", "server", "port", "username", "via"):
+                if b.get(k) not in (None, ""):
+                    x[k] = b[k]
+            if "username" in b and not str(b.get("username") or "").strip():
+                x["username"], x["password"] = "", ""
+            elif str(b.get("password") or ""):
+                x["password"] = b["password"]
+            y = clean(x, _others(d) | {z["name"] for k, z in enumerate(cur) if k != i})
+            nl = cur[:i] + [y] + cur[i + 1:]
+            msg = f"落地「{y['name']}」已保存"
+        elif act == "delete":
+            name = str(b.get("name") or "")
+            nl = [x for x in cur if x["name"] != name]
+            if len(nl) == len(cur):
+                return 404, {"message": "找不到这个落地"}
+            msg = f"已删除落地「{name}」"
+        else:
+            return 400, {"message": "未知操作"}
+    except ValueError as e:
+        return 400, {"message": str(e)}
+    names = {y["name"] for y in nl}
+    for y in nl:
+        if y["via"] in names:
+            return 400, {"message": f"落地「{y['name']}」的前置不能是落地节点"}
+    prev = update(lambda d: (d.__setitem__("landings", nl), sync_nodes(d)))
+    ok, m = reload_core(prev)
+    return (200 if ok else 500), {"message": msg if ok else m}
+'''
+_SRC['shunt.gguard'] = '''"""Google 专用组（预览）：Google / YouTube / Gemini / Play 只走名字里不带中国 / 中转等字样的节点。
+
+- 按节点名排除：中国 / 回国 / 中转 / 国内 / China / CN / 🇨🇳
+- 组：🛡️ Google 专用（选择，默认 🛡️ Google 日本 → 🛡️ Google 美国 → 🛡️ Google 自动，也可手动选具体节点）
+  🔍 Google / 📹 YouTube 的第一个选项是它，升级后自动切过去一次；Gemini / AI Studio 等域名走 🔍 Google
+"""
+import os, time
+from urllib.parse import quote
+
+G_GOOG = "🛡️ Google 专用"
+G_GJP, G_GUS, G_GAUTO = "🛡️ Google 日本", "🛡️ Google 美国", "🛡️ Google 自动"
+L, R = "(?<![A-Za-z])", "(?![A-Za-z])"
+# 「中国香港 / 中国台湾 / 中国澳门」出口不在大陆，「CN2 GIA」是电信线路名（出口在境外），都不算
+HMT = "(?!香港|台湾|臺灣|澳门|澳門)"
+CN_RX = f"🇨🇳|(?i:中国{HMT}|中國{HMT}|回国|回國|中转|中轉|国内|國內|China)|{L}CN(?!2){R}"
+GEMINI = ["gemini.google.com", "aistudio.google.com", "generativelanguage.googleapis.com", "bard.google.com",
+          "notebooklm.google.com", "notebooklm.google", "deepmind.google", "makersuite.google.com",
+          # Gemini / AI Studio / NotebookLM 网页的后端接口：以前没列，落到 category-ai-!cn 走 🤖 AI 服务，同一会话被拆到两个出口
+          "gemini.google", "geminiweb-pa.clients6.google.com", "geminiweb-pa.clients.google.com",
+          "alkalimakersuite-pa.clients6.google.com", "webchannel-alkalimakersuite-pa.clients6.google.com",
+          "alkalicore-pa.clients6.google.com", "notebooklm.googleapis.com", "notebooklm-pa.googleapis.com", "notebook.google"]
+
+
+def enabled(d):
+    return os.environ.get("PANEL_NO_GGUARD") != "1" and (d.get("google_guard") or {}).get("on", True) is not False
+
+
+def orig_names(d):
+    """订阅节点名集合；有订阅还不知道节点时返回 None"""
+    from .groups import provider_nodes, sb_sub_cache
+    from .sb_common import active_core
+    out = set()
+    for s in d.get("subs") or []:
+        if active_core(d) == "singbox":
+            c = sb_sub_cache(s["name"])
+            if not c.get("nodes"):
+                return None
+            out |= {str(p.get("name") or "") for p in c["nodes"]}
+        else:
+            pn = provider_nodes()
+            if s["name"] not in pn:
+                return None
+            out |= set(pn[s["name"]] or [])
+    return out
+
+
+def groups(d, pool, warpn, use, with_src, gopts, race, rx, regions):
+    """返回组列表；pool 为手动节点（不含 WARP / 落地）；orig 为订阅节点名集合（None = 不知道）。
+    日本 / 美国组只在确实有可用节点时生成（空组在内核里等于直连，Google 直连必然失败）"""
+    cr = rx(CN_RX)
+    clean = [n for n in pool if not cr.search(n)]
+    if not clean and not use:
+        return []
+    try:
+        orig = orig_names(d) if use else set()
+    except Exception:
+        orig = None
+    known = None if orig is None else clean + [n for n in orig if not cr.search(n)]
+    exc = CN_RX
+    out = []
+    reg = dict(regions)
+    for gname, rname in ((G_GJP, "🇯🇵 日本"), (G_GUS, "🇺🇸 美国"), (G_GAUTO, None)):
+        f = reg.get(rname) if rname else None
+        r = rx(f) if f else None
+        if r and known is not None and not any(r.search(n) for n in known):
+            continue
+        g = with_src(dict({"name": gname}, **gopts(race)), [n for n in clean if not r or r.search(n)] or None)
+        if use:
+            if f:
+                g["filter"] = f
+            g["exclude-filter"] = exc
+        if not g.get("proxies") and not g.get("use"):
+            g["proxies"] = ["COMPATIBLE"]
+        out.append(g)
+    sel = with_src({"name": G_GOOG, "type": "select"}, [g["name"] for g in out] + list(warpn) + clean)
+    if use:
+        sel["exclude-filter"] = exc
+    return [sel] + out
+
+
+def chain(group):
+    """组当前实际用的节点链：🔍 Google → 🛡️ Google 专用 → 🛡️ Google 日本 → 节点名"""
+    from .corehttp import core_json
+    out, cur = [], group
+    for _ in range(6):
+        j = core_json("/proxies/" + quote(cur, safe=""), timeout=5) or {}
+        nxt = j.get("now")
+        if not nxt or nxt in out:
+            break
+        out.append(nxt)
+        cur = nxt
+    return out
+
+
+def _switch_once(d):
+    """🔍 Google / 📹 YouTube 切到 🛡️ Google 专用：每个版本只做一次（init 记版本号，之后尊重用户的选择）；
+    预览 .749 不管切没切成功都记了 init=1，切失败的设备一直停在旧选择，所以 init<2 再检查一遍"""
+    from .base import G_GG, G_YT
+    from .corehttp import core
+    from .data import update
+    if int((d.get("google_guard") or {}).get("init") or 0) >= 2:
+        return
+    ok = True
+    for g in (G_GG, G_YT):
+        if (chain(g) or [None])[0] == G_GOOG:
+            continue
+        code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": G_GOOG}, timeout=5)
+        ok = ok and code in (200, 204)
+    if not ok:  # 没切成功（组不在 / 内核刚重启）：不记 init，下一轮再试
+        return
+    update(lambda x: x.setdefault("google_guard", {}).__setitem__("init", 2))
+
+
+def loop():
+    """升级后把 🔍 Google / 📹 YouTube 切到 🛡️ Google 专用一次；没切成功 10 分钟后再试，成功后退出"""
+    time.sleep(60)
+    while True:
+        try:
+            from .data import load
+            from .notify import core_alive
+            d = load()
+            if int((d.get("google_guard") or {}).get("init") or 0) >= 2:
+                return
+            if enabled(d) and core_alive():
+                _switch_once(d)
+        except Exception as e:
+            from .errlog import log_err
+            log_err("Google 专用组切换", e)
+        time.sleep(600)
+
+
+def api_get():
+    from .data import load
+    d = load()
+    g = d.get("google_guard") or {}
+    return 200, {"on": enabled(d), "group": G_GOOG, "exclude": CN_RX, "init": g.get("init") or 0}
+
+
+def api_post(b):
+    """action: on / off"""
+    from .data import update
+    from .core import reload_core
+    act = b.get("action")
+    if act in ("on", "off"):
+        prev = update(lambda x: x.setdefault("google_guard", {}).__setitem__("on", act == "on"))
+        ok, m = reload_core(prev)
+        return (200 if ok else 500), {"message": "已" + ("开启" if act == "on" else "关闭") if ok else m}
+    return 400, {"message": "未知操作"}
+'''
 _SRC['shunt.latency'] = '''"""节点延迟缓存"""
 import base64, json, os, re, threading, time, urllib.request, urllib.error
 from urllib.parse import quote
@@ -9625,6 +10096,23 @@ def ck_youtube():
     return {"ok": False, "text": f"未知（HTTP {code}）", "region": region}
 
 
+def ck_google():
+    """Google 判定的地区（YouTube Premium 页里的 countryCode，跳到 google.cn 即中国）+ 🔍 Google 组当前用的节点"""
+    from .base import G_GG
+    from .gguard import chain
+    _, _, body = fetch("https://www.youtube.com/premium", headers={"Cookie": "CONSENT=YES+1"})
+    m = re.search(r'"countryCode":"([A-Z]{2})"', body) or re.search(r'"INNERTUBE_CONTEXT_GL":"([A-Z]{2})"', body)
+    region = "CN" if "www.google.cn" in body else (m.group(1) if m else "")
+    try:
+        via = chain(G_GG)
+    except Exception:
+        via = []
+    node = via[-1] if via else "未知"
+    if not region:
+        return {"ok": False, "text": "无法判断（经 " + node + "）"}
+    return {"ok": region != "CN", "text": ("被判为中国，经 " if region == "CN" else "经 ") + node, "region": region}
+
+
 def ck_gemini():
     code, _, body = fetch("https://gemini.google.com/")
     if re.search(r'45631641(?:,null,true|\\\\?":true)', body):
@@ -9635,7 +10123,7 @@ def ck_gemini():
 
 
 UNLOCK = [("出口位置", ck_egress), ("Netflix", ck_netflix), ("ChatGPT", ck_chatgpt), ("Disney+", ck_disney),
-          ("YouTube Premium", ck_youtube), ("Gemini", ck_gemini)]
+          ("YouTube Premium", ck_youtube), ("Gemini", ck_gemini), ("Google 定位", ck_google)]
 
 
 def unlock_test():
@@ -10642,6 +11130,8 @@ class AdStats:
         self.data.setdefault("hours", {})
         self.data.setdefault("dns5", {})
         self.dns_recent = deque(self.data.get("dns_recent") or [], maxlen=60)  # 最近 60 次原始耗时，刚启动时画曲线用
+        # 最近 100 条 DNS 查询结果（sing-box debug 日志）：c 缓存命中 / u 上游应答 / n 查无此名 / f 其他失败
+        self.dnsq = deque(str(self.data.get("dnsq") or "")[-100:], maxlen=100)
         self.saved = time.time()
         self._req_batch = 0  # 未持锁攒批的 req 增量（sink 系单线程调用，无竞争）
 
@@ -10707,6 +11197,7 @@ class AdStats:
     SB_FAKE = re.compile(r"router: found fakeip domain: (\\S+)")
     SB_REJ = re.compile(r"router: match\\[\\d+\\] .*?\\brule_set=(ad-[0-9a-z]+).*=> reject")
     SB_QN = re.compile(r"dns: exchange (\\S+?)\\.? IN ")
+    SB_DQ = re.compile(r"^dns: (cached|exchanged) \\S+ ([A-Z]+) \\d+$")
     SB_DREJ = re.compile(r"dns: match\\[\\d+\\] .*?\\brule_set=(ad-[0-9a-z]+).*=> (?:predefined|reject)")
 
     def sink_sb(self, line):
@@ -10748,6 +11239,13 @@ class AdStats:
             if m:
                 self.hit(hosts.pop(cid, "?"), m.group(1))
         elif body.startswith("dns: "):
+            q = self.SB_DQ.match(body)
+            if q:  # 每次查询的汇总行「dns: cached|exchanged 域名 RCODE TTL」（逐条记录行带 IN，不匹配）
+                rc = q.group(2)
+                self.__dict__.setdefault("dnsq", deque(maxlen=100)).append("n" if rc == "NXDOMAIN" else "f" if rc != "NOERROR" else "c" if q.group(1) == "cached" else "u")
+                return
+            if body.startswith(("dns: exchange failed", "dns: lookup failed")):
+                self.__dict__.setdefault("dnsq", deque(maxlen=100)).append("f")
             m = self.SB_QN.search(body)
             if m:
                 hosts["q" + cid] = m.group(1)
@@ -10768,6 +11266,7 @@ class AdStats:
             dk = sorted(self.data["dns5"])[-288:]
             self.data["dns5"] = {k: self.data["dns5"][k] for k in dk}
             self.data["dns_recent"] = list(self.dns_recent)
+            self.data["dnsq"] = "".join(getattr(self, "dnsq", ()))
             for b in self.data["days"].values():
                 b["top"] = dict(sorted(b["top"].items(), key=lambda x: -x[1])[:500])
             write_json(AB_STATS_FILE, self.data)
@@ -10783,6 +11282,7 @@ class AdStats:
             hours = copy.deepcopy(self.data["hours"])
             d5 = dict(self.data["dns5"])
             recent = list(self.dns_recent)
+            dq = "".join(getattr(self, "dnsq", ()))
         b = days.get(time.strftime("%Y-%m-%d"), {"count": 0, "top": {}, "lists": {}})
         now = int(time.time() // 3600 * 3600)
         h24 = []
@@ -10793,7 +11293,9 @@ class AdStats:
         top = [(k, v) for k, v in b["top"].items() if k != "?" and not is_fake_ip(k)]  # 旧版本记下的 Fake-IP 也不显示
         return {"today": b["count"], "top": sorted(top, key=lambda x: -x[1])[:20], "lists": b["lists"],
                 "days": [{"date": k, "count": days[k]["count"]} for k in sorted(days)], "hours": h24,
-                "dns": self.dns_report(d5, recent)}
+                "dns": self.dns_report(d5, recent),
+                "dnsq": {"total": len(dq), "cached": dq.count("c"), "upstream": dq.count("u"), "nx": dq.count("n"), "fail": dq.count("f"),
+                         "core": active_core()}}
 
     @staticmethod
     def dns_report(d5, recent):
@@ -13879,7 +14381,8 @@ import copy, os, re, ssl, threading, time
 from urllib.parse import parse_qs
 
 from .errlog import log_err
-from . import stats
+from . import landing, stats
+from . import gguard
 from .base import (
     CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, KEY, LOCK, MIHOMO_BIN, PANEL_VERSION, PROXY_MODES, SMART_BIN, TUN_STACKS, UPD_STATE, upd_begin,
     upd_busy_msg
@@ -13887,7 +14390,7 @@ from .base import (
 from .data import config_version, load, migrate_names, normalize, save, update
 from .links import q1
 from .groups import provider_rev
-from .mihomo import dns_cfg, safe_dev
+from .mihomo import dns_cfg, mh_bin, mh_has_gvisor, safe_dev
 from .core import reload_core
 from .corehttp import core
 from .sb_common import CORES, SB_STATE, active_core, core_conf_path
@@ -13975,7 +14478,7 @@ class SysAPI:
         out = {"running": "started" in st or code == 200, "version": version, "groups": groups, "group_meta": gmeta,
                "nodes": state_nodes(d), "default_exclude": DEFAULT_EXCLUDE, "sched_events": list(SCHED["events"])[:20],
                "panel_version": PANEL_VERSION, "update_channel": "preview" if d.get("update_channel") == "preview" else "stable", "core": active_core(d), "sb_fork": sb_is_fork(),
-               "tun_gvisor": active_core(d) != "singbox" or sb_has_gvisor(),
+               "tun_gvisor": sb_has_gvisor() if active_core(d) == "singbox" else mh_has_gvisor(mh_bin(active_core(d))),
                "tun_native": active_core(d) == "singbox" and sb_tun_native(),
                "wd": {"status": WD["status"], "last_check": WD["last_check"], "events": list(WD["events"]),
                       "counts": wd_counts(), "max": WD_EVENTS_MAX}}
@@ -14221,6 +14724,22 @@ class SysAPI:
         d = load()
         ok, info = self_update(True, d.get("gh_proxy") or "", d.get("update_channel") or "stable")
         return self.send(200 if ok else 500, info)
+
+    @api_route("/api/gguard", "GET")
+    def api_gguard_get(self, m, p, b, q):
+        return self.send(*gguard.api_get())
+
+    @api_route("/api/gguard", "POST")
+    def api_gguard_post(self, m, p, b, q):
+        return self.send(*gguard.api_post(b if isinstance(b, dict) else {}))
+
+    @api_route("/api/landing", "GET")
+    def api_landing_get(self, m, p, b, q):
+        return self.send(*landing.api_get())
+
+    @api_route("/api/landing", "POST")
+    def api_landing_post(self, m, p, b, q):
+        return self.send(*landing.api_post(b if isinstance(b, dict) else {}))
 
     @api_route("/api/stats", "GET")
     def api_stats_get(self, m, p, b, q):
@@ -14975,7 +15494,7 @@ import ipaddress, os, re, signal, ssl, sys, threading, time
 
 from .svcmigrate import svc_migrate
 from .errlog import log_err
-from . import adblock, stats
+from . import adblock, gguard, stats
 from .base import CERT, KEY, PANEL_DIR, PORT
 from . import base
 from .data import load, update
@@ -15159,7 +15678,7 @@ def main():
     STATS = stats.STATS = Stats()
     AD_STATS = adblock.AD_STATS = AdStats()
     for target, args in ((STATS.loop, ()), (monitor_loop, ()), (AD_STATS.loop, ()), (AD_STATS.dns_loop, ()), (live_loop, ("/traffic",)),
-                         (live_loop, ("/memory",)), (log_loop, ()), (sched_loop, ()), (rdns_loop, ()), (startup_migrate, ())):
+                         (live_loop, ("/memory",)), (log_loop, ()), (sched_loop, ()), (rdns_loop, ()), (startup_migrate, ()), (gguard.loop, ())):
         threading.Thread(target=target, args=args, daemon=True).start()
     try:
         opt_migrate_confd()
@@ -15194,8 +15713,10 @@ def main():
 '''
 
 
-class _Importer(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-    """从 _SRC 加载 shunt 包；把源码登记到 linecache，异常堆栈能显示出错的那一行"""
+class _Importer:
+    """从 _SRC 加载 shunt 包；把源码登记到 linecache，异常堆栈能显示出错的那一行。
+    不继承 importlib.abc 的基类（meta_path 只要求 find_spec / create_module / exec_module）：
+    import importlib.abc 会连带导入 importlib.resources、pathlib、inspect、typing 等约 20 个用不到的模块"""
 
     @staticmethod
     def path(name):
@@ -15212,7 +15733,9 @@ class _Importer(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def exec_module(self, mod):
         fn, src = self.path(mod.__name__), _SRC[mod.__name__]
         mod.__file__ = fn
-        linecache.cache[fn] = (len(src), None, src.splitlines(True), fn)
+        # 惰性登记（linecache 的 lazycache 格式）：要显示异常堆栈时才把源码拆成行；
+        # 以前启动时就为全部模块拆好，常驻约 1.5 MB 的行字符串
+        linecache.cache[fn] = (lambda src=src: src,)
         code = _CODES.get(mod.__name__)
         exec(code if code is not None else compile(src, fn, "exec"), mod.__dict__)
 
@@ -15259,6 +15782,7 @@ sys.meta_path.insert(0, _Importer())
 import shunt  # noqa: E402
 
 shunt.load(os.path.abspath(__file__))
+_CODES.clear()  # 全部模块已加载：模块顶层字节码不再需要（之后才导入的模块照旧现编译）
 for _m in shunt._loaded:  # 兼容 `import server` / runpy 的脚本（selftest.sh、离线包构建）：所有名字在这里都能拿到
     globals().update((k, v) for k, v in vars(_m).items() if not k.startswith("__") and k != "_link")
 
