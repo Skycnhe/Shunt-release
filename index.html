@@ -208,6 +208,14 @@ pre{background:var(--pre);padding:12px;border-radius:14px;max-height:65vh;overfl
 .stile .sv{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:2px}.stile .sv small{font-size:12px;font-weight:500;color:var(--sub);margin-left:3px}
 .dft{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));margin-top:12px}
 @media (min-width:721px){.dft{grid-template-columns:repeat(3,minmax(0,1fr))}.dfrank{grid-column:1/-1}}
+/* 桌面：「平均解析耗时」标签不换行（以前副标题挤压时被压成一列竖字），副标题放不下就换到下一行并省略 */
+@media (min-width:721px){.dfc .k.row>.sp{flex:1 0 auto;white-space:nowrap}.dfc .k.row>.mut{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  /* 内核版本表：名称 / 版本列可换行，操作列不换行且不被裁掉（以前卡片窄时「回滚 / 更新」被挤出可视区） */
+  #sw-cache td:nth-child(-n+3){white-space:normal;overflow-wrap:anywhere}#sw-cache td:last-child{width:1%;white-space:nowrap}}
+/* 手机：同上——「平均解析耗时」标签不换行、副标题换行省略；内核版本表每行拆两层（名称/版本/最新 + 操作按钮另起一行），不再横向滑动 */
+@media (max-width:720px){.dfc .k.row>.sp{flex:1 0 auto;white-space:nowrap}.dfc .k.row>.mut{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  #sw-cache tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) minmax(0,.9fr);border-bottom:1px solid var(--line)}#sw-cache tr:last-child{border-bottom:0}
+  #sw-cache th,#sw-cache td{border-bottom:0;white-space:normal;overflow-wrap:anywhere;min-width:0}#sw-cache th:last-child{display:none}#sw-cache td:last-child{grid-column:1/-1;padding-top:0}}
 .dfc{margin:0;padding:14px 16px;min-width:0}.dfc .k{color:var(--sub);font-size:12.5px}.dfc .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;margin:4px 0 6px}.dfc .v small{font-size:12px;font-weight:500;color:var(--sub);margin-left:3px}
 .spk{display:block;width:100%;height:64px}
 .dtop{margin-top:6px}.dti{padding:4px 0;font-size:12.5px}.dti b{font-weight:600;font-variant-numeric:tabular-nums;margin-left:8px}
@@ -241,7 +249,7 @@ nav .ico{display:none}nav .more{display:none}
   .hstats{grid-template-columns:repeat(4,minmax(0,1fr))}.hstats .chip:nth-child(n+3){display:none}.hstats>.chip,.vchips .chip{grid-column:auto}.vchips .chip{flex-direction:column;align-items:flex-start;justify-content:center;gap:0}
   #ov{display:flex;flex-direction:column}#ov>.ovpair{display:contents}
   #ov .card,#ov .g4{margin:0 0 10px}
-  #ov .o1{order:1}#ov .o2{order:2}#ov .o3{order:3}#ov .o4{order:4}#ov .o5{order:5}#ov .o6{order:6}#ov .o7{order:7}#ov .o8{order:8}
+  #ov .o1{order:1}#ov .o2{order:2}#ov .o3{order:3}#ov .o4{order:4}#ov .o5{order:5}#ov .o6{order:6}#ov .o7{order:7}#ov .o8{order:8}#ov .o9{order:9}
   .spd b{font-size:19px}
   .stiles{grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}.stile{flex-wrap:wrap;padding:10px 12px;gap:8px}.stile .fv{width:34px;height:34px;border-radius:10px;font-size:15px}.stile .fv img{width:20px;height:20px}
   .stile .si{flex:1;min-width:0}.stile .sv{font-size:18px}.stile .sb{order:3;flex-basis:100%;height:26px}.dft{grid-template-columns:1fr 1fr;gap:10px}.dfc{padding:12px}.dfc .v{font-size:19px}
@@ -365,6 +373,16 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
 .authwarn{background:var(--bad);color:#fff;font-size:13px;font-weight:600;line-height:1.5;padding:9px 16px;text-align:center}
 .login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;z-index:100}
 .login form{width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px}.login h3{margin:0}.login input{width:100%;box-sizing:border-box}
+
+/* 概览：看门狗事件换行显示，默认只列最近几条；DNS 查询结果环形图 */
+#wd-events .ev{white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.dq{display:flex;align-items:center;gap:22px;margin-top:12px;flex-wrap:wrap}
+.dq svg{width:132px;height:132px;flex:none}
+.dq .dql{flex:1;min-width:150px;display:flex;flex-direction:column;gap:9px}
+.dq .dqi{display:flex;align-items:center;gap:8px;font-size:13.5px}
+.dq .dqi i{width:10px;height:10px;border-radius:3px;flex:none}
+.dq .dqi b{margin-left:auto;font-variant-numeric:tabular-nums}
+.dq .dqi span.mut{min-width:46px;text-align:right;font-size:12px}
 </style>
 </head>
 <body><div id="bgimg"></div><div id="bgdim"></div>
@@ -423,9 +441,13 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
         <div id="qs-now" class="mut small w qs-now"></div>
         <div id="qs" class="qs"></div></div>
     </div>
+    <div class="ovpair">
     <div class="o8 card"><div class="row"><h3 class="sp" style="margin:0">故障自动直连（看门狗）</h3><span id="wd-status"></span></div>
       <div class="mut small" style="margin:4px 0 8px">每 30 秒检查核心；无响应时自动重启，连续 2 次失败则关闭透明代理让局域网直连，核心恢复后自动重新接管</div>
       <div id="wd-events"></div></div>
+      <div class="o9 card" id="ovdns"><div class="row"><div class="sp"><h3 style="margin:0">DNS 查询结果</h3><div class="mut small" style="margin-top:2px" id="ovdns-sub">最近 100 条查询</div></div><a class="btn g sm" onclick="go('DNS')">DNS</a></div>
+        <div id="ovdns-body"></div></div>
+    </div>
    </div>
   </section>
   <!-- 节点 -->
@@ -780,6 +802,13 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
     </div>
   </section>
   <!-- 测速 -->
+  <section data-tab="落地">
+    <div class="card"><div class="row"><h3 class="sp" style="margin:0">🌍 SOCKS5 落地</h3><button class="btn g sm" id="ld-chk" onclick="ldCheck()">检测全部</button><button class="btn g sm" onclick="loadLanding()">刷新</button></div>
+      <div class="mut small" style="margin:4px 0 8px">想要指定国家的出口 IP：添加 SOCKS5 落地，流量走「设备 → 前置节点（默认直连，也可选手动节点或地区竞技组）→ 落地 → 网站」。落地节点自动加入「🚀 节点选择」「🖐️ 手动选择」和各分流组（不进自动测速组），在里面选中即可使用。</div>
+      <textarea id="ld-text" rows="3" style="width:100%" placeholder="每行一个，可批量粘贴：&#10;socks5://用户名:密码@地址:端口#名称&#10;地址:端口:用户名:密码（无账号写 地址:端口）"></textarea>
+      <div class="row mt" style="gap:6px;flex-wrap:wrap"><span class="small mut">前置节点</span><select id="ld-via" style="max-width:220px"></select><span class="sp"></span><button class="btn" onclick="ldAdd(this)">添加</button></div>
+      <div class="tw mt"><table><thead><tr><th>落地</th><th>前置</th><th>出口 IP</th><th>延迟</th><th></th></tr></thead><tbody id="ld-list"></tbody></table></div></div>
+  </section>
   <section data-tab="测速">
     <div class="row" style="margin-bottom:12px"><div class="sp mut small">国内直连 12 条连接同时下载腾讯 / 360 的 CDN，国外经当前代理 4 条连接下载 Cloudflare；各测 10 秒，会消耗一些流量（每 100M 宽带约 120MB）</div>
       <button class="btn" id="spd-all" onclick="spdStart('all',this)">全部测速</button></div>
@@ -799,7 +828,7 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
 <script>
 const $=s=>document.querySelector(s);
 let STATE={},TAB='概览',ACTIVE_RULES=[],timers=[],DEVS={},LIVE={},CONNS=[];
-const TABS=['概览','节点','策略组','订阅','规则','DNS','广告拦截','连接','统计','日志','测速','设置'];
+const TABS=['概览','节点','策略组','订阅','规则','DNS','广告拦截','连接','统计','日志','测速','落地','设置'];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // 内联事件属性里的字符串参数：onclick="f(${jsq(x)})"。不能写成 '${esc(x)}'：属性值里的 &#39; 会先被还原成单引号再交给 JS，
 // 节点名带 ' 就能跳出字符串执行代码（订阅里的节点名不可信）；encodeURIComponent 也不转义 ' ( )
@@ -902,7 +931,7 @@ function placeNav(){const n=$('#nav');if(MQ.matches){if(n.parentNode!==document.
   else{if(n.parentNode===document.body)$('header').appendChild(n);n.classList.remove('bottom');document.body.classList.remove('hasbn')}}
 MQ.addEventListener?MQ.addEventListener('change',placeNav):MQ.addListener(placeNav);
 function go(t){if(TAB==='日志'&&t!=='日志')stopLive();TAB=t;nav();scrollTo({top:0});
-  ({节点:loadProxies,策略组:loadGroupsPage,订阅:loadSubs,规则:loadRules,DNS:loadDNSPage,广告拦截:loadAB,统计:loadStats,日志:openLogs,设置:renderSettings,概览:renderOverview,连接:loadDevs,测速:()=>loadSpeed()})[t]?.()}
+  ({节点:loadProxies,策略组:loadGroupsPage,订阅:loadSubs,规则:loadRules,DNS:loadDNSPage,广告拦截:loadAB,统计:loadStats,日志:openLogs,设置:renderSettings,概览:renderOverview,连接:loadDevs,测速:()=>loadSpeed(),落地:()=>loadLanding()})[t]?.()}
 
 // 顶栏：核心状态 + 启停 + 实时数据
 const PM_TXT={tproxy:'TProxy',tun:'TUN',off:'已关闭'};
@@ -992,17 +1021,19 @@ async function loadAdStat(){let a;try{a=await api('/api/adblock')}catch(e){retur
     dser=D.series||H.map(h=>h.dns),dsub=D.samples?(D.mode==='recent'?'最近 '+D.series.length+' 次':'24 小时 · '+D.samples+' 次')+(D.last!=null?' · 最新 '+D.last+' ms':''):'',pct=req?(blk/req*100).toFixed(1)+'%':'',
     top=(a.stats.top||[]).slice(0,5),tmx=top.length?top[0][1]:1,O='#ff9f0a';
   $('#ovab-body').innerHTML=`<div class="dft">
-    <div class="card dfc"><div class="k row"><span class="sp">平均解析耗时</span><span class="mut" style="font-size:11.5px">${esc(dsub)}</span></div><div class="v">${dns==null?'-':dns+'<small>ms</small>'}</div>${spark(dser,cssv('--ok'),'等待首次检测（约 10 秒）')}</div>
+    <div class="card dfc"><div class="k row"><span class="sp">平均解析耗时</span><span class="mut" style="font-size:11.5px" title="${esc(dsub)}">${esc(dsub)}</span></div><div class="v">${dns==null?'-':dns+'<small>ms</small>'}</div>${spark(dser,cssv('--ok'),'等待首次检测（约 10 秒）')}</div>
     <div class="card dfc"><div class="k">连接请求</div><div class="v">${n(req)}</div>${spark(H.map(h=>h.req),cssv('--pri'))}</div>
     <div class="card dfc"><div class="k row"><span class="sp">已拦截</span><span style="color:${O}">${a.enabled?pct:'未开启'}</span></div><div class="v" style="color:${O}">${n(blk)}</div>${spark(H.map(h=>h.blk),O)}</div>
     <div class="card dfc dfrank"><div class="k">被拦截域名排行</div><div class="dtop">${top.length?top.map(([d,c])=>`<div class="dti" title="${esc(d)}：${n(c)} 次"><div class="row"><span class="sp w">${esc(d)}</span><b>${n(c)}</b></div><div class="dtb"><i style="width:${Math.max(3,c/tmx*100)}%"></i></div></div>`).join(''):'<div class="mut small" style="margin-top:8px">'+(a.enabled?'今天还没有拦截记录':'广告拦截未开启')+'</div>'}</div></div>
-  </div>${a.dns&&a.enabled?'<div class="mut small" style="margin-top:8px">已开启 DNS 层拦截：直接返回 NXDOMAIN 的请求不经过连接，不计入拦截次数</div>':''}`}
+  </div>${a.dns&&a.enabled?'<div class="mut small" style="margin-top:8px">已开启 DNS 层拦截：直接返回 NXDOMAIN 的请求不经过连接，不计入拦截次数</div>':''}`;
+  renderDnsQ(a.stats.dnsq)}
 function renderMode(){document.querySelectorAll('#mode button').forEach(b=>{b.classList.toggle('on',b.dataset.m===STATE.mode);
   b.onclick=()=>busyBtn(document.querySelectorAll('#mode button'),async()=>{try{await api('/api/mode','PUT',{mode:b.dataset.m});STATE.mode=b.dataset.m;renderMode();toast('已切换模式')}catch(e){toast(e.message)}})})}
 const WDS={ok:['ok','正常'],restarting:['warn','正在重启核心'],direct:['bad','已切换直连'],stopped:['mut','核心已手动停止'],off:['mut','已关闭']};function renderWD(){const w=STATE.wd||{};const s=WDS[w.status]||['mut',w.status||'-'];
   $('#wd-status').innerHTML=`<span class="${s[0]}">● ${s[1]}</span>`+(w.last_check?` <span class="mut small">上次检查 ${new Date(w.last_check*1000).toLocaleTimeString('zh-CN',{hour12:false})}</span>`:'');
   const c=w.counts||{},ne=(w.events||[]).length;
-  $('#wd-events').innerHTML=(ne?`<div class="mut small" style="margin-bottom:6px">最近 ${ne}/${w.max||20} 条记录：自动重启 <b>${c.restart||0}</b> 次 · 切换直连 <b>${c.direct||0}</b> 次 · 恢复 <b>${c.recover||0}</b> 次（满 ${w.max||20} 条自动删除最旧的）</div>`:'')+(w.events||[]).map(e=>`<div class="ev"><span class="mut">${new Date(e.t*1000).toLocaleString('zh-CN',{hour12:false})}</span> ${esc(e.msg)}</div>`).join('')||'<div class="mut small">暂无事件</div>'}
+  $('#wd-events').innerHTML=(ne?`<div class="mut small" style="margin-bottom:6px">最近 ${ne}/${w.max||20} 条记录：自动重启 <b>${c.restart||0}</b> 次 · 切换直连 <b>${c.direct||0}</b> 次 · 恢复 <b>${c.recover||0}</b> 次（满 ${w.max||20} 条自动删除最旧的）</div>`:'')+(w.events||[]).slice(0,WD_ALL?99:WD_N).map(e=>`<div class="ev"><span class="mut">${new Date(e.t*1000).toLocaleString('zh-CN',{hour12:false})}</span> ${esc(e.msg)}</div>`).join('')+(ne>WD_N?`<a class="small" style="cursor:pointer;color:var(--pri);display:inline-block;margin-top:6px" onclick="WD_ALL=!WD_ALL;renderWD()">${WD_ALL?'收起':'展开全部 '+ne+' 条'}</a>`:'')||'<div class="mut small">暂无事件</div>'}
+let WD_ALL=false;const WD_N=5;
 
 // IP 信息：本地公网 / 代理出口 + 归属地。隐藏时 IP 和归属地都换成假的（本地公网换成别的省市运营商，
 // 代理出口只留国家），截图不泄露真实位置；同一浏览器每次显示同一个假地址，不会刷新一下变一个
@@ -1027,6 +1058,17 @@ async function loadIpInfo(){let j;try{j=await api('/api/ipinfo')}catch(e){IP_FAI
   set('#ip-direct','#loc-direct',j.direct||{},0);set('#ip-proxy','#loc-proxy',j.proxy||{},1);
   $('#ipmask-btn').textContent=IPMASK?'显示 IP':'隐藏 IP'}
 function toggleIpMask(){IPMASK=!IPMASK;localStorage.setItem('ipmask',IPMASK?'1':'0');loadIpInfo()}
+
+// 概览「DNS 查询结果」：最近 100 条查询里缓存命中 / 上游应答 / 查无此名的占比（sing-box debug 日志统计）
+function renderDnsQ(q){q=q||{};const el=$('#ovdns-body');if(!el)return;const T=q.total||0;
+  if(q.core&&q.core!=='singbox'){el.innerHTML='<div class="mut small" style="margin-top:12px">mihomo 内核的日志不区分缓存命中，切换到 sing-box 内核后在这里显示</div>';return}
+  if(!T){el.innerHTML='<div class="mut small" style="margin-top:12px">还没有 DNS 查询记录（核心运行后自动统计）</div>';return}
+  $('#ovdns-sub').textContent=`最近 ${T} 条查询`;
+  const parts=[['缓存命中',q.cached,cssv('--ok')],['上游应答',q.upstream,cssv('--pri')],['查无此名',q.nx,'#ff9f0a']].concat(q.fail?[['查询失败',q.fail,cssv('--bad')]]:[]);
+  const R=52,C=2*Math.PI*R;let off=0;
+  const arcs=parts.filter(p=>p[1]).map(([,v,c])=>{const l=v/T*C,g=parts.filter(p=>p[1]).length>1?2:0,a=`<circle r="${R}" cx="66" cy="66" fill="none" stroke="${c}" stroke-width="16" stroke-dasharray="${Math.max(l-g,0.1).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 66 66)"/>`;off+=l;return a}).join('');
+  el.innerHTML=`<div class="dq"><svg viewBox="0 0 132 132"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--line)" stroke-width="16"/>${arcs}<text x="66" y="62" text-anchor="middle" font-size="22" font-weight="700" fill="currentColor">${T}</text><text x="66" y="82" text-anchor="middle" font-size="11" fill="currentColor" opacity=".6">条查询</text></svg>
+    <div class="dql">${parts.map(([k,v,c])=>`<div class="dqi"><i style="background:${c}"></i>${k}<b>${v}</b><span class="mut">${(v/T*100).toFixed(1)}%</span></div>`).join('')}</div></div>`}
 // 每秒：/api/live（速率、累计、内存）；概览 / 连接页额外拉取连接列表
 // 页面不可见时全部暂停；连续失败按 2、4、8…最多 30 秒退避；连接页每 2 秒拉完整连接列表（暂停时不拉），概览每 3 秒只拉连接数 / 设备数
 let _cn=0,_busy=false,_fail=0,_skip=0;
@@ -1498,11 +1540,11 @@ async function renderSettings(){renderSG();renderLook();await loadState().catch(
   segv('#log-limit',STATE.log_limit,v=>saveSettings({log_limit:+v},'日志上限已设为 '+v+' MB').then(renderSettings).catch(()=>{}));
   await loadDevs();$('#dev-names').value=Object.entries(STATE.devices||{}).map(([k,v])=>k+' = '+v).join('\n');renderDR()}
 // 实际生效的协议栈：native = sing-box 1.15+ 的 sing-tun 自有协议栈（不写 stack）；没编译 gVisor 时 gvisor / mixed 自动改用
-function tunEff(s){s=s||'auto';if(STATE.core!=='singbox')return s==='auto'?'mixed':s;const ng=STATE.tun_gvisor===false;
+function tunEff(s){s=s||'auto';const ng=STATE.tun_gvisor===false;if(STATE.core!=='singbox'){const e=s==='auto'?'mixed':s;return ng&&(e==='gvisor'||e==='mixed')?'system':e}
   if(s==='auto')return STATE.tun_native?'native':ng?'system':'mixed';if(ng&&(s==='gvisor'||s==='mixed'))return STATE.tun_native?'native':'system';return s}
 function tunName(e){return e==='native'?'sing-tun 自有栈':e}
-function tunNoGv(s){return STATE.core==='singbox'&&STATE.tun_gvisor===false&&(s==='gvisor'||s==='mixed')}
-function tunHint(s){s=s||'auto';const e=tunName(tunEff(s));if(tunNoGv(s))return `当前内核没有编译 gVisor，实际生效：${e}（${s} 自动改用）`;
+function tunNoGv(s){return STATE.tun_gvisor===false&&(s==='gvisor'||s==='mixed'||(STATE.core!=='singbox'&&(s||'auto')==='auto'))}
+function tunHint(s){s=s||'auto';const e=tunName(tunEff(s));if(tunNoGv(s))return `当前内核没有编译 gVisor，实际生效：${e}（${s==='auto'?'默认':s} 自动改用）`;
   if(s==='auto')return `实际生效：${e}`;if(s==='system'&&STATE.tun_native)return 'sing-box 1.15 起 stack 已废弃，选「默认」用自有协议栈更快更省';return ''}
 function renderTunForm(){const t=TUNF;const te=$('#tun-eff'),h=tunHint(t.stack);te.hidden=!h;te.textContent=h;segv('#tun-stack',t.stack,v=>{TUNF.stack=v;renderTunForm()});$('#tun-dev').value=t.device||'Meta';
   $('#tun-ar').checked=!!t.auto_redirect;$('#tun-ar').onchange=e=>TUNF.auto_redirect=e.target.checked;
@@ -1874,6 +1916,24 @@ async function loadSpeed(){clearTimeout(SPD_T);try{SPD=await api('/api/speed');r
   if(SPD.running&&TAB==='测速')SPD_T=setTimeout(loadSpeed,600)}
 async function spdStart(kind,b){b.disabled=true;try{const j=await api('/api/speed','POST',{kind});if(!j.ok)toast(j.message);SPD=j;renderSpeed()}
   catch(e){toast(e.message);b.disabled=false}loadSpeed()}
+// SOCKS5 落地：指定国家的出口 IP，经前置节点链式代理
+let LD={landings:[],via_options:[]},LDR={};
+async function loadLanding(){try{LD=await api('/api/landing')}catch(e){return toast(e.message)}renderLanding()}
+function ldVia(cur){return LD.via_options.map(v=>`<option value="${esc(v)}" ${v===cur?'selected':''}>${v==='DIRECT'?'直连（不经前置）':esc(v)}</option>`).join('')}
+function renderLanding(){const ls=LD.landings||[];
+  $('#ld-via').innerHTML=ldVia(LD.default_via);
+  $('#ld-chk').disabled=!ls.length;
+  $('#ld-list').innerHTML=ls.length?ls.map(x=>{const r=LDR[x.name];
+    const out=!r?'<span class="mut">未检测</span>':r.busy?'<span class="mut">检测中…</span>':r.ok?`${esc(r.ip)} <span class="tag">${esc(r.cc||'')}</span> ${esc(r.country||'')}${r.city?' · '+esc(r.city):''}`:`<span class="bad">${esc(r.error)}</span>`;
+    return `<tr><td><b>${esc(x.name)}</b><div class="small mut">${esc(x.server)}:${x.port}${x.username?' · '+esc(x.username):''}</div></td>
+    <td><select onchange="ldEdit(${jsq(x.name)},{via:this.value})">${ldVia(x.via)}</select></td><td>${out}</td><td>${r&&r.ok?r.delay+' ms':'-'}</td>
+    <td style="white-space:nowrap"><button class="btn g sm" onclick="ldCheck([${jsq(x.name)}])">检测</button> <button class="btn g sm" onclick="ldDel(${jsq(x.name)})">删除</button></td></tr>`}).join(''):'<tr><td colspan="5" class="mut small">还没有落地</td></tr>'}
+async function ldPost(body,btn){if(btn)btn.disabled=true;let j=null;try{j=await api('/api/landing','POST',body);if(j.message)toast(j.message)}catch(e){toast(e.message)}if(btn)btn.disabled=false;return j}
+async function ldAdd(b){const t=$('#ld-text').value.trim();if(!t)return toast('先粘贴落地');if(await ldPost({action:'add',text:t,via:$('#ld-via').value},b)){$('#ld-text').value='';await loadLanding()}}
+async function ldEdit(n,f){await ldPost(Object.assign({action:'edit',old_name:n},f));loadLanding()}
+async function ldDel(n){if(!confirm(`删除落地「${n}」？引用它的策略组会改用其他节点。`))return;await ldPost({action:'delete',name:n});delete LDR[n];loadLanding()}
+async function ldCheck(names){const ls=names||(LD.landings||[]).map(x=>x.name);ls.forEach(n=>LDR[n]={busy:1});renderLanding();
+  try{const j=await api('/api/landing','POST',{action:'check',names:ls});Object.assign(LDR,j.results||{})}catch(e){toast(e.message);ls.forEach(n=>delete LDR[n])}renderLanding()}
 // 版本备份/恢复（设置 → 备份与更新）
 function fmtSize(b){if(b<1024)return b+" B";if(b<1048576)return (b/1024).toFixed(1)+" KB";return (b/1048576).toFixed(1)+" MB"}
 function fmtTime(ts){var d=new Date(ts*1000);return d.getFullYear()+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+String(d.getDate()).padStart(2,"0")+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
