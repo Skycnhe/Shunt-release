@@ -1753,17 +1753,19 @@ function swRender(j){const to=SW_SEL,diff=to!==(j.variant||'');$('#sw-btn').disa
 function swCache(c){const r=c.remote||{},cur=SW_J?SW_J.variant:'';
   $('#sw-auto').checked=!!c.enabled;
   $('#sw-cache').innerHTML='<div class="tw"><table><thead><tr><th>内核</th><th>已下载</th><th>最新</th><th></th></tr></thead><tbody>'+c.items.map(x=>{const rv=r[x.id]||'',err=rv.startsWith('✗'),
-      st=!x.version?'<span class="mut">未下载</span>':esc(x.version)+' '+sbTag(x.version)+(x.variant===cur?' <span class="tag">使用中</span>':''),
+      st=!x.version?'<span class="mut">未下载</span>':esc(x.version)+' '+sbTag(x.version)+(x.variant===cur?' <span class="tag">使用中</span>':'')+(x.variant===cur&&x.variant&&/-(alpha|beta|rc)/i.test(x.version||'')?' <span class="tag warn" title="预发布内核可能不稳定（如 1.15.0-alpha.13 会卡死），建议换回官方正式版">建议正式版</span>':''),
       lt=!rv?'<span class="mut">—</span>':err?`<span class="bad" title="${esc(rv)}">获取失败</span>`:(rv===x.version?'<span class="ok">已是最新</span>':`<span class="warn">${esc(rv)}</span>`);
       return `<tr><td>${esc(x.label)}</td><td>${st}</td><td>${lt}</td><td style="text-align:right">${x.variant===cur?`<button class="btn g sm" onclick="swRb('${x.id}')">回滚</button> <button class="btn sm" onclick="swUpd('${x.id}',${rv===x.version})">${rv===x.version?'重新安装':'更新'}</button>`:`<button class="btn g sm" onclick="swDl('${x.id}',${x.version&&rv===x.version?'true':'false'})">${x.version?(rv&&rv===x.version?'重新下载':'下载最新'):'下载'}</button>`}</td></tr>`}).join('')+'</tbody></table></div>';
   {const u=c.usage||{},mb=n=>(n/1048576).toFixed(1)+' MB';$('#sw-usage').textContent=`内核占用：缓存的其他版本 ${mb(u.cache||0)} · 旧版本备份(.bak) ${mb(u.bak||0)}`}
   $('#sw-cache-log').textContent=(c.log||[]).join('\n')+(c.last?`${(c.log||[]).length?'\n':''}上次检查 ${new Date(c.last*1000).toLocaleString()}`:'')}
 // 正在使用的那一路 sing-box：从最近发布的版本里选一个安装（可以降级）；自动更新不会替换正在运行的程序
-async function swPick(id){const el=$('#sw-pick'),x=SW_J&&SW_J.cache.items.find(i=>id?i.id===id:i.variant===SW_J.variant&&i.version);
+async function swPick(id,showPre){const el=$('#sw-pick'),x=SW_J&&SW_J.cache.items.find(i=>id?i.id===id:i.variant===SW_J.variant&&i.version);
   if(!x){toast('还没有正在使用的 sing-box，先下载安装一个');return}const ch=swCh(x);el.classList.remove('hide');el.innerHTML='<span class="mut small">正在获取 '+esc(x.label)+' 的版本列表…</span>';
   try{const j=await api('/api/coreupdate/versions?channel='+ch),cur=j.current||'';
-    el.innerHTML=`<div class="row" style="flex-wrap:wrap;gap:6px"><span class="small">安装 ${esc(x.label)} 的指定版本</span><select id="sw-pick-v" class="sp" style="min-width:12em">${j.versions.map(v=>`<option value="${esc(v.version)}"${v.version===cur?' selected':''}>${esc(v.version)}${v.pre?'（预发布）':''}${v.version===cur?'（使用中）':''}</option>`).join('')}</select><button class="btn sm" onclick="swPickGo('${ch}')">安装</button><button class="btn g sm" onclick="$('#sw-pick').classList.add('hide')">取消</button></div>`+
-      '<div class="mut small mt">列出最近发布的 '+j.versions.length+' 个版本。换版本前会用它校验当前配置，不兼容或起不来会自动换回；旧版本会备份，可以「回滚」。选了旧版本后自动更新不会替换它，想回到最新版点「更新」。</div>'}
+    // 预发布（alpha / beta / rc）默认不列：1.15.0-alpha.13 等会卡死；勾「显示预发布」才列。整个列表都是预发布（预览版通道）时照常全列
+    const hasRel=j.versions.some(v=>!v.pre),vs=showPre||!hasRel?j.versions:j.versions.filter(v=>!v.pre||v.version===cur);
+    el.innerHTML=`<div class="row" style="flex-wrap:wrap;gap:6px"><span class="small">安装 ${esc(x.label)} 的指定版本</span><select id="sw-pick-v" class="sp" style="min-width:12em">${vs.map(v=>`<option value="${esc(v.version)}"${v.version===cur?' selected':''}>${esc(v.version)}${v.pre?'（预发布）':''}${v.version===cur?'（使用中）':''}</option>`).join('')}</select><button class="btn sm" onclick="swPickGo('${ch}')">安装</button><button class="btn g sm" onclick="$('#sw-pick').classList.add('hide')">取消</button>${hasRel&&j.versions.some(v=>v.pre)?`<label class="small"><input type="checkbox"${showPre?' checked':''} onchange="swPick('${x.id}',this.checked)"> 显示预发布</label>`:''}</div>`+
+      '<div class="mut small mt">列出最近发布的 '+vs.length+' 个版本'+(hasRel&&!showPre?'（预发布默认不列，可能不稳定）':'')+'。换版本前会用它校验当前配置，不兼容或起不来会自动换回；旧版本会备份，可以「回滚」。选了旧版本后自动更新不会替换它，想回到最新版点「更新」。</div>'}
   catch(e){el.innerHTML=`<span class="bad small">${esc(e.message)}</span>`}}
 async function swPickGo(ch){const v=$('#sw-pick-v').value;if(!v)return;const same=v===(SW_J.versions||{}).singbox;
   if(!confirm(`${same?'重新安装':'安装'} sing-box ${v}？\n核心会重启，网络中断几秒。`))return;

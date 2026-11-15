@@ -36,3 +36,7 @@ docker run -d --name shunt --restart unless-stopped --network host \
 ```
 
 也可用 `ghcr.io/skycnhe/shunt-release:singbox`；固定版本用 `singbox-v<面板版本>`。宿主机需 `modprobe nft_tproxy tun` 并开启 `net.ipv4.ip_forward=1`；老内核（群晖等）TProxy 不可用时面板改用 TUN。
+
+## 许可
+
+GPL-3.0-or-later，全文见 [LICENSE](LICENSE)。
