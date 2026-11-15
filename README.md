@@ -46,3 +46,7 @@ docker run -d --name shunt --restart unless-stopped --network host \
   -v shunt-data:/data -e TZ=Asia/Shanghai --stop-timeout 30 \
   skycn2022/shunt:latest
 ```
+
+## 许可
+
+GPL-3.0-or-later，全文见 [LICENSE](LICENSE)。

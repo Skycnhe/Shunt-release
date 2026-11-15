@@ -2017,7 +2017,7 @@ async function loadCoreSw(){try{const j=await api('/api/coreswitch');SW_J=j;cons
 function swCache(c){const r=c.remote||{},cur=SW_J?swKey(SW_J):'';
   $('#sw-auto').checked=!!c.enabled;
   $('#sw-cache').innerHTML='<div class="tw"><table><thead><tr><th>内核</th><th>已下载</th><th>最新</th><th></th></tr></thead><tbody>'+c.items.map(x=>{const k=x.variant?'singbox:'+x.variant:x.id,rv=r[x.id]||'',err=rv.startsWith('✗'),
-      st=!x.version?'<span class="mut">未下载</span>':esc(x.version)+(x.variant?' '+sbTag(x.version):'')+(k===cur?' <span class="tag">使用中</span>':''),
+      st=!x.version?'<span class="mut">未下载</span>':esc(x.version)+(x.variant?' '+sbTag(x.version):'')+(k===cur?' <span class="tag">使用中</span>':'')+(k===cur&&x.variant&&/-(alpha|beta|rc)/i.test(x.version||'')?' <span class="tag warn" title="预发布内核可能不稳定（如 1.15.0-alpha.13 会卡死），建议换回官方正式版">建议正式版</span>':''),
       lt=!rv?'<span class="mut">—</span>':err?`<span class="bad" title="${esc(rv)}">获取失败</span>`:(rv===x.version?'<span class="ok">已是最新</span>':`<span class="warn">${esc(rv)}</span>`);
       return `<tr><td>${esc(x.label)}</td><td>${st}</td><td>${lt}</td><td style="text-align:right">${k===cur?`<button class="btn g sm" onclick="swRb('${x.id}')">回滚</button> <button class="btn sm" onclick="swUpd('${x.id}',${rv===x.version})">${rv===x.version?'重新安装':'更新'}</button>`:`<button class="btn g sm" onclick="swDl('${x.id}',${x.version&&rv===x.version?'true':'false'})">${x.version?(rv&&rv===x.version?'重新下载':'下载最新'):'下载'}</button>`}</td></tr>`}).join('')+'</tbody></table></div>';
   {const u=c.usage||{},mb=n=>(n/1048576).toFixed(1)+' MB';$('#sw-usage').textContent=`内核占用：缓存的其他版本 ${mb(u.cache||0)} · 旧版本备份(.bak) ${mb(u.bak||0)}`+(u.extra?` · 未使用的 Smart ${mb(u.extra)}`:'')}

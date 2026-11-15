@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "8.10.32"
+PANEL_VERSION = "8.10.34"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -364,7 +364,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "8.10.32"
+PANEL_VERSION = "8.10.34"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -10600,7 +10600,7 @@ def core_stream(path, sink, stop, idle=None):
 def ticket_new():
     """日志流（EventSource 无法带请求头）用的一次性票据，60 秒有效"""
     now = time.time()
-    for k in [k for k, v in TICKETS.items() if v <= now]:
+    for k in [k for k, v in list(TICKETS.items()) if v <= now]:  # 多个请求线程同时取票据
         TICKETS.pop(k, None)
     t = secrets.token_urlsafe(18)
     TICKETS[t] = now + 60
@@ -11873,7 +11873,8 @@ def rdns_loop():
             RDNS[ip] = (name.split(".")[0] if name.endswith((".lan", ".local", ".home", ".localdomain")) else name, time.time() + 1800)
         # 顺手清理过期条目：RDNS 只增不减会导致无界增长；device_map 对缺失 key 会重新入队，语义不变
         now = time.time()
-        for ip in [k for k, v in RDNS.items() if v[1] <= now]:
+        # list() 先拷贝：请求线程里的 device_map 会同时往 RDNS 写，直接遍历会抛「dictionary changed size」让反查线程退出（之后设备名一直不更新）
+        for ip in [k for k, v in list(RDNS.items()) if v[1] <= now]:
             RDNS.pop(ip, None)
 
 
