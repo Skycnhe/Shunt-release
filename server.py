@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.34"
+PANEL_VERSION = "11.6.36"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -333,7 +333,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.34"
+PANEL_VERSION = "11.6.36"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -4633,7 +4633,7 @@ _SRC['shunt.sb_config'] = '''"""生成 sing-box 配置"""
 import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, urllib.error
 
 from .base import (
-    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
+    AB_DIR, BUILTIN_POLICIES, CN_ECS, LGBM_URL, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_tail
 from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, removed_rs_stems, lb_names, lb_old_name, load, rs_safe, write_bytes, write_json
 from .groups import gcfg, prov_set, rx
@@ -4660,9 +4660,10 @@ def build_singbox(d):
     gc = gcfg(d)
     warn = []
     outbounds, node_names, prov_names = sb_node_outbounds(d, cfg, sub_out, warn)
-    alias, group_outs = sb_group_outbounds(cfg, gc, node_names, prov_names, warn, sb_is_fork())
+    smart = sb_has_smart()
+    alias, group_outs = sb_group_outbounds(cfg, gc, node_names, prov_names, warn, sb_is_fork(), smart)
     outbounds += group_outs
-    gt = ("selector", "urltest", "loadbalance")
+    gt = ("selector", "urltest", "loadbalance", "smart")
     group_out = [o for o in outbounds if o["type"] in gt]
     outbounds = group_out + [o for o in outbounds if o["type"] not in gt] + [{"type": "direct", "tag": "DIRECT"}]
     policies = {o["tag"] for o in outbounds} | BUILTIN_POLICIES
@@ -4738,6 +4739,8 @@ def build_singbox(d):
                                        "default_mode": mode},
                          "cache_file": {"enabled": True, "path": os.path.join(SB_DIR, "cache.db"), "store_fakeip": True}},
     }
+    if smart and gc.get("lgbm") and any(o["type"] == "smart" for o in group_out):
+        conf["experimental"]["smart"] = sb_smart_lgbm(d)
     if endpoints:
         conf["endpoints"] = endpoints
     need = {tag: rsd for tag, rsd in rule_sets.items() if rsd["kind"] != "inline"}
@@ -4797,10 +4800,20 @@ def sb_node_outbounds(d, cfg, sub_out, warn):
     return outbounds, node_names, prov_names
 
 
-def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False):
+def sb_smart_lgbm(d):
+    """MiChongs Smart 组共用的 LightGBM 模型：放在 -D 目录，缺失时内核自己下载（走「GitHub 加速」），每 72 小时检查更新；
+    经 DIRECT 下载，不让模型经过还没学好的 Smart 组本身"""
+    gh = (d.get("gh_proxy") or "").rstrip("/")
+    return {"lightgbm": {"model_path": os.path.join(SB_DIR, "Model.bin"), "url": (gh + "/" if gh else "") + LGBM_URL,
+                         "auto_update": True, "update_interval": "72h", "download_detour": "DIRECT"}}
+
+
+def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False, smart=False):
     """策略组：官方内核下地区负载均衡与自动优选相同 → 去掉并重定向引用；其余 load-balance / fallback 改为 urltest。
-    魔改版内核（fork）：负载均衡组生成 loadbalance（多节点聚合），只有故障转移改为 urltest。返回 (别名表, 组 outbounds)"""
+    魔改版内核（fork）：负载均衡组生成 loadbalance（多节点聚合），只有故障转移改为 urltest。
+    支持 smart 出站组的内核（MiChongs，smart=True）：地区「竞技」组改为 smart（按连接质量为每个服务选节点，可手动指定）。返回 (别名表, 组 outbounds)"""
     outbounds = []
+    races = {auto_name(r) for r, _ in REGIONS + [(G_OTHER, None)]} if smart else set()
     alias = {}
     region_lb = set()
     for r, _ in REGIONS + [(G_OTHER, None)]:
@@ -4841,6 +4854,15 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False):
                  "url": g.get("url") or gc["url"], "interval": f"{max(int(g.get('interval') or gc['interval']), 30)}s"}
             if not g.get("lazy", True):
                 o["idle_timeout"] = "720h"
+        elif g["type"] == "url-test" and g["name"] in races:  # MiChongs smart：健康检查沿用组配置；interval 不能大于 idle_timeout（默认 30m）
+            iv = max(int(g.get("interval") or gc["interval"]), 30)
+            o = {"type": "smart", "tag": g["name"], "outbounds": members, "url": g.get("url") or gc["url"], "interval": f"{iv}s",
+                 "tolerance": int(g.get("tolerance") if g.get("tolerance") is not None else gc["tolerance"]),
+                 "interrupt_exist_connections": False, "use_lightgbm": bool(gc.get("lgbm"))}
+            if not g.get("lazy", True):
+                o["idle_timeout"] = "720h"
+            elif iv > 1800:
+                o["idle_timeout"] = f"{iv}s"
         else:
             o = {"type": "urltest", "tag": g["name"], "outbounds": members, "url": g.get("url") or gc["url"],
                  "interval": f"{max(int(g.get('interval') or gc['interval']), 30)}s",
@@ -5523,6 +5545,30 @@ def sb_tun_stack(stack, path=None):
 _GVISOR = {"key": None, "v": True}
 
 
+_SMART = {"key": None, "v": False}
+SMART_PROBE = {"log": {"disabled": True}, "outbounds": [{"type": "direct", "tag": "d"}, {"type": "smart", "tag": "s", "outbounds": ["d"]}]}
+
+
+def sb_has_smart(path=None):
+    """内核支持 smart 出站组吗（MiChongs 魔改版）：用最小配置跑一次 sing-box check，按程序 mtime + 大小缓存。
+    官方版 / reF1nd 报 unknown outbound type → False；换内核后缓存失效，重新生成配置时自动回退 urltest"""
+    path = path or SB_BIN
+
+    def probe():
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(SMART_PROBE, f)
+            code, out = sh(f"{shlex.quote(path)} check -c {shlex.quote(tmp)}", timeout=15)
+        finally:
+            os.unlink(tmp)
+        if code == 0:
+            return True, True
+        return "unknown" in out, False  # 明确不认识这个类型才缓存 False；超时等错误下次再试
+    return _cap_cached(_SMART, path, False, probe)
+
+
 def sb_has_gvisor(path=None):
     """sing-box 有没有编译 gVisor（version 输出的 Tags 里有 with_gvisor）。1.14 及以前的官方版、reF1nd 正式版一般有；1.15+ 官方默认不再编译（reF1nd / MiChongs 预览版也没有），
     TUN 用 gvisor / mixed 协议栈会启动失败。读不到 Tags（没装、旧版本不输出）时按有处理，不改用户的设置"""
@@ -5991,6 +6037,9 @@ def panel_raw():
     return PANEL_RAW.rstrip("/") + ("-preview" if CHANNEL["v"] == "preview" else "")
 
 
+GH_MIRRORS = ("https://ghfast.top", "https://gh-proxy.com")  # 内置 GitHub 加速镜像，下载后按 GitHub 校验值比对
+
+
 UPD_FILES = ["server.py", "index.html", "tproxy.sh", "selftest.sh", "init.d/shunt", "init.d/shunt-core"]
 UPD_LIST = "update-files.txt"  # 仓库里的部署文件清单：以后增减文件只改清单，不用再改更新程序
 
@@ -6045,6 +6094,8 @@ def fetch_raw(f, gh, commit=None, sha=None):
         gh = ""
     tries = [(gh.rstrip("/") + "/" + url, False)] if gh else []
     tries += [(url, True), (url, False)]  # 先经 mihomo 代理，再直连
+    if sha and not gh:  # 没设「GitHub 加速」：有校验值时最后再试内置镜像（内核没起来、raw 域名被 DNS 污染时也能更新）
+        tries += [(m + "/" + url, False) for m in GH_MIRRORS]
     errs = []
     for u, use_proxy in tries:
         try:
@@ -12851,7 +12902,7 @@ from . import adblock, landing, stats
 from . import gguard
 from .base import (
     AB_DIR, AB_PRESETS, BUILTIN_POLICIES, CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, GROUP_TYPES, G_SEL, KEY,
-    LB_STRATEGIES, LOCK, MAX_BODY, PANEL_VERSION, PRIMARY_REGIONS, PROXY_MODES, REGIONS, SVC, TPROXY_SH,
+    G_OTHER, LB_STRATEGIES, LOCK, MAX_BODY, PANEL_VERSION, PRIMARY_REGIONS, PROXY_MODES, REGIONS, SVC, TPROXY_SH,
     TUN_STACKS, UPD_STATE, upd_begin, upd_busy_msg, wd_hold
 )
 from .data import HISTORY_FILE, HISTORY_SKIP, auto_name, config_version, lb_names, load, migrate_names, read_json, region_lb_set, save, update
@@ -12862,7 +12913,7 @@ from .core import conns_snapshot, refresh_after_sub, refresh_regions, reload_cor
 from .corehttp import core, core_json
 from .sb_common import CORES, SB_BIN, SB_ONLY, SB_STATE, active_core, core_conf_path
 from .sb_subs import sb_update_subs
-from .sb_config import build_singbox, sb_provider_nodes, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, rs_changed, drop_removed_rs_files, sb_refresh_rulesets, sb_rule_need, sb_sync_assets, sb_version, write_active_config
+from .sb_config import build_singbox, sb_provider_nodes, sb_ab_loaded, sb_fake_providers, sb_fake_rule_providers, sb_has_gvisor, sb_has_smart, sb_is_fork, sb_tun_native, tun_stack_tip, rs_changed, drop_removed_rs_files, sb_refresh_rulesets, sb_rule_need, sb_sync_assets, sb_version, write_active_config
 from .sb_switch import CHANNELS as SB_CHANNELS, VER_RE as SB_VER_RE, sb_arch, sb_release_list, sb_remote_version, sb_update_job
 from .panel_update import CHANNELS, self_rollback, self_update
 from .core_update import CORE_UPD, core_job_start, core_upd_status
@@ -13148,11 +13199,13 @@ def ad_today():
     return adblock.AD_STATS.today() if adblock.AD_STATS else 0
 
 
-def sb_group_view(groups, meta, fork=None):
+def sb_group_view(groups, meta, fork=None, smart=None):
     """sing-box 下的策略组视图：官方内核下地区负载均衡并入自动优选（从名单和 meta 里去掉），
     负载均衡 / 故障转移按自动测速运行（meta 改标 url-test，sb_from 记原类型）。
     魔改版内核（多节点聚合）：负载均衡组保留，只有故障转移按自动测速。原地修改 meta，返回过滤后的组名单"""
     fork = sb_is_fork() if fork is None else fork
+    smart = sb_has_smart() if smart is None else smart
+    races = {auto_name(r) for r, _ in REGIONS + [(G_OTHER, None)]} if smart else set()
     lbs = set() if fork else region_lb_set()
     down = ("fallback",) if fork else ("load-balance", "fallback")
     for n in list(meta):
@@ -13160,6 +13213,8 @@ def sb_group_view(groups, meta, fork=None):
             meta.pop(n)
         elif meta[n]["type"] in down:
             meta[n].update(sb_from=meta[n]["type"], type="url-test")
+        elif n in races and meta[n]["type"] == "url-test":
+            meta[n]["type"] = "smart"
     return [g for g in groups if g not in lbs]
 
 
@@ -13167,7 +13222,7 @@ def state_groups(d):
     """/api/state 的策略组名单与元数据。按（配置版本, 订阅节点名单版本）缓存：订阅下载完成、节点增删后地区组会变，
     只按配置版本缓存会让「目标策略」下拉框一直缺新地区组。生成失败时返回空名单（记日志），不让整个面板 500"""
     provider_nodes()  # 先刷新订阅节点名单（60 秒内存缓存），名单变化会推进 provider_rev()
-    key = (config_version(), provider_rev(), sb_is_fork())
+    key = (config_version(), provider_rev(), sb_is_fork(), sb_has_smart())
     gv = _GRP_CACHE.get("v")
     if gv is not None and gv[0] == key:
         return gv[1], gv[2]
@@ -13672,7 +13727,7 @@ class H(BaseHTTPRequestHandler):
             sel = [x for x in sel if x in gnames or x in BUILTIN_POLICIES]
         return self.send(200, {"cfg": gcfg(d), "region_groups": d["region_groups"], "custom": d["custom_groups"],
                                "regions": regions, "groups": gnames, "manual": names, "nodes": all_node_names(d),
-                               "meta": meta, "core": active_core(d), "fork": sb and sb_is_fork(), "types": GROUP_TYPES, "strategies": LB_STRATEGIES,
+                               "meta": meta, "core": active_core(d), "fork": sb and sb_is_fork(), "smart": sb and sb_has_smart(), "types": GROUP_TYPES, "strategies": LB_STRATEGIES,
                                "region_names": [r[0] for r in REGIONS], "primary": PRIMARY_REGIONS, "selector": sel})
 
     def save_groups_cfg(self, b):

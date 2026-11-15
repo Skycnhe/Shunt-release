@@ -475,7 +475,7 @@ nav button{font-size:15.5px;font-weight:600;opacity:.85}nav button.on{font-weigh
       <div class="opt hide" id="gc-lb-opt"><div class="sp"><div class="t">多节点聚合（负载均衡）</div><div class="dsc">节点 ≥2 个的地区各生成一个 <code>⚖️ 日本哈希</code>，把连接分摊到该地区的全部节点，自动跳过不健康的节点；一致性哈希：同一目标域名固定走同一节点，会话稳定，不会因 IP 变化被要求重新登录<br>「竞技」组始终生成（url-test）<div class="ok small" id="gc-lb-sb">当前是魔改版 sing-box 内核，聚合组按 loadbalance 运行（换回官方版时自动并入「竞技」）</div></div></div><label class="sw sm"><input type="checkbox" id="gc-lb"><span></span></label></div>
       <div class="opt"><div class="sp"><div class="t">识别扩展地区</div><div class="dsc">韩国、英国、德国、法国、荷兰、加拿大、澳大利亚、俄罗斯、印度、土耳其、东南亚、南美等</div></div><label class="sw sm"><input type="checkbox" id="gc-extra"><span></span></label></div>
       <div class="opt"><div class="sp"><div class="t">「🌐 其他」分组</div><div class="dsc">收纳未识别出地区的节点（<code>🌐 其他竞技</code>）</div></div><label class="sw sm"><input type="checkbox" id="gc-other"><span></span></label></div>
-      <div class="opt hide"><div class="sp"><div class="t">LightGBM 模型（仅 mihomo Smart）</div><div class="dsc">Smart 竞技组用模型预测节点权重；开启后自动下载 Model.bin（约 9 MB），其他内核下不生效</div></div><button class="btn g sm" onclick="lgbmUpdate(this)">更新模型</button><label class="sw sm"><input type="checkbox" id="gc-lgbm"><span></span></label></div>
+      <div class="opt" id="gc-lgbm-opt"><div class="sp"><div class="t">LightGBM 模型（Smart 竞技组）</div><div class="dsc">默认关闭，用内置场景公式打分；开启后内核经「GitHub 加速」自动下载 Model.bin（约 9 MB），每 72 小时检查更新。<span id="gc-lgbm-st"></span></div></div><label class="sw sm"><input type="checkbox" id="gc-lgbm"><span></span></label></div>
       <div class="opt"><div class="sp"><div class="t">懒惰测速（lazy）</div><div class="dsc">分组没有被使用时不做健康检查，节省流量</div></div><label class="sw sm"><input type="checkbox" id="gc-lazy"><span></span></label></div>
       <div class="opt"><div class="sp"><div class="t">测速间隔 / 容差</div><div class="dsc">容差：新节点比当前节点快超过该值才切换（竞技 / 全局自动选择）；0 = 谁最快就用谁</div></div>
         <select id="gc-int"><option value="60">1 分钟</option><option value="180">3 分钟</option><option value="300">5 分钟</option><option value="600">10 分钟</option><option value="1800">30 分钟</option><option value="3600">1 小时</option></select>
@@ -1226,11 +1226,11 @@ function renderPolicies(){const sel=GL.filter(g=>g!=='GLOBAL'&&PROXIES[g].type==
   $('#policies').innerHTML=sel.map(g=>{const p=PROXIES[g],i=GL.indexOf(g),d=lastDelay(g);
     return `<div class="pitem"><div class="pl"><span>${esc(g)}</span>${(STATE.group_meta||{})[g]?.kind==='custom'?'<span class="tag k-cus">自定义</span>':''}<span class="sp"></span><span class="${dcls(d)} small">${d!==undefined?dtxt(d):''}</span></div>
       <select onchange="pickName(${i},this.value)">${p.all.map(n=>`<option ${n===p.now?'selected':''} value="${esc(n)}">${isGroup(n)?'📁 ':''}${esc(n)}</option>`).join('')}</select></div>`}).join('')}
-function canPick(p){return !!p&&(p.type==='Selector'||((STATE.core||'singbox')!=='singbox'&&['URLTest','Fallback','Smart'].includes(p.type)))}
+function canPick(p){return !!p&&(p.type==='Selector'||p.type==='Smart'||((STATE.core||'singbox')!=='singbox'&&['URLTest','Fallback'].includes(p.type)))}
 async function pickName(i,n){const g=GL[i],p=PROXIES[g];if(!p)return;
   if(p.type==='LoadBalance'){toast('负载均衡组按策略自动分配连接，不能手动指定节点');return}
   if(!['Selector','URLTest','Fallback','Smart'].includes(p.type)){toast('该组不支持手动切换');return}
-  if(p.type!=='Selector'&&(STATE.core||'singbox')==='singbox'){toast('sing-box 的自动测速组按延迟自动选节点，不能手动固定；要手动指定请用选择类型的组（如「🖐️ 手动选择」）');return}  // sing-box 控制器只允许切换 Selector，以前点了报「Must be a Selector」
+  if(p.type!=='Selector'&&p.type!=='Smart'&&(STATE.core||'singbox')==='singbox'){toast('sing-box 的自动测速组按延迟自动选节点，不能手动固定；要手动指定请用选择类型的组（如「🖐️ 手动选择」）');return}  // sing-box 控制器只允许切换 Selector，以前点了报「Must be a Selector」
   try{await core('/proxies/'+encodeURIComponent(g),'PUT',{name:n});
     toast(p.type==='Selector'?`${g} → ${n}`:`${g} 已固定为 ${n}（点 📌 取消固定恢复自动）`);loadProxies()}catch(e){toast(e.message)}}
 function pick(i,j){pickName(i,GALL[i][j])}
@@ -1245,17 +1245,16 @@ async function testAll(btn){btn.disabled=true;btn.textContent='测速中…';
 
 // 策略组管理
 let GI=null,CGF=null,GCF={},_pv=0;
-const TYN={'select':'手动选择','url-test':'自动测速','fallback':'故障转移','load-balance':'负载均衡'};
-const TYC={'select':'k-sel','url-test':'k-auto','fallback':'k-fb','load-balance':'k-lb'};
+const TYN={'select':'手动选择','url-test':'自动测速','smart':'智能竞技','fallback':'故障转移','load-balance':'负载均衡'};
+const TYC={'select':'k-sel','url-test':'k-auto','smart':'k-auto','fallback':'k-fb','load-balance':'k-lb'};
 async function loadGroupsPage(){try{[GI]=await Promise.all([api('/api/groups'),loadState().catch(()=>{})])}catch(e){return toast(e.message)}
-  GCF=Object.assign({},GI.cfg,{on:GI.region_groups});renderGC();renderRegions();renderCGList();$('#gc-lb-opt').classList.toggle('hide',!GI.fork)}
+  GCF=Object.assign({},GI.cfg,{on:GI.region_groups});renderGC();renderRegions();renderCGList();$('#gc-lb-opt').classList.toggle('hide',!GI.fork);$('#gc-lgbm-st').textContent=GI.smart?'当前内核支持 Smart，竞技组已是智能竞技':'当前内核不支持 Smart（竞技组按自动测速），换 MiChongs 内核后自动生效'}
 function renderGC(){const c=GCF;$('#gc-on').checked=c.on;$('#gc-on').onchange=e=>{GCF.on=e.target.checked;renderGC()};
   $('#gc-box').classList.toggle('dim',!c.on);$('#gc-box').style.opacity=c.on?'':'.5';
   [['#gc-lb','lb'],['#gc-extra','extra'],['#gc-other','other'],['#gc-lazy','lazy'],['#gc-lgbm','lgbm']].forEach(([k,f])=>{$(k).checked=!!c[f];$(k).onchange=e=>{GCF[f]=e.target.checked;if(f==='lgbm')saveGC()}});  // LightGBM 开关点了直接保存
   const iv=$('#gc-int');if(![...iv.options].some(o=>o.value===String(c.interval)))iv.insertAdjacentHTML('beforeend',`<option value="${c.interval}">${c.interval} 秒</option>`);
   iv.value=String(c.interval);iv.onchange=e=>GCF.interval=+e.target.value;$('#gc-tol').value=c.tolerance;$('#gc-tol').onchange=e=>GCF.tolerance=+e.target.value;
   $('#gc-url').value=c.url;$('#gc-url').onchange=e=>GCF.url=e.target.value.trim()}
-async function lgbmUpdate(b){b.disabled=true;toast('正在下载 LightGBM 模型…');try{const j=await api('/api/coreupdate','POST',{action:'lgbm',core:'smart'});toast(j.message)}catch(e){toast(e.message)}b.disabled=false}
 async function saveGC(){const c=GCF;const body={region_groups:c.on,lb:c.lb,extra:c.extra,other:c.other,lazy:c.lazy,lgbm:!!c.lgbm,
     interval:+$('#gc-int').value,tolerance:+$('#gc-tol').value,url:$('#gc-url').value.trim()};
   try{toast('正在校验并应用…');const j=await api('/api/groups/cfg','PUT',body);toast(j.message);await loadGroupsPage();
