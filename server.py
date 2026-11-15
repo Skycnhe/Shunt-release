@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.31"
+PANEL_VERSION = "11.6.32"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -332,7 +332,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.31"
+PANEL_VERSION = "11.6.32"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2319,12 +2319,29 @@ def is_ip_addr(v):
         return False
 
 
+_BARE_V6_RX = re.compile(r"^((?:udp|tcp|tls|https|quic|h3)://)?([0-9a-fA-F:]*:[0-9a-fA-F:]*:[0-9a-fA-F:.]*)(/[^#]*)?((?:#.*)?)$")
+
+
+def norm_dns_addr(s):
+    """不带方括号的 IPv6 DNS 地址（2400:3200::1、udp://2400:3200::1）补上方括号：
+    以前原样写进配置，mihomo 解析不出端口拒绝启动，sing-box 配置生成直接抛异常（面板保存 DNS 后两个内核都起不来）"""
+    m = _BARE_V6_RX.match(s)
+    if m and is_ip_addr(m.group(2)):
+        return f"{m.group(1) or ''}[{m.group(2)}]{m.group(3) or ''}{m.group(4)}"
+    return s
+
+
+DNS_SERVER_LISTS = ("direct", "proxy", "default", "pserver")
+
+
 def dns_cfg(d):
     """data.json 里的 dns 设置补齐默认值并规范化（旧版数据没有的键用默认值）"""
     dc = dict(DNS_DEFAULT)
     dc.update(d.get("dns") or {})
     for k in DNS_LISTS:
         dc[k] = [str(x).strip() for x in (dc.get(k) if isinstance(dc.get(k), list) else DNS_DEFAULT[k]) if str(x).strip()]
+        if k in DNS_SERVER_LISTS:
+            dc[k] = [norm_dns_addr(x) for x in dc[k]]
     if dc.get("mode") not in ("fake-ip", "redir-host"):
         dc["mode"] = "fake-ip"
     if dc.get("cache") not in ("arc", "lru"):
@@ -2342,7 +2359,7 @@ def dns_cfg(d):
         if isinstance(pe, dict) and pe.get("match") and pe.get("servers"):
             sv = pe["servers"] if isinstance(pe["servers"], list) else str(pe["servers"]).split(",")
             pols.append({"match": norm_policy_match(pe["match"]),
-                         "servers": [str(x).strip() for x in sv if str(x).strip()]})
+                         "servers": [norm_dns_addr(str(x).strip()) for x in sv if str(x).strip()]})
     dc["policies"] = pols
     return dc
 
@@ -8684,8 +8701,12 @@ def via_options(d, cfg=None):
 
 
 def default_via(d):
+    """新落地的默认前置：旧数据里的 WARP 节点还在时用它，否则直连（正式版删了 WARP 页，残留的 warp 键不能指向已删节点）"""
     w = d.get("warp")
-    return w["name"] if w else DIRECT
+    name = w.get("name") if isinstance(w, dict) else ""
+    if name and any((n.get("proxy") or {}).get("name") == name and not n.get("landing") for n in d.get("nodes") or []):
+        return name
+    return DIRECT
 
 
 # ---------------------------------------------------------------- 检测
