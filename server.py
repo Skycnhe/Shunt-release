@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.37"
+PANEL_VERSION = "11.7.0"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -58,6 +58,7 @@ MODULES = [
     "logstream",
     "adblock",
     "live",
+    "lbtopo",
     "logclean",
     "schedule",
     "devices",
@@ -306,7 +307,7 @@ AB_PRESETS = [
     {"cat": "国外 · 隐私", "name": "Frogeye 一方追踪", "url": "https://hostfiles.frogeye.fr/firstparty-trackers.txt",
      "dsc": "伪装成网站子域名的追踪器"}]
 TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False}
-GROUPS_DEFAULT = {"type": "url-test", "lb": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
+GROUPS_DEFAULT = {"type": "url-test", "lb": True, "rr": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
                   "tolerance": 50, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
                   "lgbm": False}
 SCHED_DEFAULT = {"sub_update": "", "core_restart": "", "geo_update": "", "latency": 0}
@@ -333,7 +334,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.37"
+PANEL_VERSION = "11.7.0"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -504,7 +505,7 @@ _SRC['shunt.data'] = '''"""数据"""
 import copy, hashlib, json, os, re, secrets, threading, time
 
 from .base import (
-    AUTO_SUFFIX, AUTO_TAIL, AUTO_TAIL_OLD, DATA_FILE, DEFAULT, G_AUTO, G_OTHER, LB_PREFIX, LB_SUFFIX, LB_TAIL, LEGACY_AUTO, LOCK,
+    AUTO_SUFFIX, AUTO_TAIL, AUTO_TAIL_OLD, DATA_FILE, DEFAULT, G_AUTO, G_OTHER, G_SEL, LB_PREFIX, LB_SUFFIX, LB_TAIL, LEGACY_AUTO, LOCK,
     PANEL_DIR, PROXY_MODES, REGIONS, SCHEMA, TESTS
 )
 from .ruleutil import dns_policy_of, rule_policy_index
@@ -661,16 +662,29 @@ def _load_uncached():
                 gc0["interval"] = 60
             if gc0.get("tolerance") in (None, 50):
                 gc0["tolerance"] = 0
-        migrate_names(d)  # 旧「⚖️ X负载均衡」与 v6.6.9 的「⚖️ X轮询 / 粘性」都改指「⚖️ X哈希」
+        migrate_names(d)  # 旧「⚖️ X负载均衡」与 v6.6.9 的「⚖️ X粘性」改指「⚖️ X哈希」（「⚖️ X轮询」已恢复，保留引用）
         for g in d.get("custom_groups") or []:  # 自定义负载均衡组的轮询 / 粘性会话也改为一致性哈希
             if isinstance(g, dict) and g.get("type") == "load-balance":
                 g["strategy"] = "consistent-hashing"
         d["schema"] = SCHEMA
         dirty = True
+    if map_old_rr(d):
+        dirty = True
     if dirty:
         with LOCK:
             save(d)
     return d
+
+
+OLD_RR = LB_PREFIX + "轮询"  # 预览 v8.10.35 / v11.6.37 第一版的跨地区「⚖️ 轮询」组，已改成各地区「⚖️ X轮询」
+
+
+def map_old_rr(d):
+    """引用了已撤掉的「⚖️ 轮询」时改指 🚀 节点选择：不改的话自定义组里这个成员被跳过，只剩 DIRECT 的组整组变直连，
+    规则 / DNS 也只是生成时临时退回节点选择。用户自己建了同名自定义组的不动。返回改动数"""
+    if any(isinstance(g, dict) and g.get("name") == OLD_RR for g in d.get("custom_groups") or []):
+        return 0
+    return map_refs(d, {OLD_RR: G_SEL})
 
 
 def region_label(rname):
@@ -685,13 +699,13 @@ def auto_name(rname, tail=AUTO_TAIL):
     return f"{flag} {label}{tail}"
 
 
-LB_KINDS = (("consistent-hashing", "哈希"),)  # 每个地区一个负载均衡组「⚖️ 日本哈希」
-LB_DROPPED = (("round-robin", "轮询"), ("sticky-sessions", "粘性"))  # v6.6.9–v6.7.0 的轮询 / 粘性组，v6.7.1 移除，仅用于迁移
+LB_KINDS = (("consistent-hashing", "哈希"), ("round-robin", "轮询"))  # 每个地区的负载均衡组「⚖️ 日本哈希」「⚖️ 日本轮询」（轮询 v8.10.35 / v11.6.37 预览恢复）
+LB_DROPPED = (("sticky-sessions", "粘性"),)  # v6.6.9–v6.7.0 的粘性组，v6.7.1 移除，仅用于迁移（同期的「⚖️ X轮询」已恢复，不再迁移）
 LB_ALL = dict(LB_KINDS + LB_DROPPED)
 
 
 def lb_name(rname, strategy="consistent-hashing"):
-    """「⚖️ 日本哈希」（旧版还有「⚖️ 日本轮询」「⚖️ 日本粘性」）"""
+    """「⚖️ 日本哈希」「⚖️ 日本轮询」（旧版还有「⚖️ 日本粘性」）"""
     return LB_PREFIX + region_label(rname)[1] + LB_ALL[strategy]
 
 
@@ -717,7 +731,7 @@ def legacy_map():
     m = {LEGACY_AUTO: G_AUTO}
     for rname in [r[0] for r in REGIONS] + [G_OTHER]:
         m[rname] = m[rname + AUTO_SUFFIX] = m[auto_name(rname, AUTO_TAIL_OLD)] = auto_name(rname)
-        m[rname + LB_SUFFIX] = m[lb_old_name(rname)] = lb_name(rname)  # 只剩一致性哈希
+        m[rname + LB_SUFFIX] = m[lb_old_name(rname)] = lb_name(rname)  # 旧单组 → 一致性哈希
         for n in lb_dropped_names(rname):
             m[n] = lb_name(rname)
     return m
@@ -1946,12 +1960,14 @@ def build_config(d, strict=False):
         return g
 
     # 地区分组：「<旗> <地区>竞技」(url-test，选延迟最低) + 「⚖️ <地区>哈希」(load-balance，一致性哈希)
-    autos, lbs = [], []
+    # + 「⚖️ <地区>轮询」(load-balance，round-robin：每条新连接换下一个节点，多线程下载叠加带宽)
+    autos, lbs, rrs = [], [], []
     for rname, flt, exc, matched, total, unknown in region_plan(d, pool, use):
         label = region_label(rname)[1]
         variants = [(auto_name(rname), race, autos, None)]
-        if gc["lb"] and (total >= 2 or unknown):  # 地区有 ≥2 个节点时生成负载均衡组（一致性哈希）
-            variants += [(lb_name(rname, st), "load-balance", lbs, {"strategy": st}) for st, _ in LB_KINDS]
+        if total >= 2 or unknown:  # 地区有 ≥2 个节点时生成负载均衡组：哈希（gc.lb）/ 轮询（gc.rr）
+            variants += [(lb_name(rname, st), "load-balance", rrs if st == "round-robin" else lbs, {"strategy": st})
+                         for st, _ in LB_KINDS if gc["rr" if st == "round-robin" else "lb"]]
         for gname, t, bucket, ex in variants:
             g = with_src(dict({"name": gname}, **group_opts(t, gc, ex)), matched)
             if use:
@@ -1964,7 +1980,7 @@ def build_config(d, strict=False):
     def ordered(items, order):
         rank = {n: i for i, n in enumerate(order)}
         return [g for i, (label, g) in sorted(enumerate(items), key=lambda x: (rank.get(x[1][0], len(order)), x[0]))]
-    region_groups = ordered(autos, AUTO_ORDER) + ordered(lbs, LB_ORDER)
+    region_groups = ordered(autos, AUTO_ORDER) + ordered(lbs, LB_ORDER) + ordered(rrs, LB_ORDER)
     rnames = [g["name"] for g in region_groups]
 
     # 自定义策略组
@@ -11163,6 +11179,107 @@ def memory_once():
     vals = [g for g in got if g.get("inuse")]
     return vals[-1] if vals else {"inuse": 0, "oslimit": 0}
 '''
+_SRC['shunt.lbtopo'] = '''"""「拓扑」页：负载均衡组（⚖️ X轮询 / ⚖️ X哈希 / 自定义 load-balance）与成员节点的实时分布。
+
+GET /api/lbtopo 只在打开「拓扑」页且页面可见时由前端每 2 秒请求一次：
+- 成员、在线、延迟：proxies_merged()（与 /api/px 同一份，含缓存的延迟）
+- 连接数、速度：conns_snapshot()（与连接页 / live / 统计共用的 2 秒快照，不额外请求内核）
+  每条连接的 chains 是反向链 [节点, 组, 上层组…]，组 G 在 chains 里的前一个就是 G 选中的成员；
+  速度 = 两次快照之间每条连接 upload / download 的差值 ÷ 间隔（新连接按全部字节计）。
+"""
+import threading, time
+
+from .core import conns_snapshot
+from .latency import proxies_merged
+
+_ST = {"t": 0.0, "prev": {}, "res": None, "rt": 0.0}
+_LK = threading.Lock()
+STRATEGY_BY_SUFFIX = (("轮询", "round-robin"), ("哈希", "consistent-hashing"))
+
+
+def _delay(p):
+    """最近一次测速延迟；没测过返回 None（前端显示 --），0 为超时"""
+    h = p.get("history") or []
+    if h and isinstance(h[-1], dict):
+        try:
+            return int(h[-1].get("delay") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return None
+
+
+def _strategy(name, p):
+    s = p.get("strategy")
+    if isinstance(s, str) and s:
+        return s
+    for suf, st in STRATEGY_BY_SUFFIX:
+        if name.endswith(suf):
+            return st
+    return ""
+
+
+def lb_topo(px, conns, now, prev=None, prev_t=0.0):
+    """纯函数（测试用）：返回 (结果, 本次每条连接的 {id: (up, down)})"""
+    prev = prev or {}
+    dt = now - prev_t if prev_t else 0
+    fresh = not prev_t or dt <= 0 or dt > 15  # 第一次或间隔太久：速度记 0
+    order = (px.get("GLOBAL") or {}).get("all") or []
+    names = [n for n in order if (px.get(n) or {}).get("type") == "LoadBalance"]
+    names += sorted(n for n, p in px.items() if isinstance(p, dict) and p.get("type") == "LoadBalance" and n not in names)
+    stat = {g: {} for g in names}
+    cur = {}
+    for c in conns or []:
+        if not isinstance(c, dict):
+            continue
+        up, dn = int(c.get("upload") or 0), int(c.get("download") or 0)
+        cid = c.get("id")
+        if cid:
+            cur[cid] = (up, dn)
+        if fresh:
+            du = dd = 0
+        else:
+            pu, pd = prev.get(cid, (0, 0))
+            du, dd = max(0, up - pu), max(0, dn - pd)
+        ch = c.get("chains") or []
+        for i in range(1, len(ch)):
+            g = ch[i]
+            if g in stat:
+                s = stat[g].setdefault(ch[i - 1], [0, 0, 0])
+                s[0] += 1
+                s[1] += du
+                s[2] += dd
+    groups = []
+    for g in names:
+        p = px.get(g) or {}
+        nodes, gc, gu, gd = [], 0, 0, 0
+        for n in p.get("all") or []:
+            q = px.get(n) or {}
+            c, du, dd = stat[g].get(n, (0, 0, 0))
+            up_s, dn_s = (0, 0) if fresh else (int(du / dt), int(dd / dt))
+            nodes.append({"name": n, "type": q.get("type") or "", "alive": q.get("alive", True) is not False,
+                          "delay": _delay(q), "conns": c, "up": up_s, "down": dn_s})
+            gc, gu, gd = gc + c, gu + up_s, gd + dn_s
+        groups.append({"name": g, "strategy": _strategy(g, p), "nodes": nodes, "conns": gc, "up": gu, "down": gd})
+    return {"groups": groups, "t": now}, cur
+
+
+def lb_topo_now():
+    """接口用：多个页面同时打开时 1.5 秒内复用同一结果，避免间隔过短算出的速度失真"""
+    with _LK:
+        now = time.time()
+        if _ST["res"] is not None and now - _ST["rt"] < 1.5:
+            return _ST["res"]
+        px = proxies_merged()
+        if px is None:
+            return None
+        snap = conns_snapshot(timeout=5) or {}
+        if snap and snap is _ST.get("snap") and _ST["res"] is not None:  # 连接快照还没更新（2 秒 TTL）：差值为 0，沿用上次结果
+            return _ST["res"]
+        _ST["snap"] = snap
+        res, cur = lb_topo(px, snap.get("connections") or [], now, _ST["prev"], _ST["t"])
+        _ST.update(prev=cur, t=now, res=res, rt=now)
+        return res
+'''
 _SRC['shunt.logclean'] = '''"""日志自动清理"""
 import os, re, time
 
@@ -13025,6 +13142,7 @@ from .ruleutil import AB_SCOPES
 from .logstream import core_stream, ticket_new, ticket_use
 from .adblock import AB_CACHE, AB_STATE, ab_check, ab_compose, ab_meta, adblock_update, fmt_size, list_id, parse_filter
 from .live import LIVE, memory_once
+from .lbtopo import lb_topo_now
 from .logclean import LOG_STATE, log_clean, log_sizes
 from .schedule import SCHED, TASK_NAMES, run_task, sched_event, subs_update
 from .devices import device_map, read_leases, tun_runtime_error
@@ -13829,7 +13947,7 @@ class H(BaseHTTPRequestHandler):
 
     def save_groups_cfg(self, b):
         gc = gcfg(load())
-        for k in ("lb", "extra", "other", "lazy", "lgbm"):
+        for k in ("lb", "rr", "extra", "other", "lazy", "lgbm"):
             if k in b:
                 gc[k] = bool(b[k])
         try:
@@ -14244,6 +14362,13 @@ class H(BaseHTTPRequestHandler):
         if px is None:
             return self.send(502, {"message": "核心未运行或无法连接"})
         return self.send(200, {"proxies": px_slim(px), "retesting": RETEST["pending"]})
+
+    @api_route("/api/lbtopo", "GET")
+    def api_lbtopo_get(self, m, p, b, q):
+        r = lb_topo_now()
+        if r is None:
+            return self.send(502, {"message": "核心未运行或无法连接"})
+        return self.send(200, r)
 
     @api_route("/api/coreswitch", "GET")
     def api_coreswitch_get(self, m, p, b, q):
