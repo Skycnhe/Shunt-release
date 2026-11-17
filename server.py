@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.6.36"
+PANEL_VERSION = "11.6.37"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -333,7 +333,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.6.36"
+PANEL_VERSION = "11.6.37"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -3786,7 +3786,9 @@ def parse_sub_text(text, fetch=None, depth=0):
         # 名称统一成文本：YAML 里 name: 2024 会解析成数字，后面的筛选正则 / 去重遇到数字会抛 TypeError，整个订阅更新失败
         out = [dict(p, name=str(p["name"]).strip()) for p in ps
                if isinstance(p, dict) and p.get("name") not in (None, "") and p.get("type") and str(p["name"]).strip()]
-        errs = []
+        # 读不出来的条目计入「无法识别已跳过」：以前静默丢弃，节点少了也没有任何提示（同步 shunt）
+        errs = [f"第 {i} 个节点无法识别" for i, p in enumerate(ps, 1)
+                if not (isinstance(p, dict) and p.get("name") not in (None, "") and p.get("type") and str(p["name"]).strip())]
         pv = y.get("proxy-providers") if isinstance(y.get("proxy-providers"), dict) else {}
         # 聚合配置：mihomo 自己会去拉 proxy-providers，sing-box 不会，这里由面板逐个下载展开
         for pname, prov in pv.items():
@@ -4634,7 +4636,7 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, LGBM_URL, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
-from .errlog import log_tail
+from .errlog import log_err, log_tail
 from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, removed_rs_stems, lb_names, lb_old_name, load, rs_safe, write_bytes, write_json
 from .groups import gcfg, prov_set, rx
 from .mihomo import BUILTIN_GEO, mh_has_gvisor, MH_RS_EXTS, build_config, build_rule_providers, dns_cfg, mh_rs_file, policy_parts, tun_params, write_atomic, write_config
@@ -4781,24 +4783,119 @@ def sb_node_outbounds(d, cfg, sub_out, warn):
         except ValueError as e:
             warn.append(f"节点「{p['name']}」：{e}，已跳过")
     skipped = 0
+    convs = {}
     for sname, lst in sub_out.items():
-        prov_names[sname] = []
+        conv = []
         for name, p in lst:
             try:
-                outbounds.append(sb_outbound(p, name))
-                prov_names[sname].append(name)
+                conv.append((name, p, sb_outbound(p, name)))
             except (ValueError, TypeError, AttributeError, KeyError):
-                # 订阅内容不可信：字段类型不对（如 ws-opts / grpc-opts / plugin-opts 是文本或列表）时 .get / .items 抛
-                # AttributeError。以前只捕获 ValueError / TypeError，一个坏节点让整份 sing-box 配置生成失败（订阅更新、改任何
-                # 设置都报错）；现在跳过这个节点，与协议不支持的节点同样计数提示（与 Shunt v8.10.x 一致）
+                # 订阅内容不可信：字段类型不对（如 ws-opts.headers / grpc-opts / plugin-opts 是文本或列表）时 .get / .items
+                # 抛 AttributeError，以前只捕获 ValueError / TypeError，一个坏节点让整份 sing-box 配置生成失败（订阅更新、
+                # 改任何设置都报错，开机 --gen 也生成不了）。跳过这个节点，与协议不支持的节点同样计数提示
                 skipped += 1
+        convs[sname] = conv
+    # detour 可以指向本订阅以外、但在最终配置里存在的出站（手动节点、其他订阅的节点、策略组、DIRECT / direct）：保持不变
+    region_lb = {n for r, _ in REGIONS + [(G_OTHER, None)] for n in lb_names(r) + lb_dropped_names(r) + [lb_old_name(r)]}
+    base_known = set(node_names) | {g["name"] for g in cfg.get("proxy-groups") or [] if g["name"] not in region_lb} | {"DIRECT", "direct"}
+    all_sub = {name for conv in convs.values() for name, _, _ in conv}
+    dropped = {}
+    for sname, conv in convs.items():
+        mine = {name for name, _, _ in conv}
+        convs[sname], dropped[sname] = sb_fix_detour(conv, base_known | (all_sub - mine))
+    # 跨订阅成环（订阅 A 的节点 detour 到订阅 B 的节点，B 的又 detour 回 A）：sb_fix_detour 只看本订阅，把对方当成
+    # 「存在的外部出站」放行，以前整环原样写进配置，sing-box 启动失败；现在整环跳过（依赖它们的在下面的循环里一并跳过）
+    owner = {name: sname for sname, conv in convs.items() for name, _, _ in conv}
+    det = {name: o.get("detour") for conv in convs.values() for name, _, o in conv}
+    for start in list(det):
+        seen, cur = [], start
+        while cur in owner and cur not in seen:
+            seen.append(cur)
+            cur = det.get(cur)
+        if cur in seen:  # 回到了走过的订阅节点：从 cur 开始的这一段是环
+            for n in seen[seen.index(cur):]:
+                sname = owner[n]
+                if n not in dropped[sname]:
+                    dropped[sname].append(n)
+                    convs[sname] = [x for x in convs[sname] if x[0] != n]
+    while True:  # 跨订阅：前置节点在别的订阅里被跳过的，依赖它的也跳过
+        gone = {n for v in dropped.values() for n in v}
+        more = False
+        for sname, conv in convs.items():
+            keep = [x for x in conv if not (x[2].get("detour") in gone and x[2]["detour"] not in base_known)]
+            if len(keep) != len(conv):
+                dropped[sname] += [x[0] for x in conv if x not in keep]
+                convs[sname] = keep
+                more = True
+        if not more:
+            break
+    for sname, conv in convs.items():
+        lost = dropped[sname]
+        if lost:
+            msg = f"订阅「{sname}」中 {len(lost)} 个节点的前置代理（detour）不存在，已跳过：" + "、".join(lost[:5]) + \\
+                  ("…" if len(lost) > 5 else "")
+            warn.append(msg)
+            log_err("sing-box 订阅 detour", msg)
+        prov_names[sname] = [name for name, _, _ in conv]
+        outbounds += [o for _, _, o in conv]
+    if any(o.get("detour") == "direct" for o in outbounds) and not any(o.get("tag") == "direct" for o in outbounds):  # 订阅里常见的小写 direct：补一个同名直连出站，原样保留 detour
+        outbounds.append({"type": "direct", "tag": "direct"})
     if skipped:
-        warn.append(f"订阅中有 {skipped} 个节点的协议 sing-box 不支持（如 ssr、snell、wireguard），已跳过")
+        warn.append(f"订阅中有 {skipped} 个节点的协议 sing-box 不支持（如 ssr、snell、wireguard）或参数格式不正确，已跳过")
     for s in d["subs"]:
         if not sb_sub_cache(s["name"]).get("updated"):
             warn.append(f"订阅「{s['name']}」还没有下载过节点")
     return outbounds, node_names, prov_names
 
+
+def sb_fix_detour(conv, known=()):
+    """sing-box JSON 订阅的节点可带 detour（前置代理，指向订阅里另一个节点的原 tag）。节点全局去重改名后原 tag 可能失效：
+    按「原 tag → 现名」重映射；指向本订阅以外、但在最终配置里存在的出站（known：DIRECT / direct、手动节点、其他订阅节点、策略组）
+    原样保留；哪里都不存在（被筛选 / 协议不支持 / 本来就没有）或成环时跳过该节点，保证整份配置能通过 check。
+    conv: [(现名, 原节点, outbound)]，返回 (保留的 conv, 跳过的节点名)"""
+    if not any(o.get("detour") for _, _, o in conv):
+        return conv, []
+    known = set(known)
+    tag_map = {}
+    for name, p, _ in conv:
+        orig = str(((p.get("_sb") or {}).get("tag")) or p.get("name") or "")
+        tag_map.setdefault(orig, name)
+    names = {name for name, _, _ in conv}
+    dep = {}
+    for name, p, o in conv:
+        det = o.get("detour")
+        if det:
+            det = str(det)
+            if det in tag_map:
+                tgt = tag_map[det]
+            elif det in names or det in known:
+                tgt = det
+            else:
+                tgt = None
+            if tgt is not None:
+                o["detour"] = tgt
+            dep[name] = tgt
+    bad = set()
+    changed = True
+    while changed:  # 前置节点被跳过的，依赖它的也跳过；成环的整环跳过
+        changed = False
+        for name, tgt in dep.items():
+            if name in bad:
+                continue
+            seen, cur = {name}, tgt
+            ok = tgt is not None
+            while ok and cur is not None:
+                if cur not in names:  # 本订阅以外的出站：上面已确认存在
+                    break
+                if cur in bad or cur in seen:
+                    ok = False
+                    break
+                seen.add(cur)
+                cur = dep.get(cur)
+            if not ok:
+                bad.add(name)
+                changed = True
+    return [x for x in conv if x[0] not in bad], [x[0] for x in conv if x[0] in bad]
 
 def sb_smart_lgbm(d):
     """MiChongs Smart 组共用的 LightGBM 模型：放在 -D 目录，缺失时内核自己下载（走「GitHub 加速」），每 72 小时检查更新；
