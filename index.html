@@ -510,6 +510,21 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
 .tp-lg{display:flex;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--sub);margin-top:12px}.tp-lg i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:4px}
 @media (max-width:720px){.tp-map{height:auto!important}.tp-hub{position:relative;transform:none;left:auto!important;top:auto!important;width:auto;aspect-ratio:auto;border-radius:16px;margin-bottom:8px}
   .tp-map svg{display:none}.tp-ns{position:static;display:grid;gap:6px}.tp-n{position:static;transform:none;width:auto}}
+/* 概览「当前负载均衡」小拓扑（29-topo.js renderOvTopo） */
+.ovcol{display:flex;flex-direction:column;gap:16px;min-width:0}.ovcol>.card{margin:0;min-width:0;container-type:inline-size}.ovcol>#ovtp{flex:1}
+.otp{position:relative;display:flex;align-items:center;gap:44px;margin-top:10px}.otp svg{position:absolute;inset:0;pointer-events:none;overflow:visible;fill:none}
+.otp-hub{position:relative;z-index:1;flex:none;width:96px;height:96px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;text-align:center;padding:8px;
+  border:1.5px solid var(--pri);background:linear-gradient(var(--nsel),var(--nsel)),var(--bg);font-size:11px;font-variant-numeric:tabular-nums}
+.otp-hub b{font-size:12.5px;font-weight:650;word-break:break-all;line-height:1.25;margin-bottom:2px}
+.otp-ns{position:relative;z-index:1;flex:1;min-width:0;display:grid;gap:4px}
+.otp-n{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 8px;background:linear-gradient(var(--nbg),var(--nbg)),var(--bg);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.otp-n b{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis}.otp-n .c{color:var(--sub);font-size:11.5px}.otp-n .tp-dn{font-size:11.5px;min-width:64px;text-align:right}
+.otp-n.use{border-color:var(--pri);background:linear-gradient(var(--nsel),var(--nsel)),var(--bg)}.otp-n.off{opacity:.45}.otp-n.off b{text-decoration:line-through}.otp-n.off .tp-dot{background:var(--bad)}
+.otp-more{font-size:11.5px;color:var(--pri);cursor:pointer;padding:2px 2px 0}
+/* 概览紧凑：顶部四个小卡数值与副标题同一行；实时流量图矮一点 */
+@media (min-width:721px){#ov .g4 .stat{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;align-items:baseline;padding:12px 16px}
+  #ov .g4 .stat .k,#ov .g4 .stat .seg{grid-column:1/-1}#ov .g4 .stat .s{text-align:right;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ov .g4 .stat .v{font-size:22px}}
+@media (max-width:720px){.ovcol{display:contents}#ov .o6{order:6}.otp{gap:28px}.otp-hub{width:84px;height:84px}}
 </style>
 </head>
 <body><div id="bgimg"></div><div id="bgdim"></div>
@@ -561,14 +576,17 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
         <div class="iplist">
           <div class="ipr"><span class="k">本地公网</span><b id="ip-direct">-</b><span class="mut small" id="loc-direct"></span></div>
           <div class="ipr"><span class="k">代理出口</span><b id="ip-proxy">-</b><span class="mut small" id="loc-proxy"></span></div>
+          <div class="ipr"><span class="k">出口节点</span><b id="ip-node" class="w" style="font-weight:600">-</b><span class="mut small" id="ip-node-d"></span></div>
         </div></div>
       <div class="o3 card"><div class="row"><h3 class="sp" style="margin:0">实时流量（近 2 分钟）</h3><span class="small" style="color:var(--pri)">● 下载</span><span class="small" style="color:var(--ok)">● 上传</span></div>
         <div class="spd"><span class="dn"><span class="k">↓</span><b id="ov-down">-</b></span><span class="upx"><span class="k">↑</span><b id="ov-up">-</b></span><span class="monly mut small" id="ov-tot" style="margin-left:auto"></span></div>
-        <canvas id="chart" height="110" style="width:100%;margin-top:8px;display:block"></canvas></div>
+        <canvas id="chart" height="84" style="width:100%;margin-top:8px;display:block"></canvas></div>
     </div>
     <div class="ovpair">
-      <div class="o5 card" id="ovab"><div class="row"><div class="sp"><h3 style="margin:0">域名过滤</h3><div class="mut small" style="margin-top:2px">最近 24 个小时段 · 核心日志统计的连接请求与广告拦截</div></div><a class="btn g sm" onclick="go('广告拦截')">管理</a><label class="sw sm"><input type="checkbox" id="ovab-on"><span></span></label></div>
+      <div class="ovcol"><div class="o5 card" id="ovab"><div class="row"><div class="sp"><h3 style="margin:0">域名过滤</h3><div class="mut small" style="margin-top:2px">最近 24 个小时段 · 核心日志统计的连接请求与广告拦截</div></div><a class="btn g sm" onclick="go('广告拦截')">管理</a><label class="sw sm"><input type="checkbox" id="ovab-on"><span></span></label></div>
         <div id="ovab-body"></div></div>
+      <div class="o6 card" id="ovtp"><div class="row"><div class="sp"><h3 style="margin:0">🕸️ 当前负载均衡</h3><div class="mut small" style="margin-top:2px" id="ovtp-sub"></div></div><a class="btn g sm" onclick="go('拓扑')">拓扑</a></div>
+        <div id="ovtp-body"></div></div></div>
       <div class="o2 card" id="qs-card"><div class="row"><h3 class="sp" style="margin:0">🚀 节点选择</h3><button class="btn g sm" id="qs-btn" onclick="qsTest(this)">测速</button></div>
         <div id="qs-now" class="mut small w qs-now"></div>
         <div id="qs" class="qs"></div></div>
@@ -1238,7 +1256,7 @@ async function loadPX(){const j=await api('/api/px');return j.proxies||{}}
 async function loadQS(){let px;try{px=await loadPX()}catch(e){$('#qs-card').classList.add('hide');return}
   try{const j=await api('/api/direct_delay');if(j.ms>0)DIRECT_D=j.ms}catch(e){}
   const g=px[SEL];$('#qs-card').classList.toggle('hide',!g);if(!g)return;PROXIES=px;
-  const ch=nowChain(SEL);$('#qs-now').textContent=ch.length?'当前：'+ch.join(' → '):'';
+  const ch=nowChain(SEL);$('#qs-now').textContent=ch.length?'当前：'+ch.join(' → '):'';loadOvTopo();{const last=ch[ch.length-1]||'',d=last&&!isGroup(last)?lastDelay(last):undefined;$('#ip-node').textContent=last||'-';$('#ip-node').title=ch.join(' → ');$('#ip-node-d').textContent=last&&isGroup(last)?(PROXIES[last]?.type==='LoadBalance'?'负载均衡，按连接分到多个节点':''):(d?d+' ms':'')}
   const tested=grpTested(g.all);
   $('#qs').innerHTML=g.all.map(n=>{if(HIDEDEAD&&isHideable(n,g.now,tested))return '';const d=lastDelay(n),p=px[n]||{},sub=p.type==='Smart'?'智能竞技':p.now?'→ '+p.now:(p.type==='LoadBalance'?'负载均衡':'');
     return `<div class="node ${n===g.now?'sel':''}" onclick="qsPick(${jsq(n)})" title="${esc(n)}"><div class="n">${esc(n)}</div><div class="d"><span class="mut" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub)}</span><span class="${dcls(d)}">${dtxt(d)}</span></div></div>`}).join('')}
@@ -1282,7 +1300,7 @@ const WDS={ok:['ok','正常'],restarting:['warn','正在重启核心'],direct:['
   $('#wd-status').innerHTML=`<span class="${s[0]}">● ${s[1]}</span>`+(w.last_check?` <span class="mut small">上次检查 ${new Date(w.last_check*1000).toLocaleTimeString('zh-CN',{hour12:false})}</span>`:'');
   const c=w.counts||{},ne=(w.events||[]).length;
   $('#wd-events').innerHTML=(ne?`<div class="mut small" style="margin-bottom:6px">最近 ${ne}/${w.max||20} 条记录：自动重启 <b>${c.restart||0}</b> 次 · 切换直连 <b>${c.direct||0}</b> 次 · 恢复 <b>${c.recover||0}</b> 次（满 ${w.max||20} 条自动删除最旧的）</div>`:'')+(w.events||[]).slice(0,WD_ALL?99:WD_N).map(e=>`<div class="ev"><span class="mut">${new Date(e.t*1000).toLocaleString('zh-CN',{hour12:false})}</span> ${esc(e.msg)}</div>`).join('')+(ne>WD_N?`<a class="small" style="cursor:pointer;color:var(--pri);display:inline-block;margin-top:6px" onclick="WD_ALL=!WD_ALL;renderWD()">${WD_ALL?'收起':'展开全部 '+ne+' 条'}</a>`:'')||'<div class="mut small">暂无事件</div>'}
-let WD_ALL=false;const WD_N=5;
+let WD_ALL=false;const WD_N=3;
 
 // IP 信息：本地公网 / 代理出口 + 归属地。隐藏时 IP 和归属地都换成假的（本地公网换成别的省市运营商，
 // 代理出口只留国家），截图不泄露真实位置；同一浏览器每次显示同一个假地址，不会刷新一下变一个
@@ -1438,7 +1456,7 @@ function renderGroups(){
     const all=HIDEDEAD?vis.filter(n=>!isHideable(n,p.now,tested)):vis,hid=vis.length-all.length;
     const allH=all.filter(n=>hfVisible(n,p.now)),hidH=all.length-allH.length;
     const ch=nowChain(g),dl=lastDelay(g),lb=p.type==='LoadBalance';
-    const sub=lb?`策略：<b>${esc(LBS[m.strategy]||m.strategy||'-')}</b>`:p.type==='Smart'?(p.fixed?'已固定 → <b>'+esc(p.fixed)+'</b>':'智能竞技：按延迟 / 丢包 / 速度打分'+(p.uselightgbm||p.useLightGBM?' + LightGBM':'')):ch.length?'→ <b>'+ch.map(esc).join(' → ')+'</b>':'';
+    const sub=lb?`<span title="${m.strategy==='consistent-hashing'||!m.strategy?'按主域名（eTLD+1）固定节点：同一网站的子域名走同一节点，但 google.com / gstatic.com、x.com / twimg.com 这类不同主域名可能分到不同节点；登录敏感的服务（Google、X、AI）建议选竞技组':''}">策略：<b>${esc(LBS[m.strategy]||m.strategy||'-')}</b></span>`:p.type==='Smart'?(p.fixed?'已固定 → <b>'+esc(p.fixed)+'</b>':'智能竞技：按延迟 / 丢包 / 速度打分'+(p.uselightgbm||p.useLightGBM?' + LightGBM':'')):ch.length?'→ <b>'+ch.map(esc).join(' → ')+'</b>':'';
     const nodesN=allH.filter(n=>!isGroup(n)).length,groupsN=allH.length-nodesN;
     const cnt=[nodesN?nodesN+' 个节点':'',groupsN?groupsN+' 个分组':'',hid?`<span class="bad">已隐藏 ${hid} 个超时 / 无延迟</span>`:'',hidH?`<span class="bad">健康隐藏 ${hidH} 个</span>`:''].filter(Boolean).join(' · ');
     const pin=p.fixed?`<span class="tag pin" title="点击取消固定，恢复自动选择" onclick="event.stopPropagation();unfix(${i})">📌 已固定 ✕</span>`:'';
@@ -2102,7 +2120,7 @@ async function runDiag(){const b=$('#diag-btn');b.disabled=true;b.textContent='�
 // 流量曲线
 const HIST={up:[],down:[]};
 function pushHist(u,d){HIST.up.push(u);HIST.down.push(d);if(HIST.up.length>120){HIST.up.shift();HIST.down.shift()}if(TAB==='概览')drawChart()}
-function drawChart(){const c=$('#chart');if(!c||c.offsetParent===null)return;const r=devicePixelRatio,w=c.width=c.clientWidth*r,h=c.height=110*r,x=c.getContext('2d');
+function drawChart(){const c=$('#chart');if(!c||c.offsetParent===null)return;const r=devicePixelRatio,w=c.width=c.clientWidth*r,h=c.height=84*r,x=c.getContext('2d');
   x.clearRect(0,0,w,h);const max=Math.max(1024,...HIST.up,...HIST.down)*1.15;x.font=(11*r)+'px -apple-system,sans-serif';
   x.strokeStyle=cssv('--line');x.lineWidth=1;for(let i=1;i<=3;i++){const y=Math.round(h-i*(h-8*r)/3)+.5;x.beginPath();x.moveTo(0,y);x.lineTo(w,y);x.stroke()}
   x.fillStyle=cssv('--sub');x.fillText(fmt(max)+'/s',6*r,14*r);
@@ -2288,6 +2306,33 @@ function tpDraw(){document.querySelectorAll('.tp-g.open .tp-map').forEach(tp=>{c
     o+=!x.alive?`<path d="${d}" stroke="var(--bad)" stroke-opacity=".35" stroke-width="1.2" stroke-dasharray="4 4"/>`:x.conns?`<path d="${d}" stroke="var(--pri)" stroke-opacity="${(.5+.45*x.conns/mx).toFixed(2)}" stroke-width="${(1.5+4.5*Math.sqrt(x.conns/mx)).toFixed(1)}" stroke-linecap="round"/>`:`<path d="${d}" stroke="var(--line)" stroke-width="1.2"/>`});
   svg.setAttribute('width',tp.clientWidth);svg.setAttribute('height',tp.clientHeight);svg.innerHTML=o})}
 addEventListener('resize',()=>{if(TAB==='拓扑'&&TP)tpDraw()});
+// 概览「当前负载均衡」小拓扑：🚀 节点选择当前链路上的负载均衡组 → 成员节点（与拓扑页同一份 /api/lbtopo），只在概览可见时每 2 秒刷新
+let OTP=null,OTPT=0,OTPB=false;const OTP_MAX=8;
+function otpGroup(){const ch=typeof nowChain==='function'?nowChain(SEL):[];return ch.find(n=>PROXIES[n]?.type==='LoadBalance')||''}
+async function loadOvTopo(){const card=$('#ovtp');if(!card||OTPB)return;clearTimeout(OTPT);const gn=otpGroup();
+  if(!gn){OTP=null;renderOvTopo('');OTPT=setTimeout(ovTopoTick,5000);return}
+  OTPB=true;try{OTP=await api('/api/lbtopo')}catch(e){OTP=null}OTPB=false;renderOvTopo(gn);OTPT=setTimeout(ovTopoTick,2000)}
+function ovTopoTick(){if(TAB!=='概览')return;if(document.hidden){OTPT=setTimeout(ovTopoTick,2000);return}loadOvTopo()}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&TAB==='概览')loadOvTopo()});
+function renderOvTopo(gn){const el=$('#ovtp-body'),sub=$('#ovtp-sub');if(!el)return;
+  const ch=typeof nowChain==='function'?nowChain(SEL):[];
+  if(!gn){sub.textContent=ch.length?'当前：'+ch.join(' → '):'';el.innerHTML='<div class="mut small" style="margin-top:8px">🚀 节点选择当前没走负载均衡组。在右边选一个「⚖️ X轮询」或「⚖️ X哈希」后，这里实时显示它把连接分到了哪些节点</div>';return}
+  const g=(OTP?.groups||[]).find(x=>x.name===gn);
+  if(!g){sub.textContent='当前：'+ch.join(' → ');el.innerHTML='<div class="mut small" style="margin-top:8px">正在读取…</div>';return}
+  const ns=g.nodes||[],ok=ns.filter(n=>n.alive).length,used=ns.filter(n=>n.conns).length;
+  sub.innerHTML=`${esc(g.name)} · ${TP_ST[g.strategy]||'负载均衡'} · ${ok}/${ns.length} 健康 · 在用 ${used} · ⇅ ${g.conns}`;
+  const list=ns.slice().sort((a,b)=>b.alive-a.alive||b.conns-a.conns||(b.down-a.down)),show=list.slice(0,OTP_MAX),more=list.length-show.length;
+  el.innerHTML=`<div class="otp"><svg></svg><div class="otp-hub"><b>${esc(g.name.replace(/^⚖️\s*/,''))}</b><span class="tp-dn">↓ ${tpSpd(g.down)}</span><span class="tp-up">↑ ${tpSpd(g.up)}</span></div>
+    <div class="otp-ns">${show.map(n=>`<div class="otp-n ${n.alive?'':'off'} ${n.conns?'use':''}" data-n="${esc(n.name)}"><span class="tp-dot"></span><b title="${esc(n.name)}">${esc(n.name)}</b>${n.alive?`<span class="c">⇅ ${n.conns}</span><span class="tp-dn">↓ ${tpSpd(n.down)}</span>`:'<span class="c">已剔除</span>'}</div>`).join('')}
+    ${more>0?`<a class="otp-more" onclick="go('拓扑')">还有 ${more} 个节点 · 打开拓扑页</a>`:''}</div></div>`;
+  otpDraw(g)}
+function otpDraw(g){const tp=$('#ovtp-body .otp');if(!tp)return;const svg=tp.querySelector('svg'),b=tp.getBoundingClientRect(),h=tp.querySelector('.otp-hub').getBoundingClientRect();
+  if(!b.width){svg.innerHTML='';return}
+  const x1=h.right-b.left,y1=h.top-b.top+h.height/2,by={};(g.nodes||[]).forEach(x=>by[x.name]=x);const mx=Math.max(1,...(g.nodes||[]).map(x=>x.conns));let o='';
+  tp.querySelectorAll('.otp-n').forEach(e=>{const x=by[e.dataset.n];if(!x)return;const r=e.getBoundingClientRect(),x2=r.left-b.left,y2=r.top-b.top+r.height/2,dx=(x2-x1)*.55,d=`M${x1},${y1}C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`;
+    o+=!x.alive?`<path d="${d}" stroke="var(--bad)" stroke-opacity=".35" stroke-width="1" stroke-dasharray="3 3"/>`:x.conns?`<path d="${d}" stroke="var(--pri)" stroke-opacity="${(.5+.45*x.conns/mx).toFixed(2)}" stroke-width="${(1.3+3.5*Math.sqrt(x.conns/mx)).toFixed(1)}" stroke-linecap="round"/>`:`<path d="${d}" stroke="var(--line)" stroke-width="1"/>`});
+  svg.setAttribute('width',b.width);svg.setAttribute('height',b.height);svg.innerHTML=o}
+addEventListener('resize',()=>{if(TAB==='概览'&&OTP){const g=(OTP.groups||[]).find(x=>x.name===otpGroup());if(g)otpDraw(g)}});
 </script>
 </body>
 </html>
