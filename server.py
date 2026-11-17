@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.7.0"
+PANEL_VERSION = "11.7.1"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -334,7 +334,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.7.0"
+PANEL_VERSION = "11.7.1"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -4757,8 +4757,11 @@ def build_singbox(d):
                                        "default_mode": mode},
                          "cache_file": {"enabled": True, "path": os.path.join(SB_DIR, "cache.db"), "store_fakeip": True}},
     }
+    if sb_has_unified():
+        conf["experimental"]["urltest_unified_delay"] = True
     if smart and gc.get("lgbm") and any(o["type"] == "smart" for o in group_out):
         conf["experimental"]["smart"] = sb_smart_lgbm(d)
+        conf["experimental"]["geox"] = sb_lgbm_geox(d)
     if endpoints:
         conf["endpoints"] = endpoints
     need = {tag: rsd for tag, rsd in rule_sets.items() if rsd["kind"] != "inline"}
@@ -4921,6 +4924,35 @@ def sb_smart_lgbm(d):
                          "auto_update": True, "update_interval": "72h", "download_detour": "DIRECT"}}
 
 
+SB_IDLE_DEFAULT = 1800  # urltest / loadbalance / smart 默认 idle_timeout 30m
+
+
+def sb_idle(o, keep):
+    """测速组的 idle_timeout：不懒惰（keep）时 720h 一直测；否则测速间隔超过默认 30m 时设成与间隔相同。
+    sing-box 要求 interval ≤ idle_timeout，否则启动时报「interval must be less or equal than idle_timeout」退出，
+    而 sing-box check 不会发现（组在启动时才校验）；面板允许测速间隔填到 86400 秒"""
+    iv = int(o["interval"].rstrip("s"))
+    if keep:
+        o["idle_timeout"] = "720h"
+    elif iv > SB_IDLE_DEFAULT:
+        o["idle_timeout"] = f"{iv}s"
+    return o
+
+
+GEOX_MMDB = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/"
+
+
+def sb_lgbm_geox(d):
+    """LightGBM 要国家 / ASN 库（MiChongs 内核缺失时自动下载 GeoLite2）。不写 geox 时它用隐式默认 HTTP 客户端下载，
+    1.14+ 把这当作已废弃功能直接 FATAL 退出（sing-box check 能过、启动后才挂，看门狗会反复重启）。
+    显式经 DIRECT 下载，填了「GitHub 加速」时走加速"""
+    gh = (d.get("gh_proxy") or "").rstrip("/")
+    g = {"download_detour": "DIRECT"}
+    if gh:
+        g["url"] = {"mmdb": f"{gh}/{GEOX_MMDB}GeoLite2-Country.mmdb", "asn": [f"{gh}/{GEOX_MMDB}GeoLite2-ASN.mmdb"]}
+    return g
+
+
 def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False, smart=False):
     """策略组：官方内核下地区负载均衡与自动优选相同 → 去掉并重定向引用；其余 load-balance / fallback 改为 urltest。
     魔改版内核（fork）：负载均衡组生成 loadbalance（多节点聚合），只有故障转移改为 urltest。
@@ -4965,24 +4997,19 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False, smart=
             o = {"type": "loadbalance", "tag": g["name"], "outbounds": members,
                  "strategy": g.get("strategy") or gc.get("strategy") or "consistent-hashing",
                  "url": g.get("url") or gc["url"], "interval": f"{max(int(g.get('interval') or gc['interval']), 30)}s"}
-            if not g.get("lazy", True):
-                o["idle_timeout"] = "720h"
+            sb_idle(o, not g.get("lazy", True))
         elif g["type"] == "url-test" and g["name"] in races:  # MiChongs smart：健康检查沿用组配置；interval 不能大于 idle_timeout（默认 30m）
             iv = max(int(g.get("interval") or gc["interval"]), 30)
             o = {"type": "smart", "tag": g["name"], "outbounds": members, "url": g.get("url") or gc["url"], "interval": f"{iv}s",
                  "tolerance": int(g.get("tolerance") if g.get("tolerance") is not None else gc["tolerance"]),
                  "interrupt_exist_connections": False, "use_lightgbm": bool(gc.get("lgbm"))}
-            if not g.get("lazy", True):
-                o["idle_timeout"] = "720h"
-            elif iv > 1800:
-                o["idle_timeout"] = f"{iv}s"
+            sb_idle(o, not g.get("lazy", True))
         else:
             o = {"type": "urltest", "tag": g["name"], "outbounds": members, "url": g.get("url") or gc["url"],
                  "interval": f"{max(int(g.get('interval') or gc['interval']), 30)}s",
                  "tolerance": int(g.get("tolerance") if g.get("tolerance") is not None else gc["tolerance"]),
                  "interrupt_exist_connections": False}
-            if g["type"] == "url-test" and not g.get("lazy", True):
-                o["idle_timeout"] = "720h"
+            sb_idle(o, g["type"] == "url-test" and not g.get("lazy", True))
         outbounds.append(o)
     return alias, outbounds
 
@@ -5667,19 +5694,34 @@ def sb_has_smart(path=None):
     官方版 / reF1nd 报 unknown outbound type → False；换内核后缓存失效，重新生成配置时自动回退 urltest"""
     path = path or SB_BIN
 
-    def probe():
-        import tempfile
-        fd, tmp = tempfile.mkstemp(suffix=".json")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(SMART_PROBE, f)
-            code, out = sh(f"{shlex.quote(path)} check -c {shlex.quote(tmp)}", timeout=15)
-        finally:
-            os.unlink(tmp)
-        if code == 0:
-            return True, True
-        return "unknown" in out, False  # 明确不认识这个类型才缓存 False；超时等错误下次再试
-    return _cap_cached(_SMART, path, False, probe)
+    return _cap_cached(_SMART, path, False, lambda: _check_probe(path, SMART_PROBE))
+
+
+def _check_probe(path, cfg):
+    """用最小配置跑一次 sing-box check：通过 → (True, True)；明确报 unknown（不认识的类型 / 字段）才缓存 False，超时等错误下次再试"""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f)
+        code, out = sh(f"{shlex.quote(path)} check -c {shlex.quote(tmp)}", timeout=15)
+    finally:
+        os.unlink(tmp)
+    if code == 0:
+        return True, True
+    return "unknown" in out, False
+
+
+_UNIFIED = {"key": None, "v": False}
+UNIFIED_PROBE = {"log": {"disabled": True}, "outbounds": [{"type": "direct", "tag": "d"}], "experimental": {"urltest_unified_delay": True}}
+
+
+def sb_has_unified(path=None):
+    """内核支持 experimental.urltest_unified_delay 吗（reF1nd / MiChongs 魔改版有，官方版没有）。
+    sing-box 默认测速用新连接、把 TCP + 代理握手 + TLS 全算进延迟，同一节点数值是 mihomo（unified-delay）的 2–4 倍，
+    看起来「延迟高」；开了以后与 mihomo 一样只计一次往返，地区竞技组按真实延迟挑节点"""
+    path = path or SB_BIN
+    return _cap_cached(_UNIFIED, path, False, lambda: _check_probe(path, UNIFIED_PROBE))
 
 
 def sb_has_gvisor(path=None):
