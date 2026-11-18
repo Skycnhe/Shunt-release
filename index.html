@@ -1272,12 +1272,12 @@ async function loadPX(){const j=await api('/api/px');return j.proxies||{}}
 async function loadQS(){let px;try{px=await loadPX()}catch(e){$('#qs-card').classList.add('hide');return}
   try{const j=await api('/api/direct_delay');if(j.ms>0)DIRECT_D=j.ms}catch(e){}
   const g=px[SEL];$('#qs-card').classList.toggle('hide',!g);if(!g)return;PROXIES=px;
-  const ch=nowChain(SEL);$('#qs-now').textContent=ch.length?'当前：'+ch.join(' → '):'';loadOvTopo();{const last=ch[ch.length-1]||'',d=last&&!isGroup(last)?lastDelay(last):undefined;$('#ip-node').textContent=last||'-';$('#ip-node').title=ch.join(' → ');$('#ip-node-d').textContent=last&&isGroup(last)?(PROXIES[last]?.type==='LoadBalance'?'负载均衡，按连接分到多个节点':''):(d?d+' ms':'')}
+  const ch=nowChain(SEL);$('#qs-now').textContent=ch.length?'当前：'+ch.join(' → ')+(PROXIES[ch[0]]?.type==='LoadBalance'?'　⚠ 主出口是负载均衡，建议改用竞技组':''):'';$('#qs-now').title=PROXIES[ch[0]]?.type==='LoadBalance'&&typeof LB_TIP==='string'?LB_TIP:'';loadOvTopo();{const last=ch[ch.length-1]||'',d=last&&!isGroup(last)?lastDelay(last):undefined;$('#ip-node').textContent=last||'-';$('#ip-node').title=ch.join(' → ');$('#ip-node-d').textContent=last&&isGroup(last)?(PROXIES[last]?.type==='LoadBalance'?'负载均衡，按连接分到多个节点':''):(d?d+' ms':'')}
   const tested=grpTested(g.all);
   $('#qs').innerHTML=g.all.map(n=>{if(HIDEDEAD&&isHideable(n,g.now,tested))return '';const d=lastDelay(n),p=px[n]||{},sub=p.type==='Smart'?'智能竞技':p.now?'→ '+p.now:(p.type==='LoadBalance'?'负载均衡':'');
     return `<div class="node ${n===g.now?'sel':''}" onclick="qsPick(${jsq(n)})" title="${esc(n)}"><div class="n">${esc(n)}</div><div class="d"><span class="mut" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub)}</span><span class="${dcls(d)}">${dtxt(d)}</span></div></div>`}).join('')}
 // 按名字切换（不按序号）：从节点页切回概览时 PROXIES 已被节点页换成新数据、这里的列表还没重画，序号会指到别的组
-async function qsPick(n){if(typeof n!=='string'||!n)return;try{await core('/proxies/'+encodeURIComponent(SEL),'PUT',{name:n});toast(SEL+' → '+n);loadQS()}catch(e){toast(e.message)}}
+async function qsPick(n){if(typeof n!=='string'||!n)return;if(typeof lbConfirm==='function'&&!lbConfirm(SEL,n))return;try{await core('/proxies/'+encodeURIComponent(SEL),'PUT',{name:n});toast(SEL+' → '+n);loadQS()}catch(e){toast(e.message)}}
 async function qsTest(b){b.disabled=true;b.textContent='测速中…';
   const gs=[SEL].concat((PROXIES[SEL]?.all||[]).filter(n=>PROXIES[n]?.all));
   await Promise.all(gs.map(testGroupKeep));
@@ -1497,7 +1497,10 @@ function renderPolicies(){const sel=GL.filter(g=>g!=='GLOBAL'&&PROXIES[g].type==
   $('#policies').innerHTML=sel.map(g=>{const p=PROXIES[g],i=GL.indexOf(g),d=lastDelay(g);
     return `<div class="pitem"><div class="pl"><span>${esc(g)}</span>${(STATE.group_meta||{})[g]?.kind==='custom'?'<span class="tag k-cus">自定义</span>':''}<span class="sp"></span><span class="${dcls(d)} small">${d!==undefined?dtxt(d):''}</span></div>
       <select onchange="pickName(${i},this.value)">${p.all.map(n=>`<option ${n===p.now?'selected':''} value="${esc(n)}">${isGroup(n)?'📁 ':''}${esc(n)}</option>`).join('')}</select></div>`}).join('')}
-async function pickName(i,n){const g=GL[i],p=PROXIES[g];if(!p)return;
+const LB_MAIN=['🚀 节点选择','📹 YouTube','🔍 Google','📲 Telegram','🤖 AI 服务','🎬 Netflix','🐟 漏网之鱼','🛡️ Google 专用'];
+const LB_TIP='负载均衡（轮询 / 哈希）把连接分到组内多个节点：单线程下载只走其中一个，出口 IP 也会变。日常主出口建议用竞技组';
+function lbConfirm(g,n){return !(PROXIES[n]?.type==='LoadBalance'&&LB_MAIN.includes(g))||confirm(`把「${g}」指向「${n}」？\n\n${LB_TIP}。`)}
+async function pickName(i,n){const g=GL[i],p=PROXIES[g];if(!p)return;if(!lbConfirm(g,n))return;
   if(p.type==='LoadBalance'){toast('负载均衡组按策略自动分配连接，不能手动指定节点');return}
   if(!['Selector','URLTest','Fallback','Smart'].includes(p.type)){toast('该组不支持手动切换');return}
   try{await core('/proxies/'+encodeURIComponent(g),'PUT',{name:n});
