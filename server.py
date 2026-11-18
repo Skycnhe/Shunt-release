@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.7.2-preview.782+9e832df"
+PANEL_VERSION = "11.7.3-preview.783+0103ab8"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -335,7 +335,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.7.2-preview.782+9e832df"
+PANEL_VERSION = "11.7.3-preview.783+0103ab8"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2949,7 +2949,35 @@ def _reload_core(prev, force=False):
         return _reload_locked(prev, force)
 
 
+STALE_TMP_AGE = 120
+
+
+def clean_stale_tmp(now=None):
+    """删掉上次没删成的临时配置（config.json.newN / config.yaml.newN）：重载中途面板进程被杀（在线更新、看门狗重启、
+    断电）时 finally 来不及执行，旧版本会一直留在 /etc/sing-box 里。持 _RELOAD_LOCK 调用，同进程不会有正在用的临时文件；
+    只删 2 分钟前的，防别的进程（--gen 自检）正在写"""
+    now = now or time.time()
+    n = 0
+    for final in (SB_CONF, os.path.join(CONF_DIR, "config.yaml")):
+        dr, base = os.path.split(final)
+        try:
+            names = os.listdir(dr)
+        except OSError:
+            continue
+        for f in names:
+            if f.startswith(base + ".new") and f[len(base) + 4:].isdigit():
+                fp = os.path.join(dr, f)
+                try:
+                    if now - os.path.getmtime(fp) > STALE_TMP_AGE:
+                        os.remove(fp)
+                        n += 1
+                except OSError:
+                    pass
+    return n
+
+
 def _reload_locked(prev, force):
+    clean_stale_tmp()
     tmp = None
     unchanged = False
     old = written = None
@@ -4652,9 +4680,9 @@ _SRC['shunt.sb_config'] = '''"""生成 sing-box 配置"""
 import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, urllib.error
 
 from .base import (
-    AB_DIR, BUILTIN_POLICIES, CN_ECS, LGBM_URL, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
+    PANEL_DIR, AB_DIR, BUILTIN_POLICIES, CN_ECS, LGBM_URL, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err, log_tail
-from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, removed_rs_stems, lb_names, lb_old_name, load, rs_safe, write_bytes, write_json
+from .data import adopt_rs_files, auto_name, drop_legacy_rs_files, lb_dropped_names, removed_rs_stems, lb_names, lb_old_name, load, read_json, rs_safe, write_bytes, write_json
 from .groups import gcfg, prov_set, rx
 from .mihomo import BUILTIN_GEO, mh_has_gvisor, MH_RS_EXTS, build_config, build_rule_providers, dns_cfg, mh_rs_file, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
@@ -4668,6 +4696,10 @@ from .ruleutil import LOGICAL_RX, _mh_domain, split_lines, split_rule, strip_inl
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
+
+TUN_MTU = 9000  # TUN 显式用 sing-box 官方默认 9000：个别魔改内核 / 旧配置残留 1280 会让经 TUN 的 UDP / QUIC 被切小包、吞吐下降；TCP 走 auto_redirect 不受影响
+
+
 def build_singbox(d):
     """把 build_config 生成的 mihomo 结构翻译成 sing-box 配置；返回 (配置, 警告列表, 需要的规则集文件)"""
     _adopt_rs(d)
@@ -4677,6 +4709,7 @@ def build_singbox(d):
     cfg = build_config(d)
     v6 = bool(d.get("ipv6"))
     gc = gcfg(d)
+    gc["_lbd"] = lb_delays()
     warn = []
     outbounds, node_names, prov_names = sb_node_outbounds(d, cfg, sub_out, warn)
     smart = sb_has_smart()
@@ -4954,6 +4987,34 @@ def sb_lgbm_geox(d):
     return g
 
 
+LB_TOL = 150  # 负载均衡组只用延迟 ≤ 最低 + 这么多毫秒的节点（与竞技组容差取大）
+LB_DELAY_MAX_AGE = 86400
+
+
+def lb_delays(now=None):
+    """面板缓存的各节点最近一次延迟（delays.json，24 小时内的）：{节点: 毫秒}，0 = 超时"""
+    now = now or time.time()
+    raw = read_json(os.path.join(PANEL_DIR, "delays.json"), {}) or {}
+    out = {}
+    for n, v in raw.items() if isinstance(raw, dict) else ():
+        if isinstance(v, dict) and isinstance(v.get("d"), int) and now - (v.get("at") or 0) <= LB_DELAY_MAX_AGE:
+            out[n] = v["d"]
+    return out
+
+
+def lb_members(members, dl, tol):
+    """负载均衡组成员按延迟筛：内核（reF1nd / MiChongs loadbalance）只跳过测速失败的节点，慢节点照样分到连接。
+    有 ≥2 个测过且可用的节点时，只留延迟 ≤ 最低 + tol 的（至少留最快 2 个），超时 / 没测过的去掉；测过的不足 2 个时原样不动"""
+    ok = [m for m in members if (dl.get(m) or 0) > 0]
+    if len(ok) < 2:
+        return members
+    lo = min(dl[m] for m in ok)
+    keep = {m for m in ok if dl[m] <= lo + tol}
+    if len(keep) < 2:
+        keep = set(sorted(ok, key=lambda m: (dl[m], ok.index(m)))[:2])
+    return [m for m in members if m in keep]
+
+
 def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False, smart=False):
     """策略组：官方内核下地区负载均衡与自动优选相同 → 去掉并重定向引用；其余 load-balance / fallback 改为 urltest。
     魔改版内核（fork）：负载均衡组生成 loadbalance（多节点聚合），只有故障转移改为 urltest。
@@ -4995,6 +5056,7 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, fork=False, smart=
         if g["type"] == "select":
             o = {"type": "selector", "tag": g["name"], "outbounds": members, "interrupt_exist_connections": False}
         elif g["type"] == "load-balance" and fork:  # 魔改版：多节点聚合，按策略把连接分摊到组内各节点，自动跳过不健康的节点
+            members = lb_members(members, gc.get("_lbd") or {}, max(LB_TOL, int(gc.get("tolerance") or 0)))
             o = {"type": "loadbalance", "tag": g["name"], "outbounds": members,
                  "strategy": g.get("strategy") or gc.get("strategy") or "consistent-hashing",
                  "url": g.get("url") or gc["url"], "interval": f"{max(int(g.get('interval') or gc['interval']), 30)}s"}
@@ -5023,7 +5085,7 @@ def sb_inbounds(d, v6, warn=None):
         inbounds.insert(1, {"type": "tproxy", "tag": "tproxy-in", "listen": lis, "listen_port": 7893})
     tp = tun_params(d)  # TUN 决策与 mihomo_tun 共用；auto_redirect 另需 nftables 可用
     if tp["enable"]:
-        tun = {"type": "tun", "tag": "tun-in", "interface_name": tp["device"], "address": ["172.19.0.1/30"] + (["fdfe:dcba:9876::1/126"] if v6 else []),
+        tun = {"type": "tun", "tag": "tun-in", "interface_name": tp["device"], "address": ["172.19.0.1/30"] + (["fdfe:dcba:9876::1/126"] if v6 else []), "mtu": TUN_MTU,
                "auto_route": True, "auto_redirect": tp["auto_redirect"] and nft_ok(), "strict_route": tp["strict_route"],
                "stack": sb_tun_stack(tp["stack"])}
         if tun["stack"] == "auto":
@@ -9925,7 +9987,7 @@ from urllib.parse import quote
 
 from .errlog import log_err
 from .nodeprobe import fill_group
-from .base import G_MANUAL, G_SEL, HC, NOTIFY_FILE, PANEL_DIR, UA, WD_INTERVAL, dl_check
+from .base import G_MANUAL, G_SEL, HC, SIDE_GROUPS, NOTIFY_FILE, PANEL_DIR, UA, WD_INTERVAL, dl_check
 from .data import load, read_json, write_json
 from .core import refresh_regions
 from .corehttp import core, core_json
@@ -10001,6 +10063,54 @@ def fix_global():
         core("PUT", "/proxies/GLOBAL", {"name": G_SEL}, timeout=5)
 
 
+LBPICK_FILE = os.path.join(PANEL_DIR, "lbpick.json")  # 用户在面板里亲手让哪些内置选择组指向负载均衡组
+LB_TYPES = ("LoadBalance",)
+LB_MAIN = [G_SEL] + SIDE_GROUPS + ["🛡️ Google 专用"]  # 主出口类的内置选择组（含预览 Google 专用）
+
+
+def note_pick(group, name, px=None):
+    """面板切换选择组（PUT /proxies/<组>）成功后记下：指向负载均衡组的记入，改回其它的删除。
+    fix_lb_sel 只放过这里记过的，其余来源（核心缓存里多年前的旧选择、升级迁移）一律改回默认"""
+    if group not in LB_MAIN or not isinstance(name, str):
+        return
+    if px is None:
+        px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    picks = read_json(LBPICK_FILE, {})
+    picks = picks if isinstance(picks, dict) else {}
+    if (px.get(name) or {}).get("type") in LB_TYPES:
+        picks[group] = name
+    elif group in picks:
+        picks.pop(group)
+    else:
+        return
+    try:
+        write_json(LBPICK_FILE, picks)
+    except OSError as e:
+        log_err("记录负载均衡选择", e)
+
+
+def fix_lb_sel(px=None):
+    """「🚀 节点选择」「🐟 漏网之鱼」等内置选择组指向负载均衡（⚖️ 轮询 / 哈希）组、又不是用户在面板里选的：改回默认第一项（竞技 / 节点选择）。
+    来源：核心 cache 文件按组名记选择，旧版有过的「⚖️ X轮询」被删除后选择项一直留在缓存里，同名组恢复后内核自动还原成多年前的旧选择；
+    返回改回的组"""
+    if px is None:
+        px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    picks = read_json(LBPICK_FILE, {})
+    picks = picks if isinstance(picks, dict) else {}
+    fixed = []
+    for g in LB_MAIN:
+        p = px.get(g) or {}
+        now, alls = p.get("now"), p.get("all") or []
+        if p.get("type") != "Selector" or not now or (px.get(now) or {}).get("type") not in LB_TYPES or picks.get(g) == now or not alls:
+            continue
+        to = next((n for n in alls if (px.get(n) or {}).get("type") not in LB_TYPES), alls[0])
+        code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": to}, timeout=5)
+        if code < 300:
+            fixed.append(g)
+            print(time.strftime("%F %T"), f"[选择] {g} 指向负载均衡组 {now}（不是在面板里选的），已改回 {to}", flush=True)
+    return fixed
+
+
 RETEST_BUDGET = 90  # 重载后补测的时间上限
 
 
@@ -10017,6 +10127,7 @@ def retest_soon(wait=6):
                 if core_alive():
                     break
             fix_global()
+            fix_lb_sel()
             if core_json("/proxies/" + quote(G_MANUAL), timeout=5):
                 code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=60)
                 # sing-box 整组测速同时只测 10 个、共用超时，没轮到的可用节点不出现在结果里：缺席的逐个补测（全局限并发）
@@ -13723,7 +13834,7 @@ from .core_update import CORE_UPD, core_job_start, core_upd_status
 from .nodeprobe import UI_BUDGET, fill_group, probe_nodes
 from .sysopt import SVC_OP, core_procs, delay_test, favicon, kill_core_procs, nft_ok, opt_apply, opt_status, rc_run, sh, speed_test, svc_restart
 from .notify import WD, WD_EVENTS_MAX, core_alive, core_proc_alive, set_manual_stop, tg_send, wd_counts
-from .latency import BG_FILE, RETEST, bg_fetch, bg_meta, bg_meta_save, bg_save, bg_type, fix_global, proxies_merged, px_slim, retest_soon
+from .latency import BG_FILE, RETEST, bg_fetch, bg_meta, bg_meta_save, bg_save, bg_type, fix_global, note_pick, proxies_merged, px_slim, retest_soon
 from .stats import arp_table
 from .unlock import unlock_test
 from .ruletest import clean_target, is_ip, rule_test
@@ -14673,6 +14784,9 @@ class H(BaseHTTPRequestHandler):
         if p.startswith("/api/core/"):
             slow = p.endswith("/delay") or p.endswith("/healthcheck")  # 测速可能超过默认 10 秒
             code, raw = core(m, p[len("/api/core"):] + ("?" + q if q else ""), b if b else None, timeout=60 if slow else 10)
+            m_sel = re.match(r"^/api/core/proxies/([^/?]+)$", p) if m == "PUT" and code < 300 else None
+            if m_sel:
+                note_pick(unquote(m_sel.group(1)), b.get("name"))
             return self.send(code, raw or b"{}")
         if p == "/api/coreupdate" and m == "GET":  # shunt-singbox 只有 sing-box
             if (q1(parse_qs(q), "core") or "singbox") != "singbox":
