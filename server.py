@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.7.3-preview.784+19f9b3f"
+PANEL_VERSION = "11.7.4-preview.785+77c5035"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -285,24 +285,26 @@ CN_DNS = re.compile(r"(?i)(?:^|[/@\\[])(?:223\\.5\\.5\\.5|223\\.6\\.6\\.6|2400:3
                     r"101\\.226\\.4\\.6|218\\.30\\.118\\.6|117\\.50\\.\\d+\\.\\d+|52\\.80\\.\\d+\\.\\d+|"
                     r"[\\w.-]*(?:alidns\\.com|doh\\.pub|dot\\.pub|dnspod\\.(?:cn|com)|360\\.cn|114dns\\.com|onedns\\.net|baidu\\.com|volces\\.com))(?:[:/#\\]]|$)")
 AB_DEFAULT = {"enabled": False, "lists": [], "black": [], "black_cn": [], "black_proxy": [], "white": [], "interval": 86400, "dns": False}
+# 内置视频白名单：大列表（HaGeZi Multi 等）会整域名拦掉视频 CDN（如 jable 的 mushroomtrack.com），视频打不开；这些后缀始终放行，优先级同用户白名单
+AB_VIDEO_ALLOW = ["mushroomtrack.com", "googlevideo.com", "ytimg.com", "nflxvideo.net", "bilivideo.com", "bilivideo.cn", "hdslb.com", "ttvnw.net", "douyinvod.com", "vimeocdn.com"]
 # 内置预设：按「国内 / 国外 × 视频 / 网页 / 隐私」分组，前端按 cat 分行显示
 BM = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/"
 AB_PRESETS = [
     {"cat": "国内 · 视频 / App", "name": "秋风广告规则", "url": "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt",
      "dsc": "国内 App 开屏、视频贴片、广告 SDK"},
     {"cat": "国内 · 视频 / App", "name": "小米电视广告", "url": BM + "AdvertisingMiTV/AdvertisingMiTV.list", "dsc": "小米电视 / 盒子开机与界面广告"},
-    {"cat": "国内 · 网页", "name": "anti-AD", "url": "https://anti-ad.net/easylist.txt", "dsc": "国内网页、App 广告综合"},
+    {"cat": "国内 · 网页", "name": "anti-AD", "url": "https://anti-ad.net/easylist.txt", "big": "约 10 万条", "dsc": "国内网页、App 广告综合"},
     {"cat": "国内 · 网页", "name": "EasyList China", "url": "https://easylist-downloads.adblockplus.org/easylistchina.txt",
      "dsc": "Adblock Plus 官方中文列表（只取整域名规则）"},
     {"cat": "国内 · 网页", "name": "AdGuard 中文", "url": "https://filters.adtidy.org/extension/ublock/filters/224.txt", "dsc": "中文网站广告"},
     {"cat": "国内 · 隐私", "name": "隐私追踪 (blackmatrix7)", "url": BM + "Privacy/Privacy.list", "dsc": "统计、埋点、行为追踪"},
     {"cat": "国外 · 视频 / 电视", "name": "Smart-TV", "url": "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt",
      "dsc": "三星 / LG / 索尼等电视界面广告与回传"},
-    {"cat": "国外 · 网页", "name": "AdGuard DNS filter", "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+    {"cat": "国外 · 网页", "name": "AdGuard DNS filter", "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt", "big": "约 19 万条",
      "dsc": "国外网站、App 广告综合"},
     {"cat": "国外 · 网页", "name": "EasyList", "url": "https://easylist.to/easylist/easylist.txt",
      "dsc": "Adblock Plus 默认列表（只取整域名规则）"},
-    {"cat": "国外 · 网页", "name": "HaGeZi Multi", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt",
+    {"cat": "国外 · 网页", "name": "HaGeZi Multi", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt", "big": "约 19 万条",
      "dsc": "广告 + 追踪 + 恶意域名，覆盖更广"},
     {"cat": "国外 · 隐私", "name": "EasyPrivacy", "url": "https://easylist.to/easylist/easyprivacy.txt", "dsc": "国外统计与追踪"},
     {"cat": "国外 · 隐私", "name": "Frogeye 一方追踪", "url": "https://hostfiles.frogeye.fr/firstparty-trackers.txt",
@@ -335,7 +337,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.7.3-preview.784+19f9b3f"
+PANEL_VERSION = "11.7.4-preview.785+77c5035"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -11066,7 +11068,7 @@ from collections import deque
 from urllib.parse import quote
 
 from .errlog import log_err
-from .base import AB_DIR, AB_STATS_FILE, CONF_DIR, FAKEIP_NETS, UA, dl_check, read_full, udp_dns_query
+from .base import AB_DIR, AB_VIDEO_ALLOW, AB_STATS_FILE, CONF_DIR, FAKEIP_NETS, UA, dl_check, read_full, udp_dns_query
 from .data import load, read_json, write_json
 from .mihomo import build_config
 from .core import reload_core
@@ -11336,6 +11338,7 @@ def ab_compose(d):
         bs, be, _, _, _ = parse_filter("\\n".join(ab.get(key) or []), plain_suffix=True)
         write_lines(os.path.join(AB_DIR, fn), domain_lines(bs, be)[0])
     ws, we, was, wae, _ = parse_filter("\\n".join(ab.get("white") or []), plain_suffix=True)
+    ws = set(ws) | set(AB_VIDEO_ALLOW)  # 内置视频白名单，与用户白名单同级
     # 各列表的 @@ 例外：被任何一个启用列表（或自定义黑名单）里的 $important 拦截盖住的去掉（AdGuard 语义：$important 优先于例外）。
     # 面板里的自定义白名单是用户自己的意思，始终优先，不受 $important 影响
     ls, le, isuf, iexact = set(), set(), set(), set()
