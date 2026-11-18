@@ -1736,7 +1736,7 @@ function renderAB(){const a=AB;$('#ab-on').checked=a.enabled;$('#ab-on').onchang
     +[['black_cn','customcn','cn'],['black_proxy','customproxy','proxy']].map(([k,p,s])=>(a[k]||[]).length?`<tr><td></td><td><b style="font-weight:600">自定义黑名单</b></td><td class="mut small">${AB_SCOPE[s]}</td><td>${(a.loaded['ad-'+p]??a[k].length).toLocaleString('zh-CN',{hour12:false})}</td><td>${(a['custom_'+s+'_hits']||0).toLocaleString('zh-CN',{hour12:false})}</td><td></td><td></td></tr>`:'').join('')
     ||'<tr><td colspan="7" class="mut">还没有列表，点下方内置规则一键添加</td></tr>';
   const cats=[...new Set(a.presets.map(p=>p.cat||'其他'))];
-  $('#ab-presets').innerHTML=cats.map(c=>`<div class="abpr"><span class="mut small abpc">${esc(c)}</span><span class="row">`+a.presets.map((p,i)=>(p.cat||'其他')!==c?'':`<button class="btn g sm" title="${esc(p.dsc||'')}" onclick="abPreset(${i})" ${a.lists.some(l=>l.url===p.url)?'disabled':''}>${esc(p.name)}</button>`).join('')+'</span></div>').join('');
+  $('#ab-presets').innerHTML=cats.map(c=>`<div class="abpr"><span class="mut small abpc">${esc(c)}</span><span class="row">`+a.presets.map((p,i)=>(p.cat||'其他')!==c?'':`<button class="btn g sm" title="${esc((p.dsc||'')+(p.big?'（大列表，'+p.big+'，可能影响速度与视频）':''))}" onclick="abPreset(${i})" ${a.lists.some(l=>l.url===p.url)?'disabled':''}>${esc(p.name)}${p.big?' ⚠':''}</button>`).join('')+'</span></div>').join('');
   if(document.activeElement!==$('#ab-black'))$('#ab-black').value=a.black.join('\n');
   if(document.activeElement!==$('#ab-black-cn'))$('#ab-black-cn').value=(a.black_cn||[]).join('\n');
   if(document.activeElement!==$('#ab-black-proxy'))$('#ab-black-proxy').value=(a.black_proxy||[]).join('\n');
@@ -1748,7 +1748,7 @@ async function abSave(patch,msg){AB_SAVING=true;let ok=false;try{toast('正在�
 // 列表的增删 / 开关都提交整份列表（按当前 AB 拼出来）：上一次保存（含重载核心，要几秒）还没完成时再改，
 // 拼出来的列表里还是旧状态，会把上一次的修改覆盖回去（连点两个开关，第一个又被关回去）。保存期间先拦住
 function abBusy(){if(!AB_SAVING)return false;toast('正在应用上一次修改，请稍候再试');renderAB();return true}
-function abPreset(i){if(abBusy())return;const p=AB.presets[i];abSave({lists:abLists().concat([{name:p.name,url:p.url,enabled:true}]),enabled:true},'已添加 '+p.name)}
+function abPreset(i){if(abBusy())return;const p=AB.presets[i];if(p.big&&!confirm(`${p.name} 是大列表（${p.big}）：会多占几十 MB 内存，并且可能整域名误拦视频 CDN、接口域名，导致视频打不开、网页变慢。确定添加？`))return;abSave({lists:abLists().concat([{name:p.name,url:p.url,enabled:true}]),enabled:true},'已添加 '+p.name)}
 // 保存成功后才清空输入框（以前先清空，失败时填的地址就没了）
 async function abAdd(){if(abBusy())return;const url=$('#ab-url').value.trim(),name=$('#ab-name').value.trim();if(!/^https?:\/\//.test(url))return toast('请填写列表地址');
   if(AB.lists.some(l=>l.url===url))return toast('这个列表已经添加过了');
