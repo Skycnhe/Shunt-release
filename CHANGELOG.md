@@ -1,7 +1,7 @@
 # 更新记录与详细说明
 
-## v11.7.4 预览版：大广告列表误拦视频、内置视频白名单
-- 修复：开了 HaGeZi Multi 等大列表后部分视频站打不开（如 jable）——HaGeZi Multi 整域名拦了视频 CDN mushroomtrack.com。新增内置视频白名单（mushroomtrack.com、googlevideo.com、ytimg.com、nflxvideo.net、bilivideo.com/.cn、hdslb.com、ttvnw.net、douyinvod.com、vimeocdn.com），与自定义白名单同级、始终放行
-- anti-AD、AdGuard DNS filter、HaGeZi Multi 标为大列表（各约 10–19 万条）：预设按钮带 ⚠，添加前确认可能多占内存、误拦视频 / 接口域名。三者默认都不启用（与以前相同）
-- 实测：三个列表合计约 47 万条域名，均已是纯域名后缀规则（没有正则 / 元素隐藏规则）；逐条匹配开销可忽略（200 次请求 1651 ms 对比 1650 ms），JSON 源与编译成 srs 的内存只差约 4 MB。变慢 / 打不开的原因是误拦，不是匹配开销
+## v11.7.5 预览版：DNS 不再经负载均衡组、测速限并发、主出口选择持久化
+- 修复全局变慢：代理 DNS（如 1.1.1.1）以前经「🚀 节点选择」发出，它指向「⚖️ 日本轮询」时 DNS 会轮到死节点，每次查询卡 5–15 秒。现在代理 DNS 固定走「🚀 节点选择」里第一个不是负载均衡组的成员（竞技 / 自动）；DNS 服务器写了 #负载均衡组 的也改走它（sing-box 与 mihomo 同步）
+- 重载 / 重启后的全节点测速不再几秒内对约 100 个节点同时发请求：改为逐个测，全局最多 8 个并发
+- 面板里切换的「🚀 节点选择」等主出口选择记到 mainsel.json，重新生成配置、核心缓存丢失后自动补回
 
