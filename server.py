@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.4-preview.784+b13ba89"
+PANEL_VERSION = "9.1.5-preview.785+f8bf9b2"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -368,7 +368,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.4-preview.784+b13ba89"
+PANEL_VERSION = "9.1.5-preview.785+f8bf9b2"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2227,7 +2227,7 @@ def build_config(d, strict=False):
     dc = dns_cfg(d)
     rule_providers, rules, ab_prov = mihomo_rules(d, policies, dc)
     v6 = bool(d.get("ipv6"))
-    dns = mihomo_dns(d, dc, policies, ab_prov)
+    dns = mihomo_dns(d, dc, policies, ab_prov, groups)
     hosts = mihomo_hosts(dc)
     tun = mihomo_tun(d)
     if active_core(d) == "smart" and gcfg(d).get("lgbm"):  # 模型放在 -d 目录（/etc/mihomo/Model.bin），内核每 72 小时自动更新
@@ -2328,12 +2328,14 @@ def mihomo_rules(d, policies, dc):
     return rule_providers, rules, ab_prov
 
 
-def mihomo_dns(d, dc, policies, ab_prov):
+def mihomo_dns(d, dc, policies, ab_prov, groups=()):
     """dns 段：防泄露布局 + nameserver-policy"""
     v6 = bool(d.get("ipv6"))
-    fx = lambda xs: [fix_dns_policy(x, policies) for x in xs]
+    lbs, dex = lb_groups(groups), dns_exit(groups)
+    fx = lambda xs: [dns_no_lb(fix_dns_policy(x, policies), lbs, dex) for x in xs]
     direct = fx(dc["direct"] or DNS_DEFAULT["direct"])
-    proxy_dns = fx(dc["proxy"])
+    # 代理 DNS 没写 #策略组 时固定走 DNS 出口：以前跟着规则走「🚀 节点选择」，它指向负载均衡组时会轮到死节点，每次查询卡 5–15 秒
+    proxy_dns = [x if "#" in x or not dex else x + "#" + dex for x in fx(dc["proxy"])]
     plain_direct = [x.split("#", 1)[0] for x in direct]
     mode = dc["mode"]
     # 防泄露布局：默认 nameserver = 代理 DNS（经节点发出），只有 geosite:cn / private 用直连 DNS；
@@ -2558,6 +2560,31 @@ def dns_cfg(d):
                          "servers": [norm_dns_addr(str(x).strip()) for x in sv if str(x).strip()]})
     dc["policies"] = pols
     return dc
+
+
+def lb_groups(groups):
+    return {g.get("name") for g in groups or () if g.get("type") == "load-balance"}
+
+
+def dns_exit(groups):
+    """DNS 出口：「🚀 节点选择」里第一个不是负载均衡组的成员（竞技 / 自动 / 节点）。负载均衡组按连接轮换节点，
+    不及时剔除失败节点，DNS 轮到死节点就卡 5–15 秒、全局变慢，所以 DNS 不经负载均衡组"""
+    gm = {g.get("name"): g for g in groups or ()}
+    ms = (gm.get(G_SEL) or {}).get("proxies") or []
+    if not any((gm.get(m) or {}).get("type") == "load-balance" for m in ms):
+        return None  # 节点选择里没有负载均衡组：照旧跟随节点选择
+    for m in ms:
+        if m not in BUILTIN_POLICIES and m not in ("COMPATIBLE",) and (gm.get(m) or {}).get("type") != "load-balance":
+            return m
+    return None
+
+
+def dns_no_lb(server, lbs, dex):
+    """DNS 服务器后缀 #策略组 指向负载均衡组：改走 DNS 出口"""
+    pol = dns_policy_of(server)
+    if pol and pol in lbs and dex:
+        return server.split("#", 1)[0] + "#" + dex
+    return server
 
 
 def fix_dns_policy(server, policies):
@@ -3519,7 +3546,7 @@ from urllib.parse import quote
 from .base import BUILTIN_POLICIES, HC, mass_begin, mass_end
 from .corehttp import core, core_json
 
-PROBE_WORKERS = 16   # 逐个节点测速的全局并发上限（所有调用方合计）
+PROBE_WORKERS = 8    # 逐个节点测速的全局并发上限（所有调用方合计）
 PROBE_BUDGET = 90    # 默认最多用多少秒（期间按「全节点测速中」登记，看门狗暂停判定）；必须小于 base.MASS_MAX_AGE
 UI_BUDGET = 60       # 前端发起的整组测速 / 订阅 healthcheck 的补测上限（加上整组测速本身最多约 2 分钟）
 _SEM = threading.BoundedSemaphore(PROBE_WORKERS)
@@ -10272,7 +10299,7 @@ import base64, json, os, re, threading, time, urllib.request, urllib.error
 from urllib.parse import quote
 
 from .errlog import log_err
-from .base import G_MANUAL, G_SEL, HC, SIDE_GROUPS, NOTIFY_FILE, PANEL_DIR, UA, WD_INTERVAL, dl_check, read_full
+from .base import G_MANUAL, G_SEL, SIDE_GROUPS, NOTIFY_FILE, PANEL_DIR, UA, WD_INTERVAL, dl_check, read_full
 from .data import load, read_json, write_json
 from .core import refresh_regions
 from .corehttp import core, core_json
@@ -10289,6 +10316,7 @@ BG_FILE = os.path.join(PANEL_DIR, "bg.img")  # 外观：自定义背景图（所
 BG_MAX = 8 * 2**20
 DELAYS = {"data": None, "saved": 0, "dirty": False}
 RETEST = {"pending": False, "last": 0}
+MAINSEL_FILE = os.path.join(PANEL_DIR, "mainsel.json")  # 面板里亲手切的主出口类选择组：重载 / 重启后核心选择丢了按这里补回
 LBPICK_FILE = os.path.join(PANEL_DIR, "lbpick.json")  # 用户在面板里亲手让哪些内置选择组指向负载均衡组
 LB_TYPES = ("LoadBalance",)
 LB_MAIN = [G_SEL] + SIDE_GROUPS + ["🛡️ Google 专用"]  # 主出口类的内置选择组（含预览 Google 专用）
@@ -10301,6 +10329,14 @@ def note_pick(group, name, px=None):
         return
     if px is None:
         px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    sel = read_json(MAINSEL_FILE, {})
+    sel = sel if isinstance(sel, dict) else {}
+    if sel.get(group) != name:
+        sel[group] = name
+        try:
+            write_json(MAINSEL_FILE, sel)
+        except OSError as e:
+            log_err("记录主出口选择", e)
     picks = read_json(LBPICK_FILE, {})
     picks = picks if isinstance(picks, dict) else {}
     if (px.get(name) or {}).get("type") in LB_TYPES:
@@ -10324,6 +10360,14 @@ def fix_lb_sel(px=None):
     picks = read_json(LBPICK_FILE, {})
     picks = picks if isinstance(picks, dict) else {}
     fixed = []
+    sel = read_json(MAINSEL_FILE, {})
+    for g, want in (sel if isinstance(sel, dict) else {}).items():  # 重新生成配置 / 核心缓存丢失后选择回到默认：按面板记录补回
+        p = px.get(g) or {}
+        if g in LB_MAIN and p.get("type") == "Selector" and p.get("now") != want and want in (p.get("all") or []):
+            code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": want}, timeout=5)
+            if code < 300:
+                p["now"] = want
+                print(time.strftime("%F %T"), f"[选择] {g} 已按面板记录恢复为 {want}", flush=True)
     for g in LB_MAIN:
         p = px.get(g) or {}
         now, alls = p.get("now"), p.get("all") or []
@@ -10413,9 +10457,8 @@ def retest_soon(wait=6):
             fix_global()
             fix_lb_sel()
             if core_json("/proxies/" + quote(G_MANUAL), timeout=5):
-                code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=60)
-                if active_core() == "singbox":  # sing-box 整组测速只测到一部分节点：缺席的逐个补测（全局限并发）
-                    fill_group(G_MANUAL, code, raw, RETEST_BUDGET)
+                # 以前整组测速：几秒内对全部节点（约 100 个）同时发测速请求，挤占带宽、DNS。现在逐个测，全局限并发（nodeprobe）
+                fill_group(G_MANUAL, 200, b"{}", RETEST_BUDGET)
             RETEST["last"] = time.time()
             proxies_merged()
         except Exception as e:
