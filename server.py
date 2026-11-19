@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "11.7.6-preview.787+29c1f06"
+PANEL_VERSION = "11.7.7-preview.788+1e5ad67"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -337,7 +337,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "11.7.6-preview.787+29c1f06"
+PANEL_VERSION = "11.7.7-preview.788+1e5ad67"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -843,7 +843,7 @@ _HISTORY_LOCK = threading.Lock()  # history.json 读-改-写原子性（update �
 
 HISTORY_FILE = os.path.join(PANEL_DIR, "history.json")
 HISTORY_MAX = 10
-HISTORY_SKIP = {"tests_rev", "core", "secret", "devices", "https", "schema", "sysopt", "sysopt_orig", "sysopt_mods", "health", "health_cfg",
+HISTORY_SKIP = {"tests_rev", "sched_rev", "core", "secret", "devices", "https", "schema", "sysopt", "sysopt_orig", "sysopt_mods", "health", "health_cfg",
                 "panel_password", "gh_token"}  # 面板密码哈希、GitHub Token 不进修改历史，回滚设置也不会改动密码
 KEY_LABEL = {"subs": "订阅", "nodes": "节点", "rules": "自定义规则", "rulesets": "规则集", "dns": "DNS", "adblock": "广告拦截",
              "custom_groups": "自定义策略组", "groups_cfg": "地区分组", "region_groups": "地区分组", "proxy_mode": "代理方式",

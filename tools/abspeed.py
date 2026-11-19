@@ -102,6 +102,14 @@ def main():
     if not ob:
         sys.exit(f"配置里找不到节点 {node!r}")
     tun = next((i for i in cfg.get("inbounds", []) if i.get("type") == "tun"), {})
+    srv = ob.get("server", "")
+    try:
+        import ipaddress, socket
+        ip = socket.gethostbyname(srv) if srv else ""
+        if ip and ipaddress.ip_address(ip) in ipaddress.ip_network("198.18.0.0/15"):
+            print(f"注意：系统 DNS 把节点 {srv} 解析成 Fake-IP {ip}；B/C/D 已改用 DoH 解析，不受影响")
+    except Exception:
+        pass
     print(f"节点：{node}（{ob.get('type')}）  内核：{sb_bin()}")
     print(f"现网 TUN：mtu={tun.get('mtu', '未写(默认)')} stack={tun.get('stack', '默认')} auto_redirect={tun.get('auto_redirect')}"
           f"  日志={cfg.get('log', {}).get('level')}  规则集={len(cfg.get('route', {}).get('rule_set', []))}"
@@ -130,7 +138,8 @@ def main():
         json.dump(c2, open(p2, "w"), ensure_ascii=False)
         # C 同内核最简配置 7892
         o3 = {k: v for k, v in ob.items() if k not in ("detour", "domain_resolver")}
-        c3 = {"log": {"level": "warn"}, "dns": {"servers": [{"type": "udp", "tag": "d", "server": "223.5.5.5"}]},
+        # DNS 用 DoH（IP 直连 443）：以前用 UDP 223.5.5.5:53，被现网 TUN 的 hijack-dns 劫持成 Fake-IP，节点地址解析到 198.18.x，测出约 0 Mbps
+        c3 = {"log": {"level": "warn"}, "dns": {"servers": [{"type": "https", "tag": "d", "server": "223.5.5.5"}]},
               "inbounds": [{"type": "mixed", "tag": "in", "listen": "127.0.0.1", "listen_port": 7892}],
               "outbounds": [o3], "route": {"final": node, "default_domain_resolver": "d"}}
         p3 = os.path.join(tmp, "c.json")
@@ -159,7 +168,11 @@ def main():
                   "external-controller": "127.0.0.1:19091", "proxies": man, "proxy-providers": provs,
                   "proxy-groups": [{"name": "T", "type": "select", "proxies": [node]} if man else
                                    {"name": "T", "type": "select", "use": list(provs), "filter": f"^{esc}$"}],
-                  "rules": ["MATCH,T"]}
+                  "rules": ["MATCH,T"],
+                  # 同上：节点域名用 DoH 解析，避免系统 DNS（53 端口）被现网 TUN 劫持成 Fake-IP
+                  "dns": {"enable": True, "listen": "", "ipv6": False, "enhanced-mode": "redir-host",
+                          "default-nameserver": ["223.5.5.5"], "nameserver": ["https://223.5.5.5/dns-query"],
+                          "proxy-server-nameserver": ["https://223.5.5.5/dns-query"]}}
             pm = os.path.join(tmp, "config.yaml")
             json.dump(mc, open(pm, "w"), ensure_ascii=False)  # YAML 兼容 JSON
             p = start([mh, "-d", tmp, "-f", pm], tmp, "mihomo")
