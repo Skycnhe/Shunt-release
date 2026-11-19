@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.5-preview.785+f8bf9b2"
+PANEL_VERSION = "9.1.6-preview.786+3056dd2"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -344,7 +344,7 @@ TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict
 GROUPS_DEFAULT = {"type": "url-test", "lb": True, "rr": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
                   "tolerance": 50, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
                   "lgbm": False}
-SCHED_DEFAULT = {"sub_update": "", "core_restart": "", "geo_update": "", "latency": 0}
+SCHED_DEFAULT = {"sub_update": "04:00", "core_restart": "", "geo_update": "", "latency": 0}
 DEFAULT = {"secret": "", "mode": "rule", "tproxy": True, "subs": [], "rules": [],
            "rulesets": [], "bypass": [], "tests": None, "sub_interval": 86400, "region_groups": True,
            "nodes": [], "ipv6": False, "https": False, "allow_public": False, "allow_hosts": [], "watchdog": True, "tg_token": "", "tg_chat": "",
@@ -368,7 +368,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.5-preview.785+f8bf9b2"
+PANEL_VERSION = "9.1.6-preview.786+3056dd2"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -652,6 +652,12 @@ def normalize(d):
         elif cur == base5 + [("哔哩哔哩", "https://www.bilibili.com")]:
             d["tests"][5] = dict(TESTS[5])
         d["tests_rev"] = 2
+        dirty = True
+    if int(d.get("sched_rev") or 0) < 1:  # 订阅默认每天 04:00 自动更新：没设过（空）的改为 04:00，设过的保留；之后用户关掉（清空）不再改回
+        sc = d.get("schedule") if isinstance(d.get("schedule"), dict) else None
+        if sc is not None and not sc.get("sub_update"):
+            sc["sub_update"] = "04:00"
+        d["sched_rev"] = 1
         dirty = True
     if any(k in d for k in OLD_PW_KEYS):  # v6.8.2 起面板不再有密码：清掉旧版留下的密码字段
         for k in OLD_PW_KEYS:
@@ -2582,7 +2588,7 @@ def dns_exit(groups):
 def dns_no_lb(server, lbs, dex):
     """DNS 服务器后缀 #策略组 指向负载均衡组：改走 DNS 出口"""
     pol = dns_policy_of(server)
-    if pol and pol in lbs and dex:
+    if pol and dex and (pol in lbs or pol == G_SEL):  # 默认代理 DNS 写的就是 #🚀 节点选择
         return server.split("#", 1)[0] + "#" + dex
     return server
 
@@ -12528,6 +12534,29 @@ def mh_update_subs(names):
 LATENCY_PROBE_BUDGET = 60  # sing-box 定时测速逐个补测的时间上限（定时任务在 sched_loop 里同步执行，不能拖太久）
 
 
+def _selections():
+    """各选择组当前选中项（更新订阅、重新生成配置前记下）"""
+    px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    return {n: p["now"] for n, p in px.items() if isinstance(p, dict) and p.get("type") == "Selector" and p.get("now") and n != "GLOBAL"}
+
+
+def _restore_selections(sel):
+    """更新订阅后重新生成配置：选择组被重置（如竞技又回到轮询）的按更新前的选择改回；选项已不存在的不动"""
+    if not sel:
+        return
+    for _ in range(10):  # 等核心重载完
+        if core_alive():
+            break
+        time.sleep(2)
+    px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    for g, now in sel.items():
+        p = px.get(g) or {}
+        if p.get("type") == "Selector" and p.get("now") != now and now in (p.get("all") or []):
+            code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": now}, timeout=5)
+            if code < 300:
+                print(time.strftime("%F %T"), f"[schedule] 更新订阅后恢复选择：{g} → {now}", flush=True)
+
+
 def run_task(name):
     d = load()
     if name == "sub_update" and active_core(d) == "singbox":
@@ -12603,6 +12632,9 @@ def sched_loop():
             now = time.strftime("%H:%M")
             today = time.strftime("%Y-%m-%d")
             due = [k for k in ("sub_update", "core_restart", "geo_update") if daily_due(k, str(sc.get(k) or ""), now, today)]
+            if SCHED.get("sub_retry") and time.time() >= SCHED["sub_retry"] and "sub_update" not in due:
+                SCHED["sub_retry"] = 0
+                due.append("sub_update")  # 定时更新订阅失败后的重试
             # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
             hcfg = health_cfg(d)
             if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
@@ -12648,10 +12680,18 @@ def sched_loop():
                         AB_STATE["retry"] = time.time() + 60
                         continue
                 try:  # 一个任务抛异常不能连累同一轮的其他任务（它们已被 daily_due 记成今天执行过，跳过就漏一天）
+                    sel = _selections() if k == "sub_update" else None
                     ok, msg = run_task(k)
+                    _restore_selections(sel)  # 更新订阅后重新生成配置：保留各选择组的选择
                 except Exception as e:
                     log_err("定时任务：" + TASK_NAMES[k], e)
                     ok, msg = False, f"执行出错：{str(e)[:150]}"
+                if k == "sub_update":  # 失败（旧订阅保留不动）：10 分钟后重试，最多 3 次
+                    tries = SCHED.get("sub_retries", 0)
+                    if not ok and tries < 3:
+                        SCHED.update(sub_retry=time.time() + 600, sub_retries=tries + 1)
+                    else:
+                        SCHED.update(sub_retry=0, sub_retries=0)
                 if k == "adblock":
                     tries = AB_STATE.get("retries", 0)  # 自己的计数：以前复用了循环计数 n，广告规则一更新就把它改成重试次数
                     if not ok and tries < AB_RETRY_MAX:
