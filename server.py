@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.7-preview.787+730f837"
+PANEL_VERSION = "9.1.8-preview"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -34,6 +34,7 @@ MODULES = [
     "sb_common",
     "sb_yaml",
     "sb_subs",
+    "panellogin",
     "sb_nodes",
     "sb_rules",
     "sb_dns",
@@ -53,6 +54,7 @@ MODULES = [
     "stats",
     "unlock",
     "speedtest",
+    "bwtest",
     "ruletest",
     "logstream",
     "adblock",
@@ -340,7 +342,8 @@ AB_PRESETS = [
     {"cat": "国外 · 隐私", "name": "EasyPrivacy", "url": "https://easylist.to/easylist/easyprivacy.txt", "dsc": "国外统计与追踪"},
     {"cat": "国外 · 隐私", "name": "Frogeye 一方追踪", "url": "https://hostfiles.frogeye.fr/firstparty-trackers.txt",
      "dsc": "伪装成网站子域名的追踪器"}]
-TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False}
+TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False,
+               "mtu": 9000, "quic_block": True, "mss_clamp": False}
 GROUPS_DEFAULT = {"type": "url-test", "lb": True, "rr": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
                   "tolerance": 50, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
                   "lgbm": False}
@@ -360,6 +363,7 @@ TESTS = [
     {"name": "淘宝", "url": "https://www.taobao.com"},
 ]
 G_SEL, G_YT, G_GG, G_TG, G_FINAL = "🚀 节点选择", "📹 YouTube", "🔍 Google", "📲 Telegram", "🐟 漏网之鱼"
+G_BW = "🚀 带宽择优"  # v9.1.8：带宽择优组（select，全部节点），面板按实测带宽把最高分节点设为选中
 G_AI, G_NF = "🤖 AI 服务", "🎬 Netflix"
 G_MANUAL, G_AUTO, G_DIRECT = "\\U0001F590\\uFE0F 手动选择", "⚡ 全局自动选择", "🏠 直连"
 LB_PREFIX, AUTO_TAIL, LB_TAIL = "\\u2696\\uFE0F ", "竞技", "负载均衡"
@@ -368,7 +372,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.7-preview.787+730f837"
+PANEL_VERSION = "9.1.8-preview"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1916,7 +1920,7 @@ import ipaddress, json, os, re, shlex, threading, time
 from .base import (
     REGIONS,
     AUTO_ORDER, BUILTIN_POLICIES, CN_APP_DOMAINS, CONF_DIR, CTRL_HOST, CTRL_PORT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, DOH_DOMAINS, DOH_IPS, G_AI,
-    G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
+    G_AUTO, G_BW, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
     LAN_DNS_SUFFIX, LAN_PTR_ZONES, TUN_DEFAULT, TUN_STACKS
 )
 from .data import LB_KINDS, auto_name, lb_name, region_label, rs_file, safe
@@ -2193,14 +2197,15 @@ def build_config(d, strict=False):
         if cg["expose"]:
             exposed.append(cg["name"])
 
-    # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → WARP → ⚡ 全局自动选择 → 🏠 直连
+    # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → 🚀 带宽择优 → ⚡ 全局自动选择 → 🏠 直连
     have = bool(use or names)
     direct_g = {"name": G_DIRECT, "type": "select", "proxies": ["DIRECT"]}
     if have:
-        groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL] + warpn + [G_AUTO, G_DIRECT]}] + region_groups + [
+        groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL, G_BW] + warpn + [G_AUTO, G_DIRECT]}] + region_groups + [
             with_src({"name": G_MANUAL, "type": "select"}, names),
+            with_src({"name": G_BW, "type": "select"}, names),  # 带宽择优：与手动选择同成员，面板按实测带宽设选中
             with_src(dict({"name": G_AUTO}, **group_opts(race, gc)), pool), direct_g]
-        side = [G_SEL] + rnames + [G_MANUAL, G_AUTO] + exposed + ["DIRECT"] + names
+        side = [G_SEL] + rnames + [G_MANUAL, G_BW, G_AUTO] + exposed + ["DIRECT"] + names
     else:
         groups = [{"name": G_SEL, "type": "select", "proxies": [G_DIRECT]}, direct_g]
         side = [G_SEL] + exposed + ["DIRECT"]
@@ -2292,6 +2297,7 @@ BUILTIN_GEO = (
 
 
 NTP_RULE = "AND,((NETWORK,UDP),(DST-PORT,123)),DIRECT"
+QUIC_RULE = "AND,((NETWORK,UDP),(DST-PORT,443)),REJECT"  # v9.1.8：QUIC 屏蔽（默认开）：只拦走代理的 UDP 443，直连规则已在前面命中，不受影响
 
 
 def mihomo_rules(d, policies, dc):
@@ -2329,7 +2335,11 @@ def mihomo_rules(d, policies, dc):
         # Cloudflare 1.1.1.1 / 1.0.0.1 国内直连常被运营商干扰：固定走节点选择，不随漏网之鱼直连
         f"IP-CIDR,1.1.1.1/32,{G_SEL},no-resolve", f"IP-CIDR,1.0.0.1/32,{G_SEL},no-resolve",
         f"GEOSITE,geolocation-!cn,{G_SEL}",
-        "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT", f"MATCH,{G_FINAL}",
+        "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT",
+        # QUIC 屏蔽（默认开）：走代理的 QUIC（UDP 443）常因节点 UDP 转发差而卡，拦掉后浏览器自动退回 TCP；
+        # 直连的域名已在上面 GEOSITE,cn / GEOIP,CN 命中，不受影响。放最后、MATCH 之前
+        *([QUIC_RULE] if (d.get("tun") or {}).get("quic_block", True) else []),
+        f"MATCH,{G_FINAL}",
     ]
     return rule_providers, rules, ab_prov
 
@@ -2422,12 +2432,19 @@ def mihomo_hosts(dc):
 def tun_params(d):
     """TUN 参数归一化：mihomo_tun 与 sing-box sb_inbounds 共用同一决策（是否启用、协议栈回退、设备名、开关量）。"""
     tc = d.get("tun") or TUN_DEFAULT
+    try:
+        mtu = int(tc.get("mtu") or 9000)
+    except (TypeError, ValueError):
+        mtu = 9000
     return {
         "enable": d.get("proxy_mode") == "tun",
         "stack": tc.get("stack") if tc.get("stack") in TUN_STACKS else TUN_DEFAULT["stack"],
         "device": safe_dev(tc.get("device")),
         "auto_redirect": bool(tc.get("auto_redirect", True)),
         "strict_route": bool(tc.get("strict_route", False)),
+        "mtu": max(1280, min(9000, mtu)),
+        "quic_block": bool(tc.get("quic_block", True)),
+        "mss_clamp": bool(tc.get("mss_clamp", False)),
     }
 
 
@@ -2437,7 +2454,7 @@ def mihomo_tun(d):
         return {"enable": False}
     return {"enable": True, "stack": mh_tun_stack(p["stack"]), "device": p["device"], "auto-route": True,
             "auto-redirect": p["auto_redirect"], "auto-detect-interface": True, "dns-hijack": ["any:53", "tcp://any:53"],
-            "strict-route": p["strict_route"]}
+            "strict-route": p["strict_route"], "mtu": p["mtu"]}
 
 
 def mh_tun_stack(stack, path=None):
@@ -4340,6 +4357,13 @@ def sb_fetch_sub(s, gh=""):
     """下载并解析一个订阅，写入缓存；返回 (节点数, 消息)。
     依次试 SB_UA 里的每个 UA（每个 UA 先代理后直连），第一个解析出节点的结果写入缓存；
     全部失败时抛 IOError，面板缓存里上次的节点保持不变（不会把旧节点当成这次更新的结果报成功）"""
+    panel = s.get("panel") or {}
+    if panel.get("token"):  # 面板账号绑定的订阅：先刷新订阅地址（token 可能轮换）；登录过期时直接失败，保留旧节点
+        from .panellogin import PanelExpiredError, refresh_subscribe_url
+        try:
+            refresh_subscribe_url(s)
+        except PanelExpiredError as e:
+            raise IOError(str(e) + "（已保留上次的节点）")
     last = ""
     for ua in SB_UA:
         try:
@@ -4427,6 +4451,119 @@ def sb_update_subs(names=None, d=None):
     return ok_out, bad_out
 
 
+'''
+_SRC['shunt.panellogin'] = '''"""Xboard / V2Board 面板账号登录：用面板账号拉取订阅地址。
+
+- 两套面板同一套接口，不用区分（type 字段只做展示）：
+  POST {host}/api/v1/passport/auth/login，JSON {email, password} → data.auth_data（Bearer token）
+  GET  {host}/api/v1/user/getSubscribe，头 Authorization: Bearer {auth_data} → data.subscribe_url（绝对地址，直接用）
+  GET  {host}/api/v1/user/info → 流量 / 到期信息（尽力而为，拿不到不影响登录）
+- 密码绝不存储、不记日志；只存 token。
+- 面板绑定的订阅更新时：先用存的 token 重新调 getSubscribe 刷新订阅地址（token 可能轮换），再拉取；
+  401 / 过期时保留旧节点并报「面板登录已过期，请重新登录」，不清空节点。
+- 面板 host 过 dl_check 做 SSRF 防护（与订阅下载同一口径）。
+"""
+import json, urllib.request, urllib.error
+
+from .base import dl_check
+from .data import update
+from .errlog import log_err
+from .mihomo import drop_provider_cache
+
+PANEL_TYPE = "Xboard / V2Board"
+
+
+class PanelExpiredError(Exception):
+    """面板登录已过期（token 失效，需重新登录）"""
+
+
+def _api(host, path, token=None, data=None, timeout=15):
+    """调面板 API，返回解析后的 JSON。401 直接抛 PanelExpiredError；其他失败按直连/代理换路重试一次后抛 IOError"""
+    from .notify import core_alive
+    from .sysopt import proxy_opener
+    url = host.rstrip("/") + path
+    dl_check(url)  # SSRF 防护：面板地址也必须是公网地址
+    last = None
+    for use_proxy in ((True, False) if core_alive() else (False, True)):
+        # 每次新建 Request：走代理失败后 urllib 已把代理地址写进 Request，复用会让「直连重试」仍然连到代理
+        body = json.dumps(data).encode() if data is not None else None
+        headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST" if data is not None else "GET")
+        try:
+            with proxy_opener(use_proxy).open(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8", "ignore") or "{}")
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise PanelExpiredError("面板登录已过期，请重新登录")
+            last = e
+        except Exception as e:
+            last = e
+    raise IOError(f"请求面板失败：{last}"[:150])
+
+
+def get_subscribe_url(host, token):
+    """调 getSubscribe 拿订阅地址（绝对地址，直接用，不要自己拼）"""
+    j = _api(host, "/api/v1/user/getSubscribe", token=token)
+    url = ((j.get("data") or {}).get("subscribe_url") or "").strip()
+    if not url.startswith("http"):
+        raise ValueError("面板没有返回有效的订阅地址")
+    return url
+
+
+def get_user_info(host, token):
+    """流量 / 到期信息（尽力而为）：返回 {} 也不影响登录"""
+    try:
+        d = _api(host, "/api/v1/user/info", token=token).get("data") or {}
+    except Exception:
+        return {}
+    return {k: d[k] for k in ("transfer_enable", "u", "d", "expired_at", "plan_id", "money") if k in d}
+
+
+def panel_login(host, email, password):
+    """登录面板账号。返回 (订阅地址, 面板信息 dict)。密码只用来登录，不存储、不记日志"""
+    host = (host or "").strip().rstrip("/")
+    if not host.startswith(("http://", "https://")):
+        raise ValueError("面板地址应以 http:// 或 https:// 开头")
+    if not email or not password:
+        raise ValueError("请填写邮箱和密码")
+    j = _api(host, "/api/v1/passport/auth/login", data={"email": email, "password": password})
+    if str(j.get("status")) != "success":
+        raise ValueError(str(j.get("message") or "登录失败")[:120])
+    token = ((j.get("data") or {}).get("auth_data") or "").strip()
+    if not token:
+        raise ValueError("登录成功但没有返回 token")
+    url = get_subscribe_url(host, token)
+    return url, {"host": host, "token": token, "type": PANEL_TYPE, "info": get_user_info(host, token)}
+
+
+def refresh_subscribe_url(s):
+    """刷新面板绑定订阅的地址：token 可能轮换，先用存的 token 重新调 getSubscribe。
+    返回 True（地址变了）/ False（没变）。登录过期抛 PanelExpiredError；其他网络错误只记日志、沿用旧地址"""
+    panel = s.get("panel") or {}
+    token, host = panel.get("token"), panel.get("host")
+    if not token or not host:
+        return False
+    try:
+        url = get_subscribe_url(host, token)
+    except PanelExpiredError:
+        raise
+    except Exception as e:
+        log_err("面板订阅刷新", e)
+        return False
+    if url and url != s.get("url"):
+        name = s["name"]
+
+        def fn(d):
+            for x in d["subs"]:
+                if x["name"] == name:
+                    x["url"] = url
+        update(fn)
+        drop_provider_cache(name)  # mihomo 缓存按旧链接存着，换地址后不能再用
+        s["url"] = url
+        return True
+    return False
 '''
 _SRC['shunt.sb_nodes'] = '''"""节点：mihomo 字段 → sing-box outbound"""
 import re
@@ -5107,7 +5244,7 @@ from .base import (
 from .errlog import log_err
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
 from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
-from .mihomo import BUILTIN_GEO, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
+from .mihomo import BUILTIN_GEO, QUIC_RULE, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
 from .sb_yaml import text_lines, trim_line, yaml_lite
@@ -5118,9 +5255,6 @@ from .ruleutil import LOGICAL_RX, _mh_domain, split_rule, strip_comment
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
-
-TUN_MTU = 9000  # TUN 显式用 sing-box 官方默认 9000：个别魔改内核 / 旧配置残留 1280 会让经 TUN 的 UDP / QUIC 被切小包、吞吐下降；TCP 走 auto_redirect 不受影响
-
 
 def build_singbox(d):
     """把 build_config 生成的 mihomo 结构翻译成 sing-box 配置；返回 (配置, 警告列表, 需要的规则集文件)"""
@@ -5165,6 +5299,8 @@ def build_singbox(d):
     resolved = False
     final = "DIRECT"
     for line in cfg["rules"]:
+        if line == QUIC_RULE:
+            continue  # mihomo 的 QUIC 屏蔽行：下面 MATCH 处按同一开关显式加一条，避免翻译后出现两条
         if line.upper().startswith("MATCH,"):
             # 与 mihomo 一致：第一条 MATCH 之后的规则都不再生效。以前只记下 final 后继续翻译，自定义规则里写的
             # 「MATCH,DIRECT」被后面内置的分流规则和最后的 MATCH 覆盖、等于没写；MATCH,REJECT 也变成了直连
@@ -5175,6 +5311,9 @@ def build_singbox(d):
                 route_rules.append(dict({"network": ["tcp", "udp"]}, **act))
             else:
                 final = act.get("outbound", "DIRECT")
+            # QUIC 屏蔽（默认开）：与 mihomo 同一位置——直连规则之后、最终规则之前，只拦走代理的 UDP 443
+            if tun_params(d).get("quic_block", True):
+                route_rules.append({"network": ["udp"], "port": [443], "action": "reject"})
             break
         r, needs = tr.rule(line)
         if r is None:
@@ -5477,7 +5616,7 @@ def sb_inbounds(d, v6, warn=None):
         inbounds.insert(1, {"type": "tproxy", "tag": "tproxy-in", "listen": lis, "listen_port": 7893})
     tp = tun_params(d)  # TUN 决策与 mihomo_tun 共用；auto_redirect 另需 nftables 可用
     if tp["enable"]:
-        tun = {"type": "tun", "tag": "tun-in", "interface_name": tp["device"], "address": ["172.19.0.1/30"] + (["fdfe:dcba:9876::1/126"] if v6 else []), "mtu": TUN_MTU,
+        tun = {"type": "tun", "tag": "tun-in", "interface_name": tp["device"], "address": ["172.19.0.1/30"] + (["fdfe:dcba:9876::1/126"] if v6 else []), "mtu": tp["mtu"],
                "auto_route": True, "auto_redirect": tp["auto_redirect"] and nft_ok(), "strict_route": tp["strict_route"],
                "stack": sb_tun_stack(tp["stack"])}
         if tun["stack"] == "auto":
@@ -11137,13 +11276,321 @@ def status():
             "duration": DURATION, "live": {"mbps": JOB["mbps"], "ms": JOB["ms"], "mb": round(JOB["bytes"] / 1e6, 1), "src": JOB["src"]},
             "last": {k: last.get(k) for k in KINDS}, "hist": h[::-1]}
 '''
+_SRC['shunt.bwtest'] = '''"""带宽择优：按节点实测下载带宽选优（不只是看延迟）。
+
+- 默认关闭（与健康检查一样），设置里开开关 + 周期（默认 2 小时）+ 每轮上限。
+- 每轮先经核心 delay 接口拿延迟（与健康检查同一口径），只测延迟正常的节点；再为每个节点另起一个
+  测试用核心实例（面板已有的内核二进制 + 最小配置：仅该节点 + 一个 select 组），经它的 mixed 端口下载
+  Cloudflare 测速文件（单连接、10 秒或 32MB，先到先停），测完立即杀掉实例。不动线上核心、不切换用户
+  正在用的策略组选择。单个节点失败不中断整批。
+- 选优：先排除故障 / 超时节点，再按「延迟修正后的带宽」打分（mbps × 300/(300+delay_ms)，延迟越高折扣
+  越大），把最高分节点设为「🚀 带宽择优」组的选中（走核心 API，不重启核心）。
+- 结果写 bw_hist.json（每节点 {mbps, delay, t}，最近一次为准）。
+"""
+import json, os, shutil, socket, subprocess, threading, time, urllib.request
+from urllib.parse import quote
+
+from .base import CONF_DIR, G_BW, G_MANUAL, HC, PANEL_DIR
+from .corehttp import core, core_json
+from .data import load, read_json, safe, update, write_json
+from .errlog import log_err
+from .health import merge_delay
+from .mihomo import mh_bin
+from .nodeprobe import fill_absent
+from .sb_common import SB_BIN, active_core
+from .sb_nodes import sb_outbound
+
+HIST_FILE = os.path.join(PANEL_DIR, "bw_hist.json")
+DL_URL = "https://speed.cloudflare.com/__down?bytes=50000000"
+DL_TIMEOUT = 10   # 每节点最多下载 10 秒
+DL_MAX = 32 << 20  # 或 32MB，先到先停
+DEFAULT_CFG = {"enabled": False, "interval": 7200, "limit": 10}
+BW_STATE = {"running": False, "current": "", "done": 0, "total": 0, "last_run": 0, "best": "", "error": ""}
+_BG_LOCK = threading.Lock()
+
+
+def bw_cfg(d=None):
+    """读取带宽择优配置（data.json 的 bw_cfg 字段）"""
+    d = d or load()
+    cfg = dict(DEFAULT_CFG)
+    cfg.update(d.get("bw_cfg") or {})
+    return cfg
+
+
+def save_bw_cfg(cfg):
+    update(lambda d: d.update(bw_cfg=dict(cfg)))
+
+
+def hist():
+    h = read_json(HIST_FILE, {})
+    return h if isinstance(h, dict) else {}
+
+
+def _save_hist(h):
+    try:
+        write_json(HIST_FILE, h)
+    except OSError as e:
+        log_err("带宽择优", e)
+
+
+def score(mbps, delay):
+    """延迟修正后的带宽分：延迟越高折扣越大（300ms 时打五折）"""
+    try:
+        return (mbps or 0) * 300.0 / (300.0 + max(0, delay or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _free_port():
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _node_proxies(d):
+    """全部节点的代理配置 {节点名: proxy 字典}：手动节点 + 订阅节点。
+    订阅节点按当前内核取：sing-box 读面板缓存，mihomo 读 provider 缓存文件；另一份作兜底（刚切内核、缓存还没建好时）"""
+    out = {}
+    for n in d.get("nodes") or []:
+        p = n.get("proxy") or {}
+        if isinstance(p, dict) and p.get("name"):
+            out[p["name"]] = p
+    subs = [s for s in d.get("subs") or [] if isinstance(s, dict) and s.get("name")]
+    primary_sb = active_core(d) == "singbox"
+
+    def from_sb_cache(names):
+        from .groups import sb_sub_cache
+        for name in names:
+            for p in (sb_sub_cache(name).get("nodes") or []):
+                if isinstance(p, dict) and p.get("name") and p["name"] not in out:
+                    out[p["name"]] = p
+
+    def from_mh_cache(names):
+        from .sb_subs import _sub_get, parse_sub_text
+        for name in names:
+            try:
+                with open(os.path.join(CONF_DIR, "providers", safe(name) + ".yaml"), encoding="utf-8", errors="ignore") as f:
+                    nodes, _ = parse_sub_text(f.read(), lambda u, _ua="": _sub_get(u, _ua))
+            except (OSError, ValueError):
+                nodes = []
+            for p in nodes:
+                if isinstance(p, dict) and p.get("name") and p["name"] not in out:
+                    out[p["name"]] = p
+
+    names = [s["name"] for s in subs]
+    (from_sb_cache if primary_sb else from_mh_cache)(names)
+    # 另一份缓存只补主来源里没有的节点（同名节点以主来源的为准，避免旧缓存的旧参数覆盖新的）
+    (from_mh_cache if primary_sb else from_sb_cache)(names)
+    return out
+
+
+def _delays():
+    """经核心 delay 接口批量测延迟（与健康检查同一口径，只取结果不记录）。返回 ({节点: 延迟}, 错误)"""
+    pg = core_json("/proxies/" + quote(G_MANUAL))
+    if not pg:
+        return None, "核心未运行或手动选择组不存在"
+    members = pg.get("all") or []
+    code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=180)
+    if code not in (200, 504):  # 504：mihomo 全部节点超时，按全部失败处理
+        return None, f"测速接口返回 {code}"
+    data = {}
+    if code == 200:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return None, "测速结果解析失败"
+    results = merge_delay(members, code, data)
+    if not results:
+        return None, "手动选择组里没有节点"
+    if code == 200 and active_core() == "singbox":
+        # sing-box 整组测速同时只测 10 个：缺席不等于失败，逐个补测；仍无结论的本轮不测带宽
+        results = fill_absent(results, 120)
+    return results, ""
+
+
+def _wait_port(port, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+def _download(port):
+    """经测试实例的 mixed 端口下载测速文件：单连接、DL_TIMEOUT 秒或 DL_MAX 字节，先到先停。返回 Mbps（0 = 没收到数据）"""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(
+        {"http": f"http://127.0.0.1:{port}", "https": f"http://127.0.0.1:{port}"}))
+    req = urllib.request.Request(DL_URL, headers={"User-Agent": "Mozilla/5.0"})
+    t0, n = time.time(), 0
+    with opener.open(req, timeout=DL_TIMEOUT + 5) as r:
+        while time.time() - t0 < DL_TIMEOUT and n < DL_MAX:
+            b = r.read(1 << 16)
+            if not b:
+                break
+            n += len(b)
+    dt = max(time.time() - t0, 0.001)
+    return round(n * 8 / dt / 1e6, 1) if n > 0 else 0.0
+
+
+def _test_node(name, proxy):
+    """另起一个测试用核心实例测单个节点：最小配置（仅该节点 + 一个 select 组），测完立即杀掉。
+    失败返回 None（调用方不中断整批）。"""
+    kind = active_core()
+    bin_path = mh_bin(kind) if kind in ("mihomo", "smart") else SB_BIN
+    if not os.path.isfile(bin_path):
+        raise IOError(f"核心程序不存在：{bin_path}")
+    port = _free_port()
+    tmp = os.path.join(PANEL_DIR, f"bwtest-{os.getpid()}")
+    os.makedirs(tmp, exist_ok=True)
+    proc = None
+    try:
+        p = dict(proxy)
+        p.pop("dialer-proxy", None)  # 落地前置节点在测试实例里不存在，留着会让配置加载失败
+        if kind == "singbox":
+            cfg = {"log": {"level": "warning"},
+                   "dns": {"servers": [{"tag": "dns-direct", "address": "223.5.5.5"}]},
+                   "inbounds": [{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": port}],
+                   "outbounds": [sb_outbound(p, name), {"type": "selector", "tag": G_BW, "outbounds": [name]}],
+                   "route": {"rules": [], "final": G_BW}}
+            cfg_path = os.path.join(tmp, "config.json")
+            write_json(cfg_path, cfg)
+            cmd = [bin_path, "run", "-c", cfg_path, "-D", tmp]
+        else:
+            cfg = {"mixed-port": port, "allow-lan": False, "mode": "rule", "log-level": "warning",
+                   "dns": {"enable": True, "nameserver": ["223.5.5.5"], "default-nameserver": ["223.5.5.5"]},
+                   "proxies": [p], "proxy-groups": [{"name": G_BW, "type": "select", "proxies": [name]}],
+                   "rules": [f"MATCH,{G_BW}"]}
+            cfg_path = os.path.join(tmp, "config.yaml")
+            write_json(cfg_path, cfg)  # JSON 是 YAML 的子集，mihomo 可直接读取
+            cmd = [bin_path, "-d", tmp, "-f", cfg_path]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not _wait_port(port, 10):
+            return None
+        return _download(port) or None
+    finally:
+        if proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _apply_best(name):
+    """把最高分节点设为「🚀 带宽择优」组的选中（走核心 API，不重启核心）"""
+    code, _ = core("PUT", "/proxies/" + quote(G_BW, safe=""), {"name": name}, timeout=10)
+    if code not in (200, 204):
+        log_err("带宽择优", f"设置 {G_BW} 选中失败：HTTP {code}")
+
+
+def run_round():
+    """执行一轮带宽测试：延迟正常的节点按延迟从低到高取 limit 个，逐个测带宽，最高分设为带宽择优组选中。
+    返回 (成功?, 消息)。失败要隔离：单个节点失败不中断整批"""
+    BW_STATE.update(running=True, current="", done=0, total=0, error="")
+    try:
+        d = load()
+        cfg = bw_cfg(d)
+        delays, err = _delays()
+        if delays is None:
+            BW_STATE["error"] = err or "测速失败"
+            return False, BW_STATE["error"]
+        proxies = _node_proxies(d)
+        cands = sorted(((n, v) for n, v in delays.items() if v > 0 and n in proxies), key=lambda x: x[1])
+        cands = cands[:max(1, int(cfg.get("limit") or DEFAULT_CFG["limit"]))]
+        BW_STATE["total"] = len(cands)
+        if not cands:
+            BW_STATE["error"] = "没有延迟正常的节点可测（节点可能都不通，或节点配置取不到）"
+            return False, BW_STATE["error"]
+        h = hist()
+        results = {}
+        for name, delay in cands:
+            BW_STATE["current"] = name
+            try:
+                mbps = _test_node(name, proxies[name])
+            except Exception as e:
+                log_err("带宽择优", e)
+                mbps = None
+            if mbps:
+                h[name] = {"mbps": mbps, "delay": delay, "t": int(time.time())}
+                results[name] = (mbps, delay)
+            BW_STATE["done"] += 1
+        _save_hist(h)
+        BW_STATE["last_run"] = int(time.time())
+        if not results:
+            BW_STATE["error"] = "没有节点测出带宽（测试实例起不来或下载失败）"
+            return False, BW_STATE["error"]
+        best = max(results, key=lambda n: score(results[n][0], results[n][1]))
+        BW_STATE["best"] = best
+        _apply_best(best)
+        return True, f"已测 {len(results)}/{len(cands)} 个节点，带宽最优：{best}（{results[best][0]} Mbps，延迟 {results[best][1]} ms）"
+    finally:
+        BW_STATE.update(running=False, current="")
+
+
+def run_round_bg():
+    """后台线程跑一轮，API 立即返回。已在跑时不重复开始，返回 False"""
+    with _BG_LOCK:
+        if BW_STATE["running"]:
+            return False
+        BW_STATE["running"] = True
+
+    def job():
+        try:
+            run_round()
+        except Exception as e:
+            log_err("带宽择优", e, tb=True)
+            BW_STATE["error"] = str(e)[:120]
+        finally:
+            BW_STATE["running"] = False
+    try:
+        threading.Thread(target=job, daemon=True).start()
+    except Exception:
+        BW_STATE["running"] = False
+        raise
+    return True
+
+
+def bw_tick(d=None):
+    """定时任务循环调用：启用且到周期时在后台跑一轮"""
+    d = d or load()
+    cfg = bw_cfg(d)
+    if not cfg.get("enabled") or BW_STATE["running"]:
+        return
+    h = hist()
+    last = BW_STATE["last_run"] or max([r.get("t", 0) for r in h.values()] or [0])
+    if time.time() - last >= max(600, int(cfg.get("interval") or DEFAULT_CFG["interval"])):
+        run_round_bg()
+
+
+def status():
+    h = hist()
+    best = BW_STATE["best"]
+    if not best and h:
+        best = max(h, key=lambda n: score(h[n].get("mbps") or 0, h[n].get("delay") or 0))
+    return {"cfg": bw_cfg(), "running": BW_STATE["running"], "current": BW_STATE["current"],
+            "done": BW_STATE["done"], "total": BW_STATE["total"],
+            "last_run": BW_STATE["last_run"] or max([r.get("t", 0) for r in h.values()] or [0]),
+            "best": best, "error": BW_STATE["error"], "results": h}
+'''
 _SRC['shunt.ruletest'] = '''"""规则测试"""
-import ipaddress, json, re, socket, threading, time
+import ipaddress, json, re, socket, threading, time, urllib.request
 from urllib.parse import quote
 
 from .base import MIXED
 from .corehttp import core_json
 from .logstream import core_stream
+
+IP_ECHO = "https://api.ipify.org"  # 轻量 IP 回显，返回纯文本公网 IP（出口 IP 用）
 def clean_target(t):
     t = t.strip()
     t = re.sub(r"^[a-z][a-z0-9+.\\-]*://", "", t, flags=re.I).split("/")[0].split("?")[0].split("#")[0]
@@ -11309,6 +11756,58 @@ def rule_test(target):
         res = static_rule(host)
         res["live_error"] = live_err
     res["host"] = host
+    return res
+
+
+def _dns_lookup(host):
+    """经核心 /dns/query 解析（与 static_rule 同一口径：按 nameserver-policy 分流，不用本机系统 DNS）。
+    核心没跑时返回空列表，不抛异常"""
+    ips = []
+    for qt in ("A", "AAAA"):
+        j = core_json(f"/dns/query?name={quote(host)}&type={qt}", timeout=8) or {}
+        for a in j.get("Answer") or []:
+            if a.get("type") in (1, 28) and is_ip(str(a.get("data"))):
+                ips.append(str(a["data"]))
+    return ips
+
+
+def _fetch(url, proxy, timeout=10):
+    """经代理 / 直连 GET 一次：返回 {ok, status, ms} 或 {ok: False, error, ms}"""
+    from .sysopt import proxy_opener
+    t0 = time.time()
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with proxy_opener(proxy).open(req, timeout=timeout) as r:
+            r.read(1 << 16)
+            return {"ok": True, "status": r.status, "ms": int((time.time() - t0) * 1000)}
+    except Exception as e:
+        return {"ok": False, "ms": int((time.time() - t0) * 1000), "error": str(e)[:120]}
+
+
+def _exit_ip():
+    """经代理查出口 IP（轻量回显）。拿不到时返回空串，不影响其他结果"""
+    try:
+        from .sysopt import proxy_opener
+        with proxy_opener(True).open(IP_ECHO, timeout=8) as r:
+            v = r.read(64).decode(errors="ignore").strip()
+            return v if is_ip(v) else ""
+    except Exception:
+        return ""
+
+
+def route_verify(target):
+    """真实路由验证：命中规则 / 策略链（复用 rule_test）+ 真实请求（代理 vs 直连）+ DNS 解析 + 出口 IP。
+    核心没跑、目标不通时返回可读的错误，不抛 500"""
+    host = clean_target(target)
+    if not host:
+        raise ValueError("请输入域名或 IP")
+    res = rule_test(target)
+    res["dns"] = [host] if is_ip(host) else _dns_lookup(host)
+    chain = res.get("chain") or []
+    res["exit_node"] = chain[-1] if chain else ""
+    res["exit_ip"] = _exit_ip()
+    res["proxy"] = _fetch(f"https://{host}/", True)
+    res["direct"] = _fetch(f"https://{host}/", False)
     return res
 
 '''
@@ -12519,9 +13018,33 @@ def mh_unchanged_note(before, after):
 
 
 def mh_update_subs(names):
-    """mihomo：让核心重新拉取订阅；返回 (成功列表「名称：节点数（提示）」, 失败列表「名称：原因」)"""
+    """mihomo：让核心重新拉取订阅；返回 (成功列表「名称：节点数（提示）」, 失败列表「名称：原因」)。
+    面板账号绑定的订阅先刷新订阅地址（token 可能轮换）：地址变了要先重载核心（配置里的 provider URL 才更新），
+    登录过期时跳过该订阅、保留旧节点并报错"""
+    from .panellogin import PanelExpiredError, refresh_subscribe_url
     okl, bad = [], []
+    subs = {s["name"]: s for s in load().get("subs") or [] if isinstance(s, dict)}
+    need_reload = False
+    skipped = set()
     for nm in names:
+        s = subs.get(nm)
+        if s and (s.get("panel") or {}).get("token"):
+            try:
+                if refresh_subscribe_url(s):
+                    need_reload = True
+            except PanelExpiredError:
+                bad.append(nm + "：面板登录已过期，请重新登录（已保留旧节点）")
+                skipped.add(nm)
+                continue
+    if need_reload:
+        from .core import reload_core
+        ok, msg = reload_core()
+        if not ok:
+            bad.append("面板订阅地址已刷新，但核心重载失败：" + msg)
+            return okl, bad
+    for nm in names:
+        if nm in skipped:
+            continue
         before = mh_provider_names(nm)
         code, raw = core("PUT", "/providers/proxies/" + quote(nm, safe=""), timeout=120)
         if code >= 300:
@@ -12639,6 +13162,11 @@ def sched_loop():
             hcfg = health_cfg(d)
             if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
                 due.append("health")
+            try:  # 带宽择优：启用且到周期时在后台跑一轮（不阻塞定时循环）
+                from .bwtest import bw_tick
+                bw_tick(d)
+            except Exception as e:
+                log_err("带宽择优：定时触发", e)
             mins = int(sc.get("latency") or 0)
             if mins and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
                 due.append("latency")
@@ -14934,6 +15462,8 @@ class SubsAPI:
         def save_sub(d):
             old = next((s for s in d["subs"] if s["name"] == name), None)
             new = {"name": name, "url": url, "filter": flt, "exclude": exc}
+            if old and old.get("panel") and old.get("url") == url:  # 面板绑定的订阅：没换链接时保留登录信息
+                new["panel"] = old["panel"]
             if old and sub_removed(old):  # 编辑订阅时保留「从订阅删除」的节点名单
                 new["removed"] = sub_removed(old)
             # 编辑时留在原位置：以前先删再追加到末尾，订阅顺序一变，sing-box 里不同订阅的同名节点去重后缀（「HK (2)」）
@@ -14943,6 +15473,10 @@ class SubsAPI:
             else:
                 d["subs"].append(new)
         prev = update(save_sub)
+        return self._sub_saved(prev, name, cur, url)
+
+    def _sub_saved(self, prev, name, cur, url):
+        """订阅已写入 data.json 后的流程：清旧缓存 → 下载 / 重载核心。api_subs_post 与面板账号登录共用"""
         if not cur or cur.get("url") != url:  # 新订阅 / 换了链接：旧链接留下的 mihomo 缓存不能再用（sing-box 下载失败时也会拿它兜底）
             drop_provider_cache(name)
         if active_core() == "singbox":  # 先由面板下载节点，再生成配置
@@ -14955,6 +15489,39 @@ class SubsAPI:
         if ok:
             refresh_after_sub(name)  # 订阅下载完成后按实际节点生成地区 / 均衡分组
         return self.reply(ok, msg)
+
+    @api_route("/api/subs/panel-login", "POST")
+    def api_subs_panel_login(self, m, p, b, q):
+        """Xboard / V2Board 面板账号登录：登录 → 拿订阅地址 → 按现有订阅结构创建 / 更新订阅 → 走现有流程拉节点。
+        密码只用来登录，不存储、不记日志；只存 token"""
+        from .panellogin import panel_login
+        name = str(b.get("name") or "").strip()
+        host = str(b.get("host") or "").strip()
+        email = str(b.get("email") or "").strip()
+        password = b.get("password") if isinstance(b.get("password"), str) else ""
+        if not name or not host or not email or not password:
+            return self.send(400, {"message": "请填写名称、面板地址、邮箱和密码"})
+        other = sub_name_clash(name, [s.get("name") for s in load()["subs"] if isinstance(s, dict) and s.get("name")])
+        if other:  # 「机场 A」和「机场_A」会共用同一个缓存文件，互相覆盖
+            return self.send(400, {"message": f"与已有订阅「{other}」只差符号，会共用同一个缓存文件，请改个名字"})
+        cur = next((s for s in load()["subs"] if isinstance(s, dict) and s.get("name") == name), None)
+        try:
+            url, panel = panel_login(host, email, password)
+        except (ValueError, IOError) as e:
+            return self.send(400, {"message": str(e)[:150]})
+
+        def save_sub(d):
+            old = next((s for s in d["subs"] if s["name"] == name), None)
+            new = {"name": name, "url": url, "filter": "", "exclude": DEFAULT_EXCLUDE, "panel": panel}
+            if old and sub_removed(old):  # 重新登录时保留「从订阅删除」的节点名单
+                new["removed"] = sub_removed(old)
+            # 编辑时留在原位置：以前先删再追加到末尾，订阅顺序一变，sing-box 里不同订阅的同名节点去重后缀会互换
+            if old:
+                d["subs"] = [new if s["name"] == name else s for s in d["subs"]]
+            else:
+                d["subs"].append(new)
+        prev = update(save_sub)
+        return self._sub_saved(prev, name, cur, url)
 
     @api_route("/api/subs", "DELETE")
     def api_subs_delete(self, m, p, b, q):
@@ -15055,7 +15622,7 @@ from .corehttp import core, core_json
 from .sb_common import active_core
 from .sb_config import sb_ab_loaded, write_active_config
 from .latency import fix_global
-from .ruletest import clean_target, rule_test
+from .ruletest import clean_target, route_verify, rule_test
 from .adblock import AB_CACHE, AB_STATE, ab_check, ab_compose, ab_meta, adblock_update, list_id, parse_filter
 from .dnsleak import antileak_dns, dns_route, leak_check
 from .webapi_base import tp_apply, api_route, rs_caches_sync, rs_drop_removed, sub_caches_sync, sub_refetch
@@ -15174,6 +15741,14 @@ class RulesAPI:
         try:
             return self.send(200, rule_test(str(b.get("target") or "")))
         except ValueError as e:  # 空目标（如只填了 http://）：给出原因，不再 500「内部错误」
+            return self.send(400, {"message": str(e)})
+
+    @api_route("/api/routetest", "POST")
+    def api_routetest_post(self, m, p, b, q):
+        """真实路由验证：命中规则 / 策略链 + 真实请求（代理 vs 直连）+ DNS 解析 + 出口 IP"""
+        try:
+            return self.send(200, route_verify(str(b.get("target") or "")))
+        except ValueError as e:  # 空目标：给出原因，不再 500「内部错误」
             return self.send(400, {"message": str(e)})
 
     @api_route("/api/rules", "PUT")
@@ -15350,15 +15925,24 @@ class SysAPI:
             return self.send(400, {"message": "tun 参数格式不正确"})
         if tun_in.get("stack") is not None and tun_in["stack"] not in TUN_STACKS:
             return self.send(400, {"message": "TUN 协议栈只能是 auto / system / gvisor / mixed"})
+        if "mtu" in tun_in:
+            try:
+                mtu = int(tun_in["mtu"])
+            except (TypeError, ValueError):
+                return self.send(400, {"message": "TUN MTU 必须是数字"})
+            if not 1280 <= mtu <= 9000:
+                return self.send(400, {"message": "TUN MTU 应为 1280–9000"})
 
         def fn(d):
             d["proxy_mode"], d["tproxy"] = mode, mode == "tproxy"
             t = d["tun"]
-            for k in ("stack", "auto_redirect", "strict_route"):
+            for k in ("stack", "auto_redirect", "strict_route", "quic_block", "mss_clamp"):
                 if k in tun_in:
                     t[k] = tun_in[k] if k == "stack" else bool(tun_in[k])
             if "device" in tun_in:
                 t["device"] = safe_dev(tun_in["device"])
+            if "mtu" in tun_in:  # 上面已校验过范围，这里只做钳制
+                t["mtu"] = max(1280, min(9000, int(tun_in["mtu"])))
         prev = update(fn)
         ok, msg = reload_core(prev)  # TUN 开关在配置里，先校验并重载核心
         if not ok:
@@ -15952,6 +16536,42 @@ class SysAPI:
         health_mod.save_health_cfg(cfg)
         return self.send(200, {"ok": True, "cfg": cfg})
 
+    @api_route("/api/bwtest", "GET")
+    def api_bwtest_get(self, m, p, b, q):
+        from . import bwtest as bw_mod
+        return self.send(200, bw_mod.status())
+
+    @api_route("/api/bwtest/run", "POST")
+    def api_bwtest_run(self, m, p, b, q):
+        from . import bwtest as bw_mod
+        ok = bw_mod.run_round_bg()
+        return self.send(200, {"ok": ok, "message": "已开始带宽测试" if ok else "带宽测试正在进行中"})
+
+    @api_route("/api/bwtest/cfg", "PUT")
+    def api_bwtest_cfg(self, m, p, b, q):
+        from . import bwtest as bw_mod
+        cfg = bw_mod.bw_cfg()
+        if "enabled" in b:
+            cfg["enabled"] = bool(b["enabled"])
+        if "interval" in b:
+            try:
+                v = int(b["interval"])
+                if v < 600 or v > 86400:
+                    raise ValueError
+                cfg["interval"] = v
+            except (ValueError, TypeError):
+                return self.send(400, {"ok": False, "message": "测试周期应为 600-86400 秒"})
+        if "limit" in b:
+            try:
+                v = int(b["limit"])
+                if v < 1 or v > 30:
+                    raise ValueError
+                cfg["limit"] = v
+            except (ValueError, TypeError):
+                return self.send(400, {"ok": False, "message": "每轮上限应为 1-30 个节点"})
+        bw_mod.save_bw_cfg(cfg)
+        return self.send(200, {"ok": True, "cfg": cfg})
+
     @api_route("/api/restore", "POST")
     def api_restore_post(self, m, p, b, q):
         try:  # 恢复残缺 / 旧格式的备份：任何一项形状不对都整体拒绝，不写进 data.json
@@ -16472,7 +17092,8 @@ def tp_env():
     local6 = [str(n) for n in ipaddress.collapse_addresses(local6)]
     return (f"B_IP='{','.join(ips)}'\\nB_MAC='{','.join(macs)}'\\nB_IP6='{','.join(ip6s)}'\\n"
             f"LOCAL6='{','.join(local6)}'\\nIPV6={1 if d.get('ipv6') else 0}\\nTPROXY={1 if d.get('tproxy') else 0}\\n"
-            f"MODE={d['proxy_mode']}\\nDNS_ALL={1 if dns_cfg(d)['block_bypass'] else 0}")
+            f"MODE={d['proxy_mode']}\\nDNS_ALL={1 if dns_cfg(d)['block_bypass'] else 0}\\n"
+            f"MSS={1 if (d.get('proxy_mode') in ('tproxy', 'tun') and (d.get('tun') or {}).get('mss_clamp')) else 0}")
 
 
 def write_prep(path=None):
