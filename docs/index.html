@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shunt 分流 — Alpine 旁路由透明代理面板</title>
+<meta name="description" content="Shunt 分流：Alpine 旁路由一键透明代理 + Web 管理面板，支持 mihomo / sing-box 双内核。">
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--text:#e6edf3;--mut:#8b949e;--acc:#2f81f7;--grn:#3fb950}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:960px;margin:0 auto;padding:0 20px 64px}
+header{padding:64px 0 32px;text-align:center}
+header img{width:96px;height:96px}
+h1{font-size:40px;margin:16px 0 8px;letter-spacing:1px}
+.tag{color:var(--mut);font-size:18px;margin:0}
+.badges{margin:20px 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.badge{border:1px solid var(--line);border-radius:999px;padding:4px 14px;font-size:13px;color:var(--mut)}
+.badge b{color:var(--text)}
+.btns{margin-top:24px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;background:var(--acc);color:#fff;padding:10px 22px;border-radius:8px;font-weight:600}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+section{margin-top:56px}
+h2{font-size:24px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.card h3{margin:0 0 6px;font-size:17px}
+.card p{margin:0;color:var(--mut);font-size:14px}
+.shots img{width:100%;border:1px solid var(--line);border-radius:12px;margin-top:16px}
+.shots .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:640px){.shots .row{grid-template-columns:1fr}h1{font-size:30px}}
+pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:13.5px;line-height:1.6}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.install h3{margin:24px 0 8px}
+.install p{color:var(--mut);margin:0 0 8px}
+ul{padding-left:20px}
+li{margin:6px 0}
+.mut{color:var(--mut)}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:14px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<img src="../icon.svg" alt="Shunt">
+<h1>Shunt 分流</h1>
+<p class="tag">Alpine 旁路由一键透明代理 + Web 管理面板，支持 mihomo / sing-box 双内核</p>
+<div class="badges">
+<span class="badge">面板 <b>v9.1.1</b></span>
+<span class="badge">mihomo <b>v1.19.34</b></span>
+<span class="badge">sing-box <b>1.14.4</b></span>
+<span class="badge">许可 <b>GPL-3.0</b></span>
+</div>
+<div class="btns">
+<a class="btn" href="https://github.com/Skycnhe/Shunt-release">GitHub 仓库</a>
+<a class="btn ghost" href="https://github.com/Skycnhe/Shunt-release/releases/tag/offline">下载离线包</a>
+</div>
+</header>
+
+<section>
+<h2>是什么</h2>
+<p>Shunt 跑在 Alpine 旁路由上，用 TProxy 做透明代理：家里所有设备不用逐个配置代理，流量自动走面板分流。面板负责节点、订阅、策略组、内核启停和状态监控，打开浏览器就能管。</p>
+<p>双内核可以随时切换：mihomo 和 sing-box 各有规则集和 DNS 配置，切换后自动生成对应配置、重启内核。</p>
+</section>
+
+<section>
+<h2>功能</h2>
+<div class="grid">
+<div class="card"><h3>📡 订阅管理</h3><p>Clash / Mihomo YAML 或 Base64 节点链接，多个订阅分别管理，支持过滤规则。</p></div>
+<div class="card"><h3>🎯 策略组</h3><p>竞技组、负载均衡组、哈希组，按延迟和连接数自动挑节点，分流规则可视化编辑。</p></div>
+<div class="card"><h3>💓 节点健康检查</h3><p>定时自动测速，挂掉的节点标红，连续多天不可用的自动隐藏。</p></div>
+<div class="card"><h3>🕸️ 负载均衡拓扑</h3><p>概览页实时拓扑：轮询 / 哈希组到成员节点的连线，粗细是连接数，显示延迟与下载速度。</p></div>
+<div class="card"><h3>💾 备份恢复</h3><p>每次在线更新前自动备份当前版本，设置页一键恢复，保留最近 10 个版本。</p></div>
+<div class="card"><h3>🔔 Telegram 通知</h3><p>节点异常、订阅更新失败等情况推送到 Telegram。</p></div>
+<div class="card"><h3>🚫 广告拦截与 DNS</h3><p>内置广告拦截、Fake-IP 与 DNS 分流设置，防 DNS 泄露。</p></div>
+<div class="card"><h3>📱 主题与手机端</h3><p>多套主题，手机浏览器自适应，IP 信息可隐藏 IP 但保留归属地。</p></div>
+</div>
+</section>
+
+<section class="shots">
+<h2>截图</h2>
+<img src="overview.jpg" alt="概览">
+<div class="row">
+<img src="nodes.jpg" alt="节点">
+<img src="groups.jpg" alt="策略组">
+</div>
+<div class="row">
+<img src="themes.jpg" alt="主题">
+<img src="mobile.jpg" alt="手机端">
+</div>
+</section>
+
+<section class="install">
+<h2>安装</h2>
+<h3>一键安装（设备能联网）</h3>
+<p>在 Alpine Linux 上用 root 执行，装完打开 <code>http://旁路由IP:8080</code>：</p>
+<pre><code># 国内网络
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh -s -- --cn
+
+# 国外网络
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh</code></pre>
+<h3>离线安装（设备不联网）</h3>
+<p>从 <a href="https://github.com/Skycnhe/Shunt-release/releases/tag/offline">Releases · offline</a> 下载对应架构的离线包，传到设备后：</p>
+<pre><code>tar xzf shunt-offline-*.tar.gz &amp;&amp; sh shunt-offline/install.sh</code></pre>
+<p>也可以先在联网设备上跑离线安装脚本：</p>
+<pre><code># 国内网络
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/offline.sh | sh -s -- --cn
+
+# 国外网络
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/offline.sh | sh</code></pre>
+<h3>Docker 安装</h3>
+<p>Linux 宿主机，host 网络：</p>
+<pre><code>docker run -d --name shunt --restart unless-stopped --network host \
+  --cap-add NET_ADMIN --cap-add NET_RAW --device /dev/net/tun \
+  -v shunt-data:/data -e TZ=Asia/Shanghai --stop-timeout 30 \
+  skycn2022/shunt:latest</code></pre>
+</section>
+
+<section>
+<h2>本版更新 · v9.1.1</h2>
+<ul>
+<li>概览新增「🕸️ 当前负载均衡」小拓扑，IP 信息加「出口节点」；版面压紧，实时流量图变矮。</li>
+<li>修复 sing-box 测速间隔设到 30 分钟以上时启动即退出的问题。</li>
+<li>修复 sing-box 节点延迟比 mihomo 高 2–4 倍的问题：支持 urltest_unified_delay 的内核自动开启，测速数值与 mihomo 一致。</li>
+<li>「哈希」组提示：不同主域名可能分到不同节点，登录敏感的服务建议用竞技组。</li>
+</ul>
+<p class="mut">完整记录见仓库 <a href="https://github.com/Skycnhe/Shunt-release/blob/shunt/CHANGELOG.md">CHANGELOG.md</a>。</p>
+</section>
+
+<footer>
+<p>Shunt 分流 · GPL-3.0-or-later · <a href="https://github.com/Skycnhe/Shunt-release">Skycnhe/Shunt-release</a></p>
+</footer>
+
+</div>
+</body>
+</html>

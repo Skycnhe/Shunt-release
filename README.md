@@ -2,6 +2,8 @@
 
 <h1 align="center">Shunt 分流</h1>
 
+<p align="center">🌐 在线说明：<a href="https://skycnhe.github.io/Shunt-release/">skycnhe.github.io/Shunt-release</a></p>
+
 ## 截图
 
 ![概览](docs/overview.jpg)
