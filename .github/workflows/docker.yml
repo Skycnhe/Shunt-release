@@ -1,4 +1,4 @@
-# Docker 镜像（shunt-singbox 分支，只含 sing-box 内核）：面板版本变化（PANEL_VERSION）、Docker 相关文件变化或手动触发时，
+# Docker 镜像（shunt-singbox 分支，只含 sing-box 内核）：面板版本变化（bin/SHA256SUMS 的 version）、Docker 相关文件变化或手动触发时，
 # 在 amd64 / arm64 原生 runner 上分别构建（内容由 .github/offline/build.sh 准备，含 sing-box 自测），
 # 各自在 runner 上用 host 网络实际跑一遍（面板可访问、核心运行、nftables 规则挂上、docker stop 后撤干净），
 # 通过后合并成多架构清单推送到 GHCR（ghcr.io/<仓库>，GITHUB_TOKEN），
@@ -10,7 +10,7 @@ on:
   push:
     branches: [shunt-singbox]
     paths:
-      - server.py
+      - bin/SHA256SUMS
       - Dockerfile
       - .dockerignore
       - docker/**
@@ -40,12 +40,13 @@ jobs:
       - id: p
         name: 版本与是否需要构建
         run: |
-          V=$(sed -n 's/^PANEL_VERSION = "\(.*\)"/\1/p' server.py | head -n1)
-          [ -n "$V" ] || { echo "读不到 PANEL_VERSION"; exit 1; }
+          # Go 版：面板版本取自 bin/SHA256SUMS 的 version 行（程序本身在 <分支>-bin 分支）
+          V=$(sed -n 's/^version[[:space:]]\{1,\}//p' bin/SHA256SUMS | head -n1)
+          [ -n "$V" ] || { echo "读不到面板版本（bin/SHA256SUMS）"; exit 1; }
           B=1
           if [ "${{ github.event_name }}" = push ] && git rev-parse -q --verify HEAD^ >/dev/null; then
-            # 只是改了 server.py 里别的内容（没升版本）、也没改 Docker 相关文件：不重新发布镜像
-            if ! git diff HEAD^ HEAD -- server.py | grep -q '^[-+]PANEL_VERSION' \
+            # 只是换了程序（没升版本）、也没改 Docker 相关文件：不重新发布镜像
+            if ! git diff HEAD^ HEAD -- bin/SHA256SUMS | grep -q '^[-+]version ' \
                && [ -z "$(git diff --name-only HEAD^ HEAD -- Dockerfile .dockerignore docker .github/offline/build.sh .github/workflows/docker.yml)" ]; then
               B=0
             fi

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Shunt 分流 Docker 镜像（shunt-singbox 分支）：面板 + sing-box 内核 + sing-box 默认规则集（不含 mihomo）
-# 内容由 .github/offline/build.sh 准备（下载 sing-box 并用 selftest.sh 自测，自测失败则构建失败）
+# 内容由 .github/offline/build.sh 准备（面板程序按 bin/SHA256SUMS 下载校验，下载 sing-box 并用 selftest.sh 自测，自测失败则构建失败）
 # 构建：docker buildx build --platform linux/amd64,linux/arm64 -t shunt .
 # 运行要求（network_mode host、NET_ADMIN、/dev/net/tun、宿主机内核模块与 ip_forward）见 README「Docker」一节
 ARG ALPINE=3.24
@@ -11,8 +11,9 @@ COPY . /src
 RUN NO_APK=1 NO_TAR=1 sh /src/.github/offline/build.sh /src /out \
  && W=/tmp/shunt-offline && R=/rootfs \
  && mkdir -p $R/opt/mihomo-panel $R/opt/shunt-seed $R/usr/local/bin $R/etc/init.d \
- && cp $W/server.py $W/index.html $W/tproxy.sh $W/selftest.sh $W/icon.svg $W/icon-180.png $W/icon-512.png $R/opt/mihomo-panel/ \
- && chmod 755 $R/opt/mihomo-panel/tproxy.sh $R/opt/mihomo-panel/selftest.sh \
+ && cp $W/shunt $W/index.html $W/tproxy.sh $W/selftest.sh $W/icon.svg $W/icon-180.png $W/icon-512.png $R/opt/mihomo-panel/ \
+ && for f in server.py update-files.txt bin/SHA256SUMS; do if [ -f $W/$f ]; then mkdir -p $R/opt/mihomo-panel/$(dirname $f) && cp $W/$f $R/opt/mihomo-panel/$f; fi; done \
+ && chmod 755 $R/opt/mihomo-panel/shunt $R/opt/mihomo-panel/tproxy.sh $R/opt/mihomo-panel/selftest.sh \
  && cp $W/init.d/shunt $W/init.d/shunt-core $R/etc/init.d/ && chmod 755 $R/etc/init.d/* \
  && cp $W/offline/bin/* $R/usr/local/bin/ \
  && cp -r $W/offline/sb-rules $W/offline/VERSION $R/opt/shunt-seed/ \
@@ -20,9 +21,9 @@ RUN NO_APK=1 NO_TAR=1 sh /src/.github/offline/build.sh /src /out \
 
 FROM alpine:${ALPINE}
 ARG ALPINE
-# 与 install.sh 相同的运行时依赖，另加 OpenRC（rc-service 管面板 / 核心，复用 init.d 脚本）和 tini（PID 1：转发信号、回收僵尸进程）
-RUN apk add --no-cache curl wget ca-certificates python3 nftables iptables ip6tables iptables-legacy iproute2 gzip tar tzdata kmod \
-      coreutils openssl py3-yaml openrc tini \
+# 与 install.sh 相同的运行时依赖（Go 版面板是单个程序，不需要 python3），另加 OpenRC（rc-service 管面板 / 核心，复用 init.d 脚本）和 tini（PID 1：转发信号、回收僵尸进程）
+RUN apk add --no-cache curl wget ca-certificates nftables iptables ip6tables iptables-legacy iproute2 gzip tar tzdata kmod \
+      coreutils openssl openrc tini \
  && printf '%s\n' '# Shunt Docker：容器内只用 rc-service 管面板 / 核心（不经 OpenRC 开机），不挂 cgroup、不检查 need net 依赖' \
       'rc_sys="docker"' 'rc_provide="loopback net"' 'rc_controller_cgroups="NO"' 'rc_depend_strict="NO"' >> /etc/rc.conf \
  # 容器的 /sys/fs/cgroup 只读：去掉 OpenRC 给每个服务建 cgroup 的步骤（否则每次启停都报 mkdir 失败）；
@@ -34,7 +35,7 @@ RUN apk add --no-cache curl wget ca-certificates python3 nftables iptables ip6ta
  && ln -s /data/mihomo /etc/mihomo && ln -s /data/mihomo-panel /etc/mihomo-panel && ln -s /data/sing-box /etc/sing-box
 COPY --from=bundle /rootfs/ /
 RUN /usr/local/bin/sing-box version \
- && python3 -c "compile(open('/opt/mihomo-panel/server.py').read(), 'server.py', 'exec')" && cat /opt/shunt-seed/VERSION
+ && /opt/mihomo-panel/shunt --version && cat /opt/shunt-seed/VERSION
 
 LABEL org.opencontainers.image.title="Shunt" \
       org.opencontainers.image.description="Shunt 分流（shunt-singbox）：旁路由透明代理 + Web 面板（sing-box，nftables TProxy / TUN）" \

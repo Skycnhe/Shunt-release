@@ -2,8 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name="shunt"
 description="Shunt side-router panel"
-command="/usr/bin/python3"
-command_args="/opt/mihomo-panel/server.py"
+# Go 版面板是单个程序 /opt/mihomo-panel/shunt（不需要 python3）。
+# 从 Python 版在线更新上来、程序还没下载好时，先运行 server.py（引导程序：下载并校验本机架构的程序后交给它）
+if [ -x /opt/mihomo-panel/shunt ]; then
+  command="/opt/mihomo-panel/shunt"
+  command_args=""
+else
+  command="/usr/bin/python3"
+  command_args="/opt/mihomo-panel/server.py"
+fi
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/mihomo-panel.log"

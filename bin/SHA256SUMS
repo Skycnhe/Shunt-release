@@ -1,0 +1,11 @@
+# Shunt Go 版面板程序（sha256）
+version 11.7.8-preview.791+104233c
+commit 323ebe89e6e1ed4e01228a086f4c77f706ff895a
+f7f06d2e969d1fc9583a8c745a5a67fcb834c9395fffc761adb721f06080b761  shunt-linux-386
+dbfdbbf588c93efe0afd905371bbdee61489e64b08ee52603756fa29e3bbaac3  shunt-linux-386.gz
+b3cc5b3dd8fc28ee4f455385769e7a51ac2e5d5be92acd09cdb942366ed69617  shunt-linux-amd64
+6eede9d517dfc4f6b0135f5e890851daa71bbc1fc8b5f295acb79977142690d0  shunt-linux-amd64.gz
+6a6a7bf38ef8a7eb321b2de044fc195e2891a326cec96bc9fa6c302dad4232c8  shunt-linux-arm64
+6eef7be5ac48bf9b827f64dcdbb12747b1b0bcfaaca02786b3415ef8f01b0cc0  shunt-linux-arm64.gz
+6c16bbc6c1c6ec5b32c2b3e532eec2badd1935dbb1a66120967cdfd1ddb8b6e1  shunt-linux-armv7
+e13aac28ddd1cf1b10c4d23b2ad5667f9b7ad8a9308ee0a9243694ae966d7699  shunt-linux-armv7.gz

@@ -1,6 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Shunt 分流 —— sing-box 旁路由面板一键安装 (Alpine Linux)
+# Go 版：面板是单个程序 /opt/mihomo-panel/shunt（按本机架构下载、sha256 校验），不需要 python3
 # 用法: sh install.sh [--cn] [--update-core] [--https] [--selftest]
 # 离线安装包（面板 + sing-box 内核 + 依赖，GitHub Releases「offline-HK003」）:
 #   一键: wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/offline.sh | sh
@@ -8,7 +9,8 @@
 # 一键安装（无需先下载仓库）:
 #   国外: wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh
 #   国内: wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh -s -- --cn
-#   --cn           国内网络：apk 换国内镜像，GitHub 下载走加速代理（默认 https://ghfast.top/，可用 GH_PROXY 覆盖）
+#   --cn           国内网络：apk 换国内镜像，GitHub 下载走加速代理（默认 https://ghfast.top/，可用 GH_PROXY 覆盖，
+#                  如 GH_PROXY=https://gh-proxy.com/；首选失败时自动换内置的另一个镜像，下载的程序都按 sha256 校验）
 #   --update-core  重新下载最新 sing-box 核心
 #   --https        生成自签名证书并让面板使用 https://（也可之后在“设置”里开关）
 #   --selftest     安装后用真实核心校验多种配置场景（selftest.sh）
@@ -31,8 +33,8 @@ done
 [ -f /etc/alpine-release ] || { echo "本脚本仅支持 Alpine Linux"; exit 1; }
 REL=$(cut -d. -f1,2 /etc/alpine-release)
 # 离线安装包：同目录有 offline/（内核、geo 数据、apk 依赖），全程不需要联网
-OFF=""; [ -f "$SRC/server.py" ] && [ -f "$SRC/offline/VERSION" ] && OFF="$SRC/offline"
-PKGS="curl wget ca-certificates python3 nftables iptables ip6tables iproute2 gzip tar tzdata kmod coreutils"
+OFF=""; [ -f "$SRC/index.html" ] && [ -f "$SRC/offline/VERSION" ] && OFF="$SRC/offline"
+PKGS="curl wget ca-certificates nftables iptables ip6tables iproute2 gzip tar tzdata kmod coreutils"
 [ -n "$HTTPS" ] && PKGS="$PKGS openssl"
 ONLINE_DEPS=1
 if [ -n "$OFF" ]; then
@@ -41,7 +43,7 @@ if [ -n "$OFF" ]; then
   [ "$BARCH" = "$(uname -m)" ] || { echo "!! 安装包是 $BARCH 的，本机是 $(uname -m)，请下载对应架构的包"; exit 1; }
   [ "$BREL" = "$REL" ] || echo "!! 安装包按 Alpine $BREL 打包，本机是 $REL：包内依赖装不上时会改为联网安装"
   echo ">> 安装依赖（包内离线源）"
-  if apk add --no-network --allow-untrusted --repositories-file /dev/null --repository "$OFF/apk" $PKGS openssl py3-yaml >/tmp/shunt-apk.log 2>&1; then
+  if apk add --no-network --allow-untrusted --repositories-file /dev/null --repository "$OFF/apk" $PKGS openssl >/tmp/shunt-apk.log 2>&1; then
     ONLINE_DEPS=""
   else
     echo "!! 包内依赖安装失败（详情 /tmp/shunt-apk.log），改为联网安装"
@@ -67,49 +69,66 @@ echo ">> 安装依赖"
 apk update >/dev/null || { echo "!! apk update 失败，请检查网络/软件源（国内请加 --cn）"; exit 1; }
 for p in $PKGS; do apk add --no-cache "$p" >/dev/null 2>&1 || echo "!! 依赖 $p 安装失败"; done
 fi
-for c in curl python3 nft ip gunzip; do command -v $c >/dev/null || { echo "!! 缺少 $c，安装中止"; exit 1; }; done
+for c in curl nft ip gunzip sha256sum; do command -v $c >/dev/null || { echo "!! 缺少 $c，安装中止"; exit 1; }; done
 update-ca-certificates >/dev/null 2>&1 || true
-
-# 通过 wget | sh 运行时本地没有项目文件：从 GitHub 拉取（文件清单见仓库的 update-files.txt）
-if [ ! -f "$SRC/server.py" ]; then
-  SRC=$(mktemp -d)
-  # 能连上 GitHub API 时锁定到具体提交，并按 Git blob SHA1 校验每个文件；连不上时只能不校验
-  MAN="$SRC/.manifest"
-  REF=$(python3 - "$REPO" "$BRANCH" "$MAN" <<'PY' 2>/dev/null
-import json, sys, urllib.request
-repo, br, out = sys.argv[1:4]
-get = lambda u: json.load(urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "shunt-install"}), timeout=15))
-c = get(f"https://api.github.com/repos/{repo}/commits/{br}")
-t = get(f"https://api.github.com/repos/{repo}/git/trees/{c['commit']['tree']['sha']}?recursive=1")
-open(out, "w").write("".join(f"{x['sha']} {x['path']}\n" for x in t["tree"] if x["type"] == "blob"))
-print(c["sha"])
-PY
-)
-  [ -n "$REF" ] || { REF="$BRANCH"; rm -f "$MAN"; echo "!! 无法访问 GitHub API，下载的文件不做完整性校验"; }
-  RAW="${GH}https://raw.githubusercontent.com/$REPO/$REF"
-  echo ">> 下载面板文件 ($REPO@$REF)"
-  FILES="server.py index.html tproxy.sh selftest.sh init.d/shunt init.d/shunt-core"
-  if curl -fsSL --retry 3 -o "$SRC/update-files.txt" "$RAW/update-files.txt"; then
-    L=$(sed 's/#.*//' "$SRC/update-files.txt" | tr -s ' \t\r' '\n' | grep -E '^[A-Za-z0-9_][A-Za-z0-9_./-]*$' | grep -v '\.\.' | tr '\n' ' ')
-    [ -n "$L" ] && FILES="update-files.txt $L"
-  fi
-  for f in $FILES; do
-    mkdir -p "$SRC/$(dirname "$f")"
-    curl -fsSL --retry 3 -o "$SRC/$f" "$RAW/$f" || { echo "!! 下载 $f 失败（国内请加 --cn 或设置 GH_PROXY）"; exit 1; }
-    if [ -f "$MAN" ]; then
-      want=$(awk -v f="$f" '$2==f{print $1}' "$MAN")
-      got=$({ printf 'blob %d\000' "$(wc -c < "$SRC/$f")"; cat "$SRC/$f"; } | sha1sum | cut -d' ' -f1)
-      [ -n "$want" ] && [ "$want" = "$got" ] || { echo "!! $f 校验失败（可能被篡改或下载不完整），安装中止"; exit 1; }
-    fi
-  done
-fi
 
 case "$(uname -m)" in
   x86_64) ARCH=amd64 ;;
   aarch64|arm64) ARCH=arm64 ;;
   armv7l|armv8l) ARCH=armv7 ;;
+  i686|i386) ARCH=386 ;;
   *) echo "不支持的架构 $(uname -m)"; exit 1 ;;
 esac
+[ "$ARCH" = 386 ] && SBARCH=386 || SBARCH=$ARCH
+
+# 下载：先走 GH_PROXY（--cn 默认 ghfast.top），失败再换内置镜像、最后直连。dl 网址 输出文件
+MIRRORS="https://ghfast.top/ https://gh-proxy.com/"
+dl() {
+  for p in "$GH" $( [ -n "$CN$GH" ] && echo $MIRRORS ) ""; do
+    case " $TRIED " in *" [$p] "*) continue ;; esac; TRIED="$TRIED [$p]"
+    curl -fsSL --retry 2 --connect-timeout 15 -o "$2" "$p$1" 2>/dev/null && { TRIED=""; return 0; }
+  done
+  TRIED=""; return 1
+}
+TRIED=""
+RAWB="https://raw.githubusercontent.com/$REPO"
+
+# Go 版面板程序：本地没有 shunt 时按 bin/SHA256SUMS 下载本机架构的程序（gz 与解压后的程序两次 sha256 校验）
+if ! { [ -f "$SRC/shunt" ] && [ -x "$SRC/shunt" ]; }; then
+  [ -f "$SRC/index.html" ] || { SRC=$(mktemp -d); }
+  mkdir -p "$SRC/bin"
+  REF=""; SUMS_OK=""
+  if [ ! -f "$SRC/bin/SHA256SUMS" ]; then
+    # 能连上 GitHub API 时锁定到具体提交，SHA256SUMS 直接从 api.github.com 取（不经镜像，可信）；连不上时只能经镜像取
+    REF=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null | sed -n 's/^  "sha": "\([0-9a-f]\{40\}\)".*/\1/p' | head -n 1)
+    if [ -n "$REF" ] && curl -fsSL --connect-timeout 10 -H "Accept: application/vnd.github.raw" \
+        "https://api.github.com/repos/$REPO/contents/bin/SHA256SUMS?ref=$REF" -o "$SRC/bin/SHA256SUMS" 2>/dev/null && grep -q '^version ' "$SRC/bin/SHA256SUMS"; then
+      SUMS_OK=1
+    else
+      REF="$BRANCH"
+      dl "$RAWB/$BRANCH/bin/SHA256SUMS" "$SRC/bin/SHA256SUMS" || { echo "!! 下载 bin/SHA256SUMS 失败（国内请加 --cn 或设置 GH_PROXY）"; exit 1; }
+      echo "!! 无法访问 GitHub API，程序校验清单未经 GitHub 校验"
+    fi
+  fi
+  BCOMMIT=$(sed -n 's/^commit[[:space:]]\{1,\}\([0-9a-f]\{40\}\).*/\1/p' "$SRC/bin/SHA256SUMS" | head -n 1)
+  BVER=$(sed -n 's/^version[[:space:]]\{1,\}//p' "$SRC/bin/SHA256SUMS" | head -n 1)
+  WGZ=$(awk -v f="shunt-linux-$ARCH.gz" '$2==f{print $1}' "$SRC/bin/SHA256SUMS")
+  WBIN=$(awk -v f="shunt-linux-$ARCH" '$2==f{print $1}' "$SRC/bin/SHA256SUMS")
+  [ -n "$BCOMMIT" ] && [ -n "$WGZ" ] && [ -n "$WBIN" ] || { echo "!! 发布里没有 $ARCH 架构的面板程序"; exit 1; }
+  echo ">> 下载面板程序 $BVER（linux/$ARCH）"
+  dl "$RAWB/$BCOMMIT/shunt-linux-$ARCH.gz" "$SRC/shunt.gz" || { echo "!! 下载面板程序失败（国内请加 --cn 或设置 GH_PROXY）"; exit 1; }
+  [ "$(sha256sum "$SRC/shunt.gz" | cut -d' ' -f1)" = "$WGZ" ] || { echo "!! 面板程序压缩包校验失败（可能被篡改或下载不完整），安装中止"; exit 1; }
+  gunzip -c "$SRC/shunt.gz" > "$SRC/shunt.new" && rm -f "$SRC/shunt.gz"
+  [ "$(sha256sum "$SRC/shunt.new" | cut -d' ' -f1)" = "$WBIN" ] || { echo "!! 面板程序校验失败，安装中止"; exit 1; }
+  chmod 755 "$SRC/shunt.new" && mv "$SRC/shunt.new" "$SRC/shunt"
+  "$SRC/shunt" --version >/dev/null || { echo "!! 面板程序无法在本机运行"; exit 1; }
+fi
+# 其余面板文件（index.html、tproxy.sh、init.d 等，清单见发布分支的 update-files.txt）：本地没有时由程序下载，能连上 GitHub API 时逐个校验
+if [ ! -f "$SRC/index.html" ]; then
+  mkdir -p "$SRC/.fetch"
+  echo ">> 下载面板文件 ($REPO@${REF:-$BRANCH})"
+  PANEL_RAW="$RAWB/$BRANCH" GH_PROXY="$GH" PANEL_DATA="$SRC/.fetch/data.json" "$SRC/shunt" --fetch-panel "$SRC" || { echo "!! 下载面板文件失败（国内请加 --cn 或设置 GH_PROXY）"; exit 1; }
+fi
 
 mkdir -p /etc/mihomo-panel /opt/mihomo-panel /etc/sing-box/rules
 if [ -n "$OFF" ]; then
@@ -121,6 +140,7 @@ if [ -n "$OFF" ]; then
   fi
   for f in "$OFF"/sb-rules/*; do [ -f "$f" ] && { [ -s "/etc/sing-box/rules/${f##*/}" ] || cp "$f" /etc/sing-box/rules/; }; done
 elif [ ! -x /usr/local/bin/sing-box ] || [ -n "$UPDATE_CORE" ]; then
+  ARCH=$SBARCH
   echo ">> 获取 sing-box 最新版本"
   # API 受限或走加速代理时从 releases/latest 的跳转地址里取版本号
   VER=$(curl -fsSL --retry 3 https://api.github.com/repos/SagerNet/sing-box/releases/latest | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1)
@@ -141,8 +161,11 @@ fi
 # GEO / 规则集（.srs）由面板按需下载到 /etc/sing-box/rules，不再需要 mihomo 的 geoip.dat / geosite.dat
 
 echo ">> 安装面板"
-cp "$SRC/server.py" "$SRC/index.html" "$SRC/tproxy.sh" "$SRC/selftest.sh" /opt/mihomo-panel/
-for f in icon.svg icon-180.png icon-512.png; do [ -f "$SRC/$f" ] && cp "$SRC/$f" /opt/mihomo-panel/; done
+# 程序先拷成 .new 再改名：覆盖安装时旧程序可能正在运行（直接覆盖会 Text file busy）
+cp "$SRC/shunt" /opt/mihomo-panel/shunt.new && chmod 755 /opt/mihomo-panel/shunt.new && mv -f /opt/mihomo-panel/shunt.new /opt/mihomo-panel/shunt
+cp "$SRC/index.html" "$SRC/tproxy.sh" "$SRC/selftest.sh" /opt/mihomo-panel/
+for f in icon.svg icon-180.png icon-512.png server.py update-files.txt; do [ -f "$SRC/$f" ] && cp "$SRC/$f" /opt/mihomo-panel/; done
+[ -f "$SRC/bin/SHA256SUMS" ] && mkdir -p /opt/mihomo-panel/bin && cp "$SRC/bin/SHA256SUMS" /opt/mihomo-panel/bin/
 chmod +x /opt/mihomo-panel/tproxy.sh /opt/mihomo-panel/selftest.sh
 # v7.7.6 起服务名为 shunt（面板）/ shunt-core（核心）：覆盖安装旧版时先停掉并删除旧服务
 for s in mihomo-panel mihomo; do
@@ -161,13 +184,8 @@ chmod 600 /etc/mihomo-panel/data.json
 
 if [ -n "$HTTPS" ]; then
   echo ">> 生成自签名证书"
-  python3 /opt/mihomo-panel/server.py --gen-cert >/dev/null
-  python3 - <<'EOF'
-import json
-p = "/etc/mihomo-panel/data.json"
-d = json.load(open(p)); d["https"] = True
-json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
-EOF
+  /opt/mihomo-panel/shunt --gen-cert >/dev/null
+  /opt/mihomo-panel/shunt --https on >/dev/null
 fi
 
 # 开启转发并持久化（IPv6 转发由 tproxy.sh 在开启 IPv6 透明代理时设置）
@@ -190,7 +208,7 @@ if [ -z "$CT" ]; then
   done
 fi
 [ -c /dev/net/tun ] || { mkdir -p /dev/net && mknod /dev/net/tun c 10 200 2>/dev/null && chmod 666 /dev/net/tun; }
-TUN_OK=""; [ -c /dev/net/tun ] && python3 -c "import fcntl,os,struct;f=os.open('/dev/net/tun',os.O_RDWR);fcntl.ioctl(f,0x400454ca,struct.pack('16sH',b'shuntprobe',0x1001))" 2>/dev/null && TUN_OK=1
+TUN_OK=""; [ -c /dev/net/tun ] && /opt/mihomo-panel/shunt --tun-check 2>/dev/null && TUN_OK=1
 TP_OK=""; nft -f - 2>/dev/null <<'NFT' && TP_OK=1
 table inet shunt_probe { chain p { type filter hook prerouting priority mangle; meta l4proto tcp tproxy ip to 127.0.0.1:1 } }
 NFT
@@ -208,8 +226,8 @@ fi
 [ -z "$TP_OK" ] && [ -z "$TUN_OK" ] && echo "!! TProxy 和 TUN 都不可用：只能把设备的 HTTP/SOCKS 代理指向本机 7890 端口使用"
 
 # 升级安装：先记下各策略组当前选择（v6 地区组改名，如「🇺🇸 美国」→「🇺🇸 美国自动优选」），面板启动后按新名称恢复
-[ -z "$NEWPW" ] && python3 /opt/mihomo-panel/server.py --snapshot >/dev/null 2>&1 || true
-python3 /opt/mihomo-panel/server.py --gen >/dev/null
+[ -z "$NEWPW" ] && /opt/mihomo-panel/shunt --snapshot >/dev/null 2>&1 || true
+/opt/mihomo-panel/shunt --gen >/dev/null
 if [ -n "$SELFTEST" ]; then
   echo ">> 校验配置"
   sh /opt/mihomo-panel/selftest.sh || echo "!! 自检未全部通过，请把输出反馈给作者"
