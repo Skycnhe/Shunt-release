@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.8-preview"
+PANEL_VERSION = "9.1.9-preview"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -372,7 +372,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.8-preview"
+PANEL_VERSION = "9.1.9-preview"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1843,6 +1843,54 @@ def pick_plan(d, cg, orig=None):
     return {s["name"]: want[s["name"]] for s in d["subs"] if s["name"] in want}
 
 
+def bw_resolve(d, names):
+    """带宽择优指定的节点（显示名）里还有效的部分 → {"manual": [手动节点名], "subs": {订阅名: [节点原名]}, "display": [核心里看到的代理名]}。
+    口径与 pick_plan 相同：手动节点按 d["nodes"] 的代理名（显示名即代理名）；订阅节点按显示名匹配——
+    mihomo 下显示名即原名（sub_orig_nodes），sing-box 下去重改名后的 tag 经 sb_sub_outbounds 对回原名。
+    同一显示名分属多个订阅时都算上；已删除 / 已不在订阅里的跳过。空输入时三项都为空，调用方按“全部节点”处理。"""
+    want = []
+    for n in names or []:
+        n = str(n).strip()
+        if n and n not in want:
+            want.append(n)
+    if not want:
+        return {"manual": [], "subs": {}, "display": []}
+    manual_names = set()
+    for n in d.get("nodes") or []:
+        p = (n or {}).get("proxy") or {}
+        if isinstance(p, dict) and p.get("name"):
+            manual_names.add(p["name"])
+    orig = sub_orig_nodes(d)  # {订阅: {原名}}
+    tag2orig = {}
+    try:
+        for s, lst in sb_sub_outbounds(d).items():
+            for tag, p in lst:
+                tag2orig.setdefault(tag, []).append((s, str(p.get("name") or "")))
+    except Exception:
+        tag2orig = {}
+    manual, subs, display = [], {}, []
+    for n in want:
+        if n in manual_names:  # 显示名即手动节点名；同名订阅节点是另一个代理（去重后叫“名 (2)”），不混
+            manual.append(n)
+            display.append(n)
+            continue
+        hit = False
+        for s, names_in_sub in orig.items():
+            if n in names_in_sub:
+                subs.setdefault(s, [])
+                if n not in subs[s]:
+                    subs[s].append(n)
+                hit = True
+        for s, o in tag2orig.get(n, []):
+            subs.setdefault(s, [])
+            if o and o not in subs[s]:
+                subs[s].append(o)
+            hit = True
+        if hit and n not in display:
+            display.append(n)
+    return {"manual": manual, "subs": {k: v for k, v in subs.items() if v}, "display": display}
+
+
 def clean_custom_group(b):
     """校验并规范化一个自定义策略组（不含引用检查）"""
     name = str(b.get("name") or "").strip()
@@ -1925,7 +1973,7 @@ from .base import (
 )
 from .data import LB_KINDS, auto_name, lb_name, region_label, rs_file, safe
 from . import gguard, landing
-from .groups import LB_TOL, clean_custom_group, gcfg, group_opts, lb_delays, lb_members, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
+from .groups import LB_TOL, bw_resolve, clean_custom_group, gcfg, group_opts, lb_delays, lb_members, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
 from .ruleutil import AB_RULE_ONLY, DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, complete_rule, dns_policy_of, norm_rule, \\
     rule_policy_index, split_rule
 from .sb_common import active_core
@@ -2197,13 +2245,29 @@ def build_config(d, strict=False):
         if cg["expose"]:
             exposed.append(cg["name"])
 
+    # 🚀 带宽择优组：指定了节点时只含指定节点（手动节点写 proxies，订阅节点用 use + 原名精确 filter）；
+    # 没指定时与手动选择同成员；指定节点全失效时回退全部节点（测速会报错提示重新选择）
+    _bw_names = [str(n).strip() for n in ((d.get("bw_cfg") or {}).get("nodes") or []) if str(n).strip()]
+    if _bw_names:
+        _br = bw_resolve(d, _bw_names)
+        if _br["manual"] or _br["subs"]:
+            _bw_g = {"name": G_BW, "type": "select"}
+            if _br["manual"]:
+                _bw_g["proxies"] = _br["manual"]
+            if _br["subs"]:
+                _bw_g["use"] = list(_br["subs"])
+                _bw_g["filter"] = names_rx([n for v in _br["subs"].values() for n in v])
+        else:
+            _bw_g = with_src({"name": G_BW, "type": "select"}, names)
+    else:
+        _bw_g = with_src({"name": G_BW, "type": "select"}, names)
     # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → 🚀 带宽择优 → ⚡ 全局自动选择 → 🏠 直连
     have = bool(use or names)
     direct_g = {"name": G_DIRECT, "type": "select", "proxies": ["DIRECT"]}
     if have:
         groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL, G_BW] + warpn + [G_AUTO, G_DIRECT]}] + region_groups + [
             with_src({"name": G_MANUAL, "type": "select"}, names),
-            with_src({"name": G_BW, "type": "select"}, names),  # 带宽择优：与手动选择同成员，面板按实测带宽设选中
+            _bw_g,  # 带宽择优：默认与手动选择同成员，面板按实测带宽设选中；指定节点时只含指定节点
             with_src(dict({"name": G_AUTO}, **group_opts(race, gc)), pool), direct_g]
         side = [G_SEL] + rnames + [G_MANUAL, G_BW, G_AUTO] + exposed + ["DIRECT"] + names
     else:
@@ -5240,10 +5304,10 @@ _SRC['shunt.sb_config'] = '''"""生成 sing-box 配置"""
 import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, urllib.error
 
 from .base import (
-    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
+    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_BW, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
-from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
+from .groups import bw_resolve, clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
 from .mihomo import BUILTIN_GEO, QUIC_RULE, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
@@ -5529,6 +5593,18 @@ def sb_custom_picks(d, sub_out, prov_names):
             want = set(names)
             tags += [tag for tag, p in sub_out.get(sname) or [] if str(p.get("name") or "") in want and tag in alive and tag not in tags]
         out[cg["name"]] = (cg["filter"] if cg["filter"] and cg["subs"] else "", tags)
+    # 🚀 带宽择优指定节点：mihomo 的 filter 用原名，这里按原名映射回本次生成配置里去重改名后的 tag。
+    # 指定节点全失效时不写 picks——mihomo 侧已回退全部节点，sing-box 侧也按 use+filter 走全部节点。
+    bw_names = [str(n).strip() for n in ((d.get("bw_cfg") or {}).get("nodes") or []) if str(n).strip()]
+    if bw_names:
+        r = bw_resolve(d, bw_names)
+        if r["manual"] or r["subs"]:
+            tags = []
+            for sname, names in r["subs"].items():
+                alive = set(prov_names.get(sname) or [])
+                want = set(names)
+                tags += [tag for tag, p in sub_out.get(sname) or [] if str(p.get("name") or "") in want and tag in alive and tag not in tags]
+            out[G_BW] = ("", tags)
     return out
 
 
@@ -11295,8 +11371,9 @@ from .corehttp import core, core_json
 from .data import load, read_json, safe, update, write_json
 from .errlog import log_err
 from .health import merge_delay
+from .groups import bw_resolve
 from .mihomo import mh_bin
-from .nodeprobe import fill_absent
+from .nodeprobe import fill_absent, probe_nodes
 from .sb_common import SB_BIN, active_core
 from .sb_nodes import sb_outbound
 
@@ -11304,7 +11381,7 @@ HIST_FILE = os.path.join(PANEL_DIR, "bw_hist.json")
 DL_URL = "https://speed.cloudflare.com/__down?bytes=50000000"
 DL_TIMEOUT = 10   # 每节点最多下载 10 秒
 DL_MAX = 32 << 20  # 或 32MB，先到先停
-DEFAULT_CFG = {"enabled": False, "interval": 7200, "limit": 10}
+DEFAULT_CFG = {"enabled": False, "interval": 7200, "limit": 10, "nodes": []}
 BW_STATE = {"running": False, "current": "", "done": 0, "total": 0, "last_run": 0, "best": "", "error": ""}
 _BG_LOCK = threading.Lock()
 
@@ -11318,7 +11395,7 @@ def bw_cfg(d=None):
 
 
 def save_bw_cfg(cfg):
-    update(lambda d: d.update(bw_cfg=dict(cfg)))
+    return update(lambda d: d.update(bw_cfg=dict(cfg)))  # 返回旧数据，供 nodes 变化时重载失败回滚
 
 
 def hist():
@@ -11387,8 +11464,14 @@ def _node_proxies(d):
     return out
 
 
-def _delays():
-    """经核心 delay 接口批量测延迟（与健康检查同一口径，只取结果不记录）。返回 ({节点: 延迟}, 错误)"""
+def _delays(pool=None):
+    """经核心 delay 接口批量测延迟（与健康检查同一口径，只取结果不记录）。返回 ({节点: 延迟}, 错误)。
+    pool 指定时只逐个测池内节点（probe_nodes，与健康检查同一口径，省时间）；否则整组测手动选择组。"""
+    if pool is not None:
+        if not pool:
+            return {}, ""
+        res = probe_nodes(list(pool), budget=90)
+        return {n: v for n, v in res.items() if v}, ""
     pg = core_json("/proxies/" + quote(G_MANUAL))
     if not pg:
         return None, "核心未运行或手动选择组不存在"
@@ -11500,7 +11583,15 @@ def run_round():
     try:
         d = load()
         cfg = bw_cfg(d)
-        delays, err = _delays()
+        # 指定节点时只测指定节点（过滤掉改名/删除/已不在订阅里的；全失效则不跑，给出可读提示）
+        pool = None
+        designated = [str(n).strip() for n in (cfg.get("nodes") or []) if str(n).strip()]
+        if designated:
+            pool = bw_resolve(d, designated)["display"]
+            if not pool:
+                BW_STATE["error"] = "指定的节点都已失效（改名/删除/不在订阅里），请重新选择"
+                return False, BW_STATE["error"]
+        delays, err = _delays(pool)
         if delays is None:
             BW_STATE["error"] = err or "测速失败"
             return False, BW_STATE["error"]
@@ -16551,6 +16642,7 @@ class SysAPI:
     def api_bwtest_cfg(self, m, p, b, q):
         from . import bwtest as bw_mod
         cfg = bw_mod.bw_cfg()
+        old_nodes = [str(n) for n in (cfg.get("nodes") or [])]
         if "enabled" in b:
             cfg["enabled"] = bool(b["enabled"])
         if "interval" in b:
@@ -16569,7 +16661,26 @@ class SysAPI:
                 cfg["limit"] = v
             except (ValueError, TypeError):
                 return self.send(400, {"ok": False, "message": "每轮上限应为 1-30 个节点"})
-        bw_mod.save_bw_cfg(cfg)
+        if "nodes" in b:
+            ns = b.get("nodes")
+            if not isinstance(ns, list):
+                return self.send(400, {"ok": False, "message": "指定节点应为节点名列表"})
+            clean = []
+            for n in ns:
+                n = str(n).strip()
+                if n and n not in clean:
+                    clean.append(n)
+            if len(clean) > 100:
+                return self.send(400, {"ok": False, "message": "指定节点最多 100 个"})
+            cfg["nodes"] = clean
+        # 指定节点变化会改 🚀 带宽择优组的成员（在生成配置里），要重载核心才生效；
+        # 其他字段只影响下一轮测试，不重载。核心没跑时 reload_core 只保存配置，下次启动生效。
+        prev = bw_mod.save_bw_cfg(cfg)
+        if [str(n) for n in (cfg.get("nodes") or [])] != old_nodes:
+            ok, msg = reload_core(prev)
+            if not ok:
+                return self.send(500, {"ok": False, "message": msg})
+            return self.send(200, {"ok": True, "cfg": cfg, "message": msg})
         return self.send(200, {"ok": True, "cfg": cfg})
 
     @api_route("/api/restore", "POST")

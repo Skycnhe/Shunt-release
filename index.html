@@ -607,8 +607,15 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
       <div class="seg" id="hf"><button data-v="all">全部</button><button data-v="normal">只看正常</button><button data-v="bad">只看失效</button><button data-v="hidden">含已隐藏</button></div>
       <button class="btn g" id="hidedead" onclick="toggleDead()" title="隐藏测速超时、以及组里测过速却没有延迟（显示 --）的节点；当前选中的节点照常显示">隐藏超时</button>
       <button class="btn g" onclick="setAllOpen(true)">全部展开</button><button class="btn g" onclick="setAllOpen(false)">全部收起</button>
-      <button class="btn g" id="test-all" onclick="testAll(this)">全部测速</button><button class="btn g" onclick="runBwTest()">测带宽</button><button class="btn g" onclick="loadProxies()">刷新</button></div>
+      <button class="btn g" id="test-all" onclick="testAll(this)">全部测速</button><button class="btn g" onclick="loadProxies()">刷新</button></div>
     <div class="nfilter"><span id="nf-r" class="row" style="gap:6px;flex-wrap:wrap"></span><span class="sp"></span><span class="mut small">点击组标题展开 / 收起，点击节点切换；自动测速 / 故障转移组点选节点可“固定”</span></div>
+    <div class="card" id="bw-card"><div class="row"><h3 class="sp" style="margin:0">🚀 带宽择优</h3><span class="mut small" id="bw-status">带宽择优：未启用</span><button class="btn g sm" onclick="runBwTest()">立即测试</button></div>
+      <div class="mut small" style="margin-top:4px">定期实测各节点下载带宽，按「延迟修正后的带宽」打分，把最高分节点设为「🚀 带宽择优」组的选中；在这个组里选节点即用最优节点。指定节点后只测这些节点，不选则全部节点参与。</div>
+      <div id="bw-spd" style="margin-top:8px"></div>
+      <div class="row mt"><span class="sp mut small">指定节点（只测这些节点，不选 = 全部节点参与）</span><button class="btn g sm" onclick="saveBwNodes()">保存指定节点</button></div>
+      <div id="bw-chosen" class="mchips" style="margin-top:6px"></div>
+      <input id="bw-search" placeholder="搜索节点，点击勾选 / 取消" style="width:100%;margin-top:8px" oninput="renderBwPick()">
+      <div id="bw-pick" style="margin-top:8px"></div></div>
     <div class="card" id="pol-card"><div class="row"><h3 class="sp" style="margin:0">策略选择</h3><span class="mut small pdesc">各分流组当前使用的节点 / 分组，直接下拉切换</span>
       <button class="btn g sm" onclick="go('策略组')">管理策略组</button></div>
       <div id="policies" class="pgrid"></div></div>
@@ -918,7 +925,6 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
       <div class="opt"><div class="sp"><div class="t">测试周期 / 每轮上限</div><div class="dsc">每轮先测延迟，只测延迟正常的节点（按延迟从低到高取 N 个），每个节点另起测试实例下载 10 秒或 32MB，不影响正在跑的核心</div></div>
         <select id="bw-int" onchange="saveBwCfg()"><option value="3600">每小时</option><option value="7200">每 2 小时</option><option value="14400">每 4 小时</option><option value="43200">每 12 小时</option></select>
         <input type="number" id="bw-limit" min="1" max="30" value="10" style="width:60px" onchange="saveBwCfg()"> 个</div>
-      <div class="row mt"><span class="sp mut small" id="bw-status">带宽择优：未启用</span><button class="btn g sm" onclick="runBwTest()">立即测试</button></div>
       <div class="row mt"><span class="sp mut small">按旁路由本机时区执行</span><button class="btn" onclick="saveSchedule(this)">保存</button></div>
       <div id="sc-events" class="mt"></div></div>
     <div data-sg="core" class="card"><h3>延迟检测站点</h3><div class="mut small" style="margin-bottom:6px">每行：名称|网址</div>
@@ -1013,8 +1019,6 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
       <div class="card spc" id="spd-intl"><div class="row"><h3 class="sp" style="margin:0">🌏 国外测速 <span class="tag">经代理</span></h3><button class="btn g sm" onclick="spdStart('intl',this)">测速</button></div><div class="spb"></div></div>
     </div>
     <div class="card"><h3>测速记录</h3><div class="tw"><table><thead><tr><th>时间</th><th>类型</th><th>下载</th><th>峰值</th><th>延迟</th><th>下载源</th></tr></thead><tbody id="spd-hist"></tbody></table></div></div>
-    <div class="card"><div class="row"><h3 class="sp" style="margin:0">🚀 带宽择优</h3><button class="btn g sm" onclick="runBwTest()">测带宽</button></div>
-      <div class="mut small" style="margin-top:4px">按实测下载带宽选优：每轮先测延迟，只测延迟正常的节点，最高分节点设为「🚀 带宽择优」组的选中（在「节点」页选这个组即用最优节点）</div><div id="bw-spd" style="margin-top:8px"></div></div>
   </section>
 </main>
 </div>
@@ -1434,7 +1438,7 @@ async function loadProxies(){document.querySelectorAll('#nsort button').forEach(
   try{PROXIES=await loadPX();try{const j=await api('/api/direct_delay');if(j.ms>0)DIRECT_D=j.ms}catch(e){}
   try{const h=await api('/api/health/status');HEALTHR=h.records||{};HEALTHC=h.cfg||{}}catch(e){}
   try{const bw=await api('/api/bwtest');BW=bw;BWRES=bw.results||{}}catch(e){}
-  renderGroups()}catch(e){$('#groups').innerHTML=`<div class="card bad">${esc(e.message)}</div>`;$('#policies').innerHTML=''}}
+  renderGroups();BWALL=null;fillBwCfg()}catch(e){$('#groups').innerHTML=`<div class="card bad">${esc(e.message)}</div>`;$('#policies').innerHTML=''}}
 // 健康等级：ok/warn/bad/hidden；返回图标
 function hLevel(n){const r=HEALTHR[n];if(!r)return 'ok';if(r.hidden)return 'hidden';
   const fd=r.fail_days||0,wc=HEALTHC.warn_days||3,hc=HEALTHC.hide_days||7;
@@ -2021,13 +2025,28 @@ async function runHealthCheck(){try{toast('开始检查…');const j=await api('
     catch(e){if(++fails>=10){clearInterval(HC_POLL);HC_POLL=null}}},3000)}catch(e){toast(e.message)}}
 // 带宽择优：设置 / 立即测试 / 轮询状态（与健康检查同一套写法）
 let BW=null,BWRES={},BW_POLL=null;
+let BWNODES=[],BWALL=null,BWNODES_DIRTY=false;  // BWNODES：指定参与择优的节点（显示名）；空 = 全部节点；DIRTY：用户改了还没保存
 function bwTxt(n){const r=BWRES[n];return r&&r.mbps?`<span class="mut" title="实测带宽（${new Date((r.t||0)*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}）">${r.mbps} Mbps</span>`:''}
-async function fillBwCfg(){try{const j=await api('/api/bwtest');BW=j;BWRES=j.results||{};const c=j.cfg||{};$('#bw-enabled').checked=!!c.enabled;$('#bw-int').value=String(c.interval||7200);$('#bw-limit').value=c.limit||10;
+async function fillBwCfg(){try{const j=await api('/api/bwtest');BW=j;BWRES=j.results||{};const c=j.cfg||{};
+  const be=$('#bw-enabled');if(be)be.checked=!!c.enabled;  // 开关/周期/上限在设置页，状态/结果/指定节点在节点页卡片；元素不在当前页时跳过
+  const bi=$('#bw-int');if(bi)bi.value=String(c.interval||7200);
+  const bl=$('#bw-limit');if(bl)bl.value=c.limit||10;
+  if(!BWNODES_DIRTY)BWNODES=Array.isArray(c.nodes)?[...c.nodes]:[];
   const st=j.running?`测试中 ${j.done||0} / ${j.total||0}${j.current?' · '+j.current:''}`:(j.last_run?('上次：'+new Date(j.last_run*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+(j.best?'，最优：'+j.best:'')):'未运行过');
-  $('#bw-status').textContent='带宽择优：'+(c.enabled?'已启用':'未启用')+'，'+st+(j.error?'（'+j.error+'）':'')}catch(e){}}
+  const bs=$('#bw-status');if(bs)bs.textContent='带宽择优：'+(c.enabled?'已启用':'未启用')+'，'+st+(j.error?'（'+j.error+'）':'');
+  renderBwChosen();renderBwSpd()}catch(e){}}
 async function saveBwCfg(){try{const j=await api('/api/bwtest/cfg','PUT',{enabled:$('#bw-enabled').checked,interval:+$('#bw-int').value,limit:+$('#bw-limit').value});toast(j.ok?'带宽择优设置已保存':(j.message||'保存失败'));fillBwCfg()}catch(e){toast(e.message);fillBwCfg()}}
+// 带宽择优指定节点：节点页卡片里的选择器（搜索 + 已选 chips；空 = 全部节点）。候选名单取 /api/groups 的 nodes（手动 + 订阅，显示名口径，与组里一致）。
+async function loadBwAll(){if(BWALL)return BWALL;try{const g=await api('/api/groups');BWALL=[...(g.nodes||[])]}catch(e){BWALL=[]}return BWALL}
+function chosenHTML(){return BWNODES.map((n,i)=>`<span class="mchip" title="${esc(n)}"><span>${esc(n)}</span>${BWALL&&!BWALL.includes(n)?'<b class="bad small">已失效</b>':''}<button title="移除" onclick="bwDel(${i})">✕</button></span>`).join('')||'<span class="mut small">没有指定节点（全部节点参与）</span>'}
+function renderBwChosen(){const el=$('#bw-chosen');if(!el)return;el.innerHTML=chosenHTML();renderBwPick()}
+async function renderBwPick(){const el=$('#bw-pick');if(!el)return;if(BWALL===null){await loadBwAll();const ce=$('#bw-chosen');if(ce)ce.innerHTML=chosenHTML()}const q=($('#bw-search').value||'').trim().toLowerCase();const c=(BWALL||[]).filter(n=>!BWNODES.includes(n)&&(!q||n.toLowerCase().includes(q)));
+  el.innerHTML=c.slice(0,160).map(n=>`<span class="mchip add" onclick="bwTog(this.dataset.n)" data-n="${esc(n)}"><span>${esc(n)}</span></span>`).join('')+(c.length>160?`<span class="mut small">还有 ${c.length-160} 个，请搜索</span>`:'')||'<span class="mut small">无匹配节点</span>'}
+function bwTog(n){if(!n)return;const i=BWNODES.indexOf(n);if(i>=0)BWNODES.splice(i,1);else BWNODES.push(n);BWNODES_DIRTY=true;renderBwChosen()}
+function bwDel(i){BWNODES.splice(i,1);BWNODES_DIRTY=true;renderBwChosen()}
+async function saveBwNodes(){try{const j=await api('/api/bwtest/cfg','PUT',{nodes:BWNODES});if(j.ok){BWNODES_DIRTY=false;toast('指定节点已保存'+(j.message?'：'+j.message:''))}else toast(j.message||'保存失败');fillBwCfg()}catch(e){toast(e.message);fillBwCfg()}}
 async function runBwTest(){try{toast('开始带宽测试…');const j=await api('/api/bwtest/run','POST');toast(j.message);clearInterval(BW_POLL);let fails=0;
-  BW_POLL=setInterval(async()=>{try{const s=await api('/api/bwtest');fails=0;fillBwCfg();if(TAB==='测速')renderBwSpd();if(!s.running){clearInterval(BW_POLL);BW_POLL=null;if(TAB==='节点')loadProxies();if(TAB==='测速')loadSpeed()}}
+  BW_POLL=setInterval(async()=>{try{const s=await api('/api/bwtest');fails=0;fillBwCfg();if(TAB==='节点')renderBwSpd();if(!s.running){clearInterval(BW_POLL);BW_POLL=null;if(TAB==='节点')loadProxies()}}
     catch(e){if(++fails>=10){clearInterval(BW_POLL);BW_POLL=null}}},3000)}catch(e){toast(e.message)}}
 function renderBwSpd(){const el=$('#bw-spd');if(!el||!BW)return;const j=BW,top=Object.entries(j.results||{}).sort((a,b)=>(b[1].mbps||0)-(a[1].mbps||0)).slice(0,5);
   el.innerHTML=(j.running?`<span class="mut">● 测试中 ${j.done||0} / ${j.total||0}${j.current?' · '+esc(j.current):''}</span>`:j.last_run?`<span class="mut">上次：${new Date(j.last_run*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}${j.best?'，最优：<b>'+esc(j.best)+'</b>':''}</span>`:'<span class="mut">还没有测过</span>')+(j.error?` <span class="bad">${esc(j.error)}</span>`:'')
