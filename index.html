@@ -702,6 +702,7 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
   <section data-tab="规则">
     <div class="card"><h3>规则测试</h3>
       <div class="row"><input id="rt-target" placeholder="输入域名或 IP，如 chatgpt.com / 8.8.8.8" class="sp" onkeydown="if(event.key==='Enter')ruleTest()"><button class="btn" id="rt-btn" onclick="ruleTest()">测试</button><button class="btn g" id="rtv-btn" onclick="routeVerify()">真实路由验证</button></div>
+      <div class="mut small" style="margin-top:6px">「直连」是面板本机直接请求；TUN 模式下面板自身流量也可能进 TUN，对照耗时仅供参考</div>
       <div id="rt-result" style="margin-top:10px"></div><div id="rtv-result" style="margin-top:10px"></div></div>
     <div class="card"><h3>自定义规则（优先于内置规则）</h3>
       <div class="row" style="margin-bottom:10px">
@@ -2050,6 +2051,7 @@ async function runBwTest(){try{toast('开始带宽测试…');const j=await api(
     catch(e){if(++fails>=10){clearInterval(BW_POLL);BW_POLL=null}}},3000)}catch(e){toast(e.message)}}
 function renderBwSpd(){const el=$('#bw-spd');if(!el||!BW)return;const j=BW,top=Object.entries(j.results||{}).sort((a,b)=>(b[1].mbps||0)-(a[1].mbps||0)).slice(0,5);
   el.innerHTML=(j.running?`<span class="mut">● 测试中 ${j.done||0} / ${j.total||0}${j.current?' · '+esc(j.current):''}</span>`:j.last_run?`<span class="mut">上次：${new Date(j.last_run*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}${j.best?'，最优：<b>'+esc(j.best)+'</b>':''}</span>`:'<span class="mut">还没有测过</span>')+(j.error?` <span class="bad">${esc(j.error)}</span>`:'')
+  +(j.last_error?`<div class="mut" style="margin-top:4px">最近失败：<b>${esc(j.last_error.node||'')}</b>（${esc(j.last_error.msg||'')}）</div>`:'')
   +(top.length?`<div class="tw" style="margin-top:8px"><table><thead><tr><th>节点</th><th>带宽</th><th>延迟</th><th>时间</th></tr></thead><tbody>${top.map(([n,r])=>`<tr><td>${esc(n)}</td><td><b>${r.mbps} Mbps</b></td><td>${r.delay||'-'} ms</td><td class="mut">${new Date((r.t||0)*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</td></tr>`).join('')}</tbody></table></div>`:'')}
 async function loadHistory(){try{const h=await api('/api/history');
   $('#hist').innerHTML=h.map(x=>`<div class="row ev" style="padding:6px 0"><span class="mut" style="min-width:118px">${new Date(x.t*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span><span class="sp">修改前：${x.changed.map(esc).join('、')}</span><button class="btn g sm" onclick="restoreHist(${jsq(x.id)})">恢复</button></div>`).join('')||'<span class="mut">还没有快照</span>'}catch(e){}}

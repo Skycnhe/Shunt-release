@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.9-preview"
+PANEL_VERSION = "9.1.10-preview"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -372,7 +372,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.9-preview"
+PANEL_VERSION = "9.1.10-preview"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2361,7 +2361,7 @@ BUILTIN_GEO = (
 
 
 NTP_RULE = "AND,((NETWORK,UDP),(DST-PORT,123)),DIRECT"
-QUIC_RULE = "AND,((NETWORK,UDP),(DST-PORT,443)),REJECT"  # v9.1.8：QUIC 屏蔽（默认开）：只拦走代理的 UDP 443，直连规则已在前面命中，不受影响
+QUIC_RULE = "AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((GEOSITE,cn),(GEOIP,CN,no-resolve)))))),REJECT"  # v9.1.10：QUIC 屏蔽（默认开）：拦走代理的 UDP 443；NOT 保护让 CN 域名 / IP（直连）不受影响，YouTube 等走代理的服务也能拦到。放分流规则之前、直连规则之后
 
 
 def mihomo_rules(d, policies, dc):
@@ -2391,6 +2391,10 @@ def mihomo_rules(d, policies, dc):
     # 节点不支持 UDP 时电视 / 盒子永远对不上时间，证书校验和 Google Play 安装前验证跟着失败（下载到 99% 卡住）
     rules = pre + guard + [NTP_RULE] + ab_rules + [x for x in custom if x] + rs_rules + [
         "GEOSITE,private,DIRECT", "GEOIP,private,DIRECT,no-resolve", "RULE-SET,cn-apps,DIRECT",
+        # QUIC 屏蔽（默认开）：走代理的 QUIC（UDP 443）常因节点 UDP 转发差而卡，拦掉后浏览器自动退回 TCP。
+        # 放这里：直连规则（private / cn-apps）已在前面命中；NOT 保护让 CN 域名 / IP 不受影响；
+        # 后面的 YouTube / Google 等分流规则只对 TCP 生效，UDP 443 已先被拦。以前放 MATCH 之前，域名规则已先命中，YouTube 的 QUIC 根本拦不到
+        *([QUIC_RULE] if (d.get("tun") or {}).get("quic_block", True) else []),
         *([f"DOMAIN-SUFFIX,{x},{G_GG}" for x in gguard.GEMINI] if gguard.enabled(d) else []), f"GEOSITE,category-ai-!cn,{G_AI}", f"GEOSITE,netflix,{G_NF}", f"GEOIP,netflix,{G_NF},no-resolve",
         # 国行机的 Play 下载走 services.googleapis.cn，直连时被指到 Google 国内 CDN（*.xn--ngstr-lra8j.com），下载卡在 99%：两者走 Google 组
         f"DOMAIN-SUFFIX,googleapis.cn,{G_GG}", f"DOMAIN-SUFFIX,xn--ngstr-lra8j.com,{G_GG}",
@@ -2400,9 +2404,6 @@ def mihomo_rules(d, policies, dc):
         f"IP-CIDR,1.1.1.1/32,{G_SEL},no-resolve", f"IP-CIDR,1.0.0.1/32,{G_SEL},no-resolve",
         f"GEOSITE,geolocation-!cn,{G_SEL}",
         "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT",
-        # QUIC 屏蔽（默认开）：走代理的 QUIC（UDP 443）常因节点 UDP 转发差而卡，拦掉后浏览器自动退回 TCP；
-        # 直连的域名已在上面 GEOSITE,cn / GEOIP,CN 命中，不受影响。放最后、MATCH 之前
-        *([QUIC_RULE] if (d.get("tun") or {}).get("quic_block", True) else []),
         f"MATCH,{G_FINAL}",
     ]
     return rule_providers, rules, ab_prov
@@ -5308,7 +5309,7 @@ from .base import (
 from .errlog import log_err
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
 from .groups import bw_resolve, clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
-from .mihomo import BUILTIN_GEO, QUIC_RULE, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
+from .mihomo import BUILTIN_GEO, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
 from .sb_yaml import text_lines, trim_line, yaml_lite
@@ -5363,8 +5364,6 @@ def build_singbox(d):
     resolved = False
     final = "DIRECT"
     for line in cfg["rules"]:
-        if line == QUIC_RULE:
-            continue  # mihomo 的 QUIC 屏蔽行：下面 MATCH 处按同一开关显式加一条，避免翻译后出现两条
         if line.upper().startswith("MATCH,"):
             # 与 mihomo 一致：第一条 MATCH 之后的规则都不再生效。以前只记下 final 后继续翻译，自定义规则里写的
             # 「MATCH,DIRECT」被后面内置的分流规则和最后的 MATCH 覆盖、等于没写；MATCH,REJECT 也变成了直连
@@ -5375,9 +5374,6 @@ def build_singbox(d):
                 route_rules.append(dict({"network": ["tcp", "udp"]}, **act))
             else:
                 final = act.get("outbound", "DIRECT")
-            # QUIC 屏蔽（默认开）：与 mihomo 同一位置——直连规则之后、最终规则之前，只拦走代理的 UDP 443
-            if tun_params(d).get("quic_block", True):
-                route_rules.append({"network": ["udp"], "port": [443], "action": "reject"})
             break
         r, needs = tr.rule(line)
         if r is None:
@@ -11382,7 +11378,8 @@ DL_URL = "https://speed.cloudflare.com/__down?bytes=50000000"
 DL_TIMEOUT = 10   # 每节点最多下载 10 秒
 DL_MAX = 32 << 20  # 或 32MB，先到先停
 DEFAULT_CFG = {"enabled": False, "interval": 7200, "limit": 10, "nodes": []}
-BW_STATE = {"running": False, "current": "", "done": 0, "total": 0, "last_run": 0, "best": "", "error": ""}
+BW_STATE = {"running": False, "current": "", "done": 0, "total": 0, "last_run": 0, "best": "", "error": "",
+            "last_error": None}  # 最近一次单节点失败：{node, stage, msg, t}；stage：binary/instance/download/error
 _BG_LOCK = threading.Lock()
 
 
@@ -11521,13 +11518,20 @@ def _download(port):
     return round(n * 8 / dt / 1e6, 1) if n > 0 else 0.0
 
 
+def _fail(name, stage, msg):
+    """单节点失败：记诊断日志（同文案 10 分钟只记一次）+ 最近一次失败原因（供 /api/bwtest 返回）。"""
+    log_err("带宽择优", msg)
+    BW_STATE["last_error"] = {"node": name, "stage": stage, "msg": msg, "t": int(time.time())}
+
+
 def _test_node(name, proxy):
     """另起一个测试用核心实例测单个节点：最小配置（仅该节点 + 一个 select 组），测完立即杀掉。
-    失败返回 None（调用方不中断整批）。"""
+    失败返回 None（调用方不中断整批），失败阶段记到 BW_STATE["last_error"]。"""
     kind = active_core()
     bin_path = mh_bin(kind) if kind in ("mihomo", "smart") else SB_BIN
     if not os.path.isfile(bin_path):
-        raise IOError(f"核心程序不存在：{bin_path}")
+        _fail(name, "binary", f"核心程序不存在：{bin_path}")
+        return None
     port = _free_port()
     tmp = os.path.join(PANEL_DIR, f"bwtest-{os.getpid()}")
     os.makedirs(tmp, exist_ok=True)
@@ -11536,8 +11540,10 @@ def _test_node(name, proxy):
         p = dict(proxy)
         p.pop("dialer-proxy", None)  # 落地前置节点在测试实例里不存在，留着会让配置加载失败
         if kind == "singbox":
+            # sing-box 1.14 已移除 legacy DNS 格式 {"tag","address"}：旧写法配置加载即 FATAL，实例起不来。
+            # 新格式 {"type":"udp","server":...}，不写 detour 就是直连（detour 指 direct 出站反而启动即报错）。
             cfg = {"log": {"level": "warning"},
-                   "dns": {"servers": [{"tag": "dns-direct", "address": "223.5.5.5"}]},
+                   "dns": {"servers": [{"type": "udp", "tag": "dns-direct", "server": "223.5.5.5"}]},
                    "inbounds": [{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": port}],
                    "outbounds": [sb_outbound(p, name), {"type": "selector", "tag": G_BW, "outbounds": [name]}],
                    "route": {"rules": [], "final": G_BW}}
@@ -11554,8 +11560,17 @@ def _test_node(name, proxy):
             cmd = [bin_path, "-d", tmp, "-f", cfg_path]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if not _wait_port(port, 10):
+            _fail(name, "instance", "测试实例 10 秒内未启动（端口未监听）")
             return None
-        return _download(port) or None
+        try:
+            mbps = _download(port)
+        except Exception as e:
+            _fail(name, "download", f"下载失败：{e}"[:150])
+            return None
+        if not mbps:
+            _fail(name, "download", "下载 0 字节")
+            return None
+        return mbps
     finally:
         if proc is not None:
             try:
@@ -11579,7 +11594,7 @@ def _apply_best(name):
 def run_round():
     """执行一轮带宽测试：延迟正常的节点按延迟从低到高取 limit 个，逐个测带宽，最高分设为带宽择优组选中。
     返回 (成功?, 消息)。失败要隔离：单个节点失败不中断整批"""
-    BW_STATE.update(running=True, current="", done=0, total=0, error="")
+    BW_STATE.update(running=True, current="", done=0, total=0, error="", last_error=None)
     try:
         d = load()
         cfg = bw_cfg(d)
@@ -11610,6 +11625,8 @@ def run_round():
                 mbps = _test_node(name, proxies[name])
             except Exception as e:
                 log_err("带宽择优", e)
+                BW_STATE["last_error"] = {"node": name, "stage": "error", "msg": str(e)[:150],
+                                          "t": int(time.time())}
                 mbps = None
             if mbps:
                 h[name] = {"mbps": mbps, "delay": delay, "t": int(time.time())}
@@ -11671,7 +11688,7 @@ def status():
     return {"cfg": bw_cfg(), "running": BW_STATE["running"], "current": BW_STATE["current"],
             "done": BW_STATE["done"], "total": BW_STATE["total"],
             "last_run": BW_STATE["last_run"] or max([r.get("t", 0) for r in h.values()] or [0]),
-            "best": best, "error": BW_STATE["error"], "results": h}
+            "best": best, "error": BW_STATE["error"], "last_error": BW_STATE["last_error"], "results": h}
 '''
 _SRC['shunt.ruletest'] = '''"""规则测试"""
 import ipaddress, json, re, socket, threading, time, urllib.request
