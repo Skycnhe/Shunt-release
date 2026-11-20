@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.10-preview"
+PANEL_VERSION = "9.1.11-preview"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -372,7 +372,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.10-preview"
+PANEL_VERSION = "9.1.11-preview"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -12819,6 +12819,105 @@ from .latency import proxies_merged
 _ST = {"t": 0.0, "prev": {}, "res": None, "rt": 0.0}
 _LK = threading.Lock()
 STRATEGY_BY_SUFFIX = (("轮询", "round-robin"), ("哈希", "consistent-hashing"))
+_TERMINAL_NOW = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"}
+_CHAIN_TYPES = ("Selector", "URLTest", "Fallback", "Smart")
+
+
+def _top_groups(px):
+    """流量入口组：GLOBAL.all 里的非负载均衡组；没有 GLOBAL 时退化为不被其他组引用的非负载均衡组。
+    负载均衡组本身也在 GLOBAL.all 里，但它永远是被到达的目标、不是入口——不把它算成顶层，
+    否则顶层负载均衡组会永远显示。"""
+    gl = px.get("GLOBAL")
+    if isinstance(gl, dict) and isinstance(gl.get("all"), list):
+        return [n for n in gl["all"] if isinstance(n, str) and isinstance(px.get(n), dict)
+                and px[n].get("all") is not None and px[n].get("type") != "LoadBalance"]
+    referenced = set()
+    for p in px.values():
+        if not isinstance(p, dict):
+            continue
+        for m in p.get("all") or []:
+            if isinstance(m, str):
+                referenced.add(m)
+    return [n for n, p in px.items() if isinstance(p, dict) and p.get("all") is not None
+            and p.get("type") != "LoadBalance" and n not in referenced]
+
+
+def _active_lb(px, tops=None):
+    """在活跃链路上的 LoadBalance 组名集合：从顶层策略组出发，沿当前选中（now）一路走下去。
+    Selector/URLTest/Fallback/Smart 跟 now，LoadBalance 标记为在用并继续走它
+    成员里是组的那些（嵌套组也跟进去）；now 指向 DIRECT/REJECT 等终端或不存在时停。防环、限深 10 层。"""
+    if not isinstance(px, dict):
+        return set()
+    active, seen = set(), set()
+
+    def walk(name, depth):
+        if depth > 10 or name in seen:
+            return
+        seen.add(name)
+        p = px.get(name)
+        if not isinstance(p, dict):
+            return
+        t = p.get("type")
+        if t == "LoadBalance":
+            active.add(name)
+            for m in p.get("all") or []:
+                q = px.get(m) if isinstance(m, str) else None
+                if isinstance(q, dict) and q.get("all") is not None:
+                    walk(m, depth + 1)
+            return
+        if t in _CHAIN_TYPES:
+            nxt = p.get("now")
+            if isinstance(nxt, str) and nxt and nxt.upper() not in _TERMINAL_NOW:
+                walk(nxt, depth + 1)
+
+    for top in tops if tops is not None else _top_groups(px):
+        walk(top, 0)
+    return active
+
+
+def _walk_chain(px, start):
+    """从顶层组出发沿 now 走到底：落到节点返回完整 path（[顶层组, …, 节点]）；
+    遇到 LoadBalance / 终端 / 不存在 / 环 / 超深（10 层）返回 None（不成链路卡片）。"""
+    path, seen = [], set()
+    cur = start
+    while isinstance(cur, str) and cur and cur not in seen and len(path) < 10:
+        seen.add(cur)
+        p = px.get(cur)
+        if not isinstance(p, dict):
+            return None
+        if p.get("type") == "LoadBalance":
+            return None
+        path.append(cur)
+        if p.get("type") in _CHAIN_TYPES:
+            nxt = p.get("now")
+            if not isinstance(nxt, str) or not nxt or nxt.upper() in _TERMINAL_NOW:
+                return None
+            cur = nxt
+            continue
+        return path
+    return None
+
+
+def _merge_chains(walks):
+    """walks: [(起点顶层组, path)]（按 GLOBAL.all 顺序）。path 互为后缀的合成一条链路，
+    先出现的 path 为准；后来 walk 的起点若不在 path 里，记入 roots（共用这条链路的顶层组）。
+    例如 漏网之鱼(now=节点选择) 与 节点选择都走 [节点选择, 带宽择优, jp] 时合成一条，roots 记两个。"""
+    chains = []
+    for start, path in walks:
+        if not path:
+            continue
+        merged = False
+        for c in chains:
+            cp = c["path"]
+            if (len(cp) <= len(path) and cp == path[-len(cp):]) or \\
+               (len(path) <= len(cp) and path == cp[-len(path):]):
+                if start not in cp and start not in c["roots"]:
+                    c["roots"].append(start)
+                merged = True
+                break
+        if not merged:
+            chains.append({"path": list(path), "roots": [start]})
+    return chains
 
 
 def _delay(p):
@@ -12850,8 +12949,12 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
     order = (px.get("GLOBAL") or {}).get("all") or []
     names = [n for n in order if (px.get(n) or {}).get("type") == "LoadBalance"]
     names += sorted(n for n, p in px.items() if isinstance(p, dict) and p.get("type") == "LoadBalance" and n not in names)
+    tops = _top_groups(px)
+    active = _active_lb(px, tops)  # 拓扑页只显示实时在用的负载均衡组
+    total = len(names)
     stat = {g: {} for g in names}
     cur = {}
+    conn_chains = []  # (反转后的自顶向下链, up 差值, down 差值)，供链路卡片归属
     for c in conns or []:
         if not isinstance(c, dict):
             continue
@@ -12865,6 +12968,8 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
             pu, pd = prev.get(cid, (0, 0))
             du, dd = max(0, up - pu), max(0, dn - pd)
         ch = c.get("chains") or []
+        if ch and all(isinstance(x, str) for x in ch):
+            conn_chains.append((tuple(reversed(ch)), du, dd))
         for i in range(1, len(ch)):
             g = ch[i]
             if g in stat:
@@ -12872,6 +12977,23 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
                 s[0] += 1
                 s[1] += du
                 s[2] += dd
+    # 当前链路卡片：顶层组沿 now 走到底落到节点的链路（走到 LB 组就停，由 LB 组卡片覆盖）；
+    # path 互为后缀的合成一条，roots 合并。连接按反转后的自顶向下链以后缀匹配归属到链路卡片。
+    chains = _merge_chains([(t, _walk_chain(px, t)) for t in tops])
+    for c in chains:
+        c["conns"] = 0
+        c["up"] = 0
+        c["down"] = 0
+        c["delay"] = _delay(px.get(c["path"][-1]) or {})
+    for rch, du, dd in conn_chains:
+        for c in chains:
+            p = c["path"]
+            if len(rch) >= len(p) and list(rch[-len(p):]) == p:
+                c["conns"] += 1
+                if not fresh:
+                    c["up"] += int(du / dt)
+                    c["down"] += int(dd / dt)
+                break  # 链路 path 互不为后缀，一条连接最多命中一条卡片
     groups = []
     for g in names:
         p = px.get(g) or {}
@@ -12883,8 +13005,9 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
             nodes.append({"name": n, "type": q.get("type") or "", "alive": q.get("alive", True) is not False,
                           "delay": _delay(q), "conns": c, "up": up_s, "down": dn_s})
             gc, gu, gd = gc + c, gu + up_s, gd + dn_s
-        groups.append({"name": g, "strategy": _strategy(g, p), "nodes": nodes, "conns": gc, "up": gu, "down": gd})
-    return {"groups": groups, "t": now}, cur
+        if g in active or gc > 0:  # 在活跃链路上，或当前有活动连接
+            groups.append({"name": g, "strategy": _strategy(g, p), "nodes": nodes, "conns": gc, "up": gu, "down": gd})
+    return {"groups": groups, "total": total, "chains": chains, "t": now}, cur
 
 
 def lb_topo_now():

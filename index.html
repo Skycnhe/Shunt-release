@@ -493,6 +493,10 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
 .tp-st{display:flex;gap:12px;font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums;flex-wrap:wrap}.tp-st em{font-style:normal;color:var(--txt);font-weight:600}
 .tp-chev{color:var(--sub);transition:transform .2s;font-size:11px}.tp-g.open .tp-chev{transform:rotate(90deg)}
 .tp-b{padding:2px 18px 16px;border-top:1px solid var(--line)}
+.tp-chain{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:14px 18px 16px}
+.tp-chip{border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-weight:600;font-size:13px}
+.tp-chip.node{border-color:var(--pri)}
+.tp-arr{color:var(--sub);font-size:12px}
 .tp-map{position:relative;margin-top:6px}.tp-map svg{position:absolute;inset:0;pointer-events:none;overflow:visible;fill:none}
 .tp-hub{position:absolute;z-index:1;width:210px;aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;display:flex;flex-direction:column;justify-content:center;padding:14px;text-align:center;
   border:1px solid var(--pri);background:linear-gradient(var(--nsel),var(--nsel)),var(--bg)}
@@ -612,10 +616,12 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
     <div class="card" id="bw-card"><div class="row"><h3 class="sp" style="margin:0">🚀 带宽择优</h3><span class="mut small" id="bw-status">带宽择优：未启用</span><button class="btn g sm" onclick="runBwTest()">立即测试</button></div>
       <div class="mut small" style="margin-top:4px">定期实测各节点下载带宽，按「延迟修正后的带宽」打分，把最高分节点设为「🚀 带宽择优」组的选中；在这个组里选节点即用最优节点。指定节点后只测这些节点，不选则全部节点参与。</div>
       <div id="bw-spd" style="margin-top:8px"></div>
-      <div class="row mt"><span class="sp mut small">指定节点（只测这些节点，不选 = 全部节点参与）</span><button class="btn g sm" onclick="saveBwNodes()">保存指定节点</button></div>
-      <div id="bw-chosen" class="mchips" style="margin-top:6px"></div>
+      <div class="row mt" onclick="toggleBwPick()"><span class="sp mut small">指定节点（只测这些节点，不选 = 全部节点参与）</span><button class="btn g sm" id="bw-pick-tgl" onclick="event.stopPropagation();toggleBwPick()">收起</button></div>
+      <div id="bw-pick-sum" class="mut small" style="margin-top:6px;display:none" onclick="toggleBwPick()"></div>
+      <div id="bw-pick-body"><div id="bw-chosen" class="mchips" style="margin-top:6px"></div>
       <input id="bw-search" placeholder="搜索节点，点击勾选 / 取消" style="width:100%;margin-top:8px" oninput="renderBwPick()">
-      <div id="bw-pick" style="margin-top:8px"></div></div>
+      <div id="bw-pick" style="margin-top:8px"></div>
+      <div class="row mt"><span class="sp"></span><button class="btn g sm" onclick="saveBwNodes()">保存指定节点</button></div></div></div>
     <div class="card" id="pol-card"><div class="row"><h3 class="sp" style="margin:0">策略选择</h3><span class="mut small pdesc">各分流组当前使用的节点 / 分组，直接下拉切换</span>
       <button class="btn g sm" onclick="go('策略组')">管理策略组</button></div>
       <div id="policies" class="pgrid"></div></div>
@@ -2033,6 +2039,7 @@ async function fillBwCfg(){try{const j=await api('/api/bwtest');BW=j;BWRES=j.res
   const bi=$('#bw-int');if(bi)bi.value=String(c.interval||7200);
   const bl=$('#bw-limit');if(bl)bl.value=c.limit||10;
   if(!BWNODES_DIRTY)BWNODES=Array.isArray(c.nodes)?[...c.nodes]:[];
+  bwPickInit();bwPickSum();bwPickApply();  // 折叠状态只在这里初始化一次，之后只更新摘要文案，不冲掉用户手动切换
   const st=j.running?`测试中 ${j.done||0} / ${j.total||0}${j.current?' · '+j.current:''}`:(j.last_run?('上次：'+new Date(j.last_run*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+(j.best?'，最优：'+j.best:'')):'未运行过');
   const bs=$('#bw-status');if(bs)bs.textContent='带宽择优：'+(c.enabled?'已启用':'未启用')+'，'+st+(j.error?'（'+j.error+'）':'');
   renderBwChosen();renderBwSpd()}catch(e){}}
@@ -2040,7 +2047,15 @@ async function saveBwCfg(){try{const j=await api('/api/bwtest/cfg','PUT',{enable
 // 带宽择优指定节点：节点页卡片里的选择器（搜索 + 已选 chips；空 = 全部节点）。候选名单取 /api/groups 的 nodes（手动 + 订阅，显示名口径，与组里一致）。
 async function loadBwAll(){if(BWALL)return BWALL;try{const g=await api('/api/groups');BWALL=[...(g.nodes||[])]}catch(e){BWALL=[]}return BWALL}
 function chosenHTML(){return BWNODES.map((n,i)=>`<span class="mchip" title="${esc(n)}"><span>${esc(n)}</span>${BWALL&&!BWALL.includes(n)?'<b class="bad small">已失效</b>':''}<button title="移除" onclick="bwDel(${i})">✕</button></span>`).join('')||'<span class="mut small">没有指定节点（全部节点参与）</span>'}
-function renderBwChosen(){const el=$('#bw-chosen');if(!el)return;el.innerHTML=chosenHTML();renderBwPick()}
+// 指定节点区折叠：默认已选 >10 收起、否则展开；用户手动切换后记 localStorage（mp_bwnodes_open）
+let BWN_OPEN=null;
+function bwPickInit(){if(BWN_OPEN!==null)return;let v=null;try{v=localStorage.getItem('mp_bwnodes_open')}catch(e){}BWN_OPEN=v===null?BWNODES.length<=10:v==='1'}
+function bwPickApply(){const open=!!BWN_OPEN,bd=$('#bw-pick-body'),sm=$('#bw-pick-sum'),tg=$('#bw-pick-tgl');
+  if(bd)bd.style.display=open?'':'none';if(sm)sm.style.display=open?'none':'';if(tg)tg.textContent=open?'收起':'展开'}
+function bwPickSum(){const el=$('#bw-pick-sum');if(!el)return;const n=BWNODES.length;
+  el.textContent=n?`已指定 ${n} 个节点 · 点击展开查看/修改`:'未指定，全部节点参与 · 点击展开'}
+function toggleBwPick(){bwPickInit();BWN_OPEN=!BWN_OPEN;try{localStorage.setItem('mp_bwnodes_open',BWN_OPEN?'1':'0')}catch(e){}bwPickApply()}
+function renderBwChosen(){const el=$('#bw-chosen');if(!el)return;el.innerHTML=chosenHTML();bwPickSum();renderBwPick()}
 async function renderBwPick(){const el=$('#bw-pick');if(!el)return;if(BWALL===null){await loadBwAll();const ce=$('#bw-chosen');if(ce)ce.innerHTML=chosenHTML()}const q=($('#bw-search').value||'').trim().toLowerCase();const c=(BWALL||[]).filter(n=>!BWNODES.includes(n)&&(!q||n.toLowerCase().includes(q)));
   el.innerHTML=c.slice(0,160).map(n=>`<span class="mchip add" onclick="bwTog(this.dataset.n)" data-n="${esc(n)}"><span>${esc(n)}</span></span>`).join('')+(c.length>160?`<span class="mut small">还有 ${c.length-160} 个，请搜索</span>`:'')||'<span class="mut small">无匹配节点</span>'}
 function bwTog(n){if(!n)return;const i=BWNODES.indexOf(n);if(i>=0)BWNODES.splice(i,1);else BWNODES.push(n);BWNODES_DIRTY=true;renderBwChosen()}
@@ -2381,20 +2396,28 @@ async function delBackup(name){
     loadBackups();
   }catch(e){toast("删除失败："+e.message);loadBackups()}
 }
-// 拓扑：负载均衡组（⚖️ X轮询 / ⚖️ X哈希 / 自定义负载均衡）为中心，连向成员节点；只在本页可见且有展开的组时每 2 秒取 /api/lbtopo
-let TP=null,TPO=null,TPS={},TPT=0,TPB=false;
+// 拓扑：只显示实时在用的负载均衡组（⚖️ X轮询 / ⚖️ X哈希 / 自定义负载均衡）+ 当前链路卡片；本页可见时每 2 秒取 /api/lbtopo
+let TP=null,TPO=null,TPC=new Set(),TPS={},TPT=0,TPB=false;
 const TP_ST={'round-robin':'轮询','consistent-hashing':'一致性哈希','sticky-sessions':'粘性会话'};
 const tpSpd=b=>fmt(b)+'/s';
 async function loadTopo(){if(TPB)return;TPB=true;try{TP=await api('/api/lbtopo')}catch(e){TPB=false;if(!TP)$('#tp-list').innerHTML=`<div class="card mut small" style="padding:16px 18px">${esc(e.message)}</div>`;return}TPB=false;
-  if(!TPO){TPO=new Set(TP.groups.filter(g=>g.strategy==='round-robin').map(g=>g.name));if(!TPO.size&&TP.groups[0])TPO.add(TP.groups[0].name)}
+  if(!TPO)TPO=new Set();
+  const names=new Set((TP.groups||[]).map(g=>g.name));
+  for(const n of [...TPO])if(!names.has(n))TPO.delete(n);  // 已不在用的组从展开集里删掉
+  for(const n of names)if(!TPC.has(n))TPO.add(n);  // 新出现的在用组自动展开（手动收起过的除外）
   renderTopo();clearTimeout(TPT);TPT=setTimeout(tpTick,2000)}
-function tpTick(){if(TAB!=='拓扑')return;if(document.hidden||!TPO||!TPO.size){TPT=setTimeout(tpTick,2000);return}loadTopo()}
+function tpTick(){if(TAB!=='拓扑')return;if(document.hidden){TPT=setTimeout(tpTick,2000);return}loadTopo()}  // TPO 为空也要取：空态下新组变在用时页面才刷新
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&TAB==='拓扑')loadTopo()});
-function tpToggle(n){TPO.has(n)?TPO.delete(n):TPO.add(n);renderTopo();if(TPO.has(n))loadTopo()}
+function tpToggle(n){if(TPO.has(n)){TPO.delete(n);TPC.add(n)}else{TPO.add(n);TPC.delete(n)}renderTopo();if(TPO.has(n))loadTopo()}
 function tpSort(n,s){TPS[n]=s;renderTopo()}
-function renderTopo(){const el=$('#tp-list');if(!TP)return;const gs=TP.groups||[];
-  if(!gs.length){el.innerHTML='<div class="card mut small" style="padding:16px 18px">没有负载均衡组。在「策略组」页打开地区负载均衡组，或新建负载均衡类型的自定义组；官方 sing-box 内核没有负载均衡（按自动测速运行），换 reF1nd / MiChongs 内核即可。</div>';return}
-  el.innerHTML=gs.map(g=>{const ns=g.nodes||[],ok=ns.filter(n=>n.alive),used=ns.filter(n=>n.conns).length,open=TPO.has(g.name),s=TPS[g.name]||'name';
+function tpChainCard(c){const p=c.path||[],d=c.delay??undefined,roots=c.roots||[];
+  const chips=p.map((n,i)=>{const last=i===p.length-1;
+    return (i?'<span class="tp-arr">→</span>':'')+`<span class="tp-chip${last?' node':''}">${esc(n)}${last&&d!==undefined?` <span class="${dcls(d)}">${dtxt(d)}</span>`:''}</span>`}).join('');
+  const rt=roots.length>1?`<span class="mut small">${esc(roots.slice(0,2).join('、'))} 等 ${roots.length} 组走这条链路</span>`:'';
+  return `<div class="card tp-g"><div class="tp-h" style="cursor:default"><b>🔗 当前链路</b>${rt}<span class="tp-st"><span>⇅ <em>${c.conns||0}</em></span><span class="tp-dn">↓ ${tpSpd(c.down||0)}</span><span class="tp-up">↑ ${tpSpd(c.up||0)}</span></span></div><div class="tp-chain">${chips}</div></div>`}
+function renderTopo(){const el=$('#tp-list');if(!TP)return;const gs=TP.groups||[],cs=TP.chains||[];
+  if(!gs.length&&!cs.length){el.innerHTML=(TP.total||0)>0?'<div class="card mut small" style="padding:16px 18px">当前没有正在使用的负载均衡组，也没有活动的链路。策略组选中节点或「⚖️ X轮询 / X哈希」后，这里实时显示。</div>':'<div class="card mut small" style="padding:16px 18px">没有负载均衡组。在「策略组」页打开地区负载均衡组，或新建负载均衡类型的自定义组；官方 sing-box 内核没有负载均衡（按自动测速运行），换 reF1nd / MiChongs 内核即可。</div>';return}
+  el.innerHTML=cs.map(tpChainCard).join('')+gs.map(g=>{const ns=g.nodes||[],ok=ns.filter(n=>n.alive),used=ns.filter(n=>n.conns).length,open=TPO.has(g.name),s=TPS[g.name]||'name';
     const head=`<div class="tp-h" onclick="tpToggle(${jsq(g.name)})"><span class="tp-chev">▶</span><b>${esc(g.name)}</b><span class="tag k-lb">负载均衡${TP_ST[g.strategy]?' · '+TP_ST[g.strategy]:''}</span>
       <span class="tp-st"><span><em>${ok.length}</em>/${ns.length} 健康</span><span>在用 <em>${used}</em></span><span>⇅ <em>${g.conns}</em></span><span class="tp-dn">↓ ${tpSpd(g.down)}</span><span class="tp-up">↑ ${tpSpd(g.up)}</span></span></div>`;
     if(!open)return `<div class="card tp-g" data-g="${esc(g.name)}">${head}</div>`;
