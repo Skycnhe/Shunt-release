@@ -4,10 +4,11 @@
 
 Go 版面板是单个程序 /opt/mihomo-panel/shunt，不再需要 python3。这个文件只在两种情况下运行：
   1. 旧的 Python 版面板「在线更新」到 Go 版：旧版只会下载 update-files.txt 里的文件（含本文件与 bin/SHA256SUMS），
-     重启后 init.d/shunt 发现还没有 shunt 程序，就用 python3 运行本文件；
-  2. shunt 程序被误删。
+     重启后 init.d/shunt 的 start_pre 发现还没有 shunt 程序，就用「python3 本文件 --version」装好程序（服务进程本身始终是 shunt：
+     以 python3 启动再 exec 成 shunt 的话，OpenRC 按记下的 python3 停不掉它，rc-status 也显示 crashed）；
+  2. shunt 程序被误删，或 tproxy.sh / init.d/shunt-core 在程序装好前调用（--tpenv、--gen 等一次性命令）。
 本文件按 bin/SHA256SUMS 下载本机架构的程序（先 gz 再解压，两次 sha256 校验），装到 /opt/mihomo-panel/shunt，
-然后原地 exec 成它（进程号不变，OpenRC 的 pidfile 照常有效）。
+然后原地 exec 成它、命令行参数原样传过去。
 
 时间限制：旧版在线更新留下的回滚守护从重启后第 30 秒起探测面板，约 90 秒还打不开就恢复旧版本。
 以前每条线路超时 120 秒、先直连 raw 再走代理：国内 raw.githubusercontent.com 常被 DNS 污染 / 丢包，直连一条就卡满 120 秒，
@@ -20,7 +21,7 @@ bin/SHA256SUMS 缺失时（旧版拿不到 GitHub 校验值时只按内置文件
 """
 import gzip, hashlib, json, os, platform, queue, sys, threading, time, urllib.request
 
-PANEL_VERSION = "11.7.8-preview.792+c7b71f9"
+PANEL_VERSION = "11.7.8-preview.796+90b6a5e"
 BASE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(BASE, "shunt")
 SUMS = os.path.join(BASE, "bin", "SHA256SUMS")
