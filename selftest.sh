@@ -114,7 +114,7 @@ crules = ["DOMAIN-SUFFIX,steampowered.com,🎮 游戏", "DOMAIN-SUFFIX,netflix.c
 crs = [dict(rs[1], target="⚡ 低延迟")]
 cdns = dict(dns_custom, proxy=["https://1.1.1.1/dns-query#🧯 稳定优先"])
 A, LB, RR = "竞技", "哈希", "轮询"
-TAIL = ["🖐️ 手动选择", "⚡ 全局自动选择", "🏠 直连"]
+TAIL = ["🖐️ 手动选择", "🚀 带宽择优", "⚡ 全局自动选择", "🏠 直连"]  # v9.1.8：手动选择后加带宽择优组
 EXPECT = {  # 场景名: (必须存在的组 {名称: [类型, 策略]}, 必须不存在的组[, 🚀 节点选择 的完整成员列表])
     "17-地区均衡(手动节点)": ({"🇺🇸 美国竞技": ["url-test", None], "⚖️ 美国哈希": ["load-balance", "consistent-hashing"],
                          "⚖️ 日本哈希": ["load-balance", None], "⚖️ 韩国哈希": ["load-balance", None], "🌐 其他竞技": ["url-test", None],
@@ -344,7 +344,10 @@ sel = groups["🚀 节点选择"]["proxies"]
 kinds = ["a" if x.endswith("竞技") else "l" if x.startswith("⚖️ ") else "t" for x in sel]
 assert kinds == sorted(kinds), "节点选择顺序错误：%s" % sel
 assert sel[-1] == "🏠 直连" and groups["🏠 直连"]["proxies"] == ["DIRECT"], "缺少 🏠 直连"
-assert all(x in ("🖐️ 手动选择", "⚡ 全局自动选择", "🏠 直连") for x, k in zip(sel, kinds) if k == "t"), "节点选择含多余成员：%s" % sel
+assert all(x in ("🖐️ 手动选择", "🚀 带宽择优", "⚡ 全局自动选择", "🏠 直连") for x, k in zip(sel, kinds) if k == "t"), "节点选择含多余成员：%s" % sel
+if "🖐️ 手动选择" in sel:  # v9.1.8：有节点时带宽择优组（select）紧跟手动选择，成员默认与手动选择相同
+    assert sel[sel.index("🖐️ 手动选择") + 1] == "🚀 带宽择优", "节点选择缺少 🚀 带宽择优：%s" % sel
+    assert groups["🚀 带宽择优"]["type"] == "select", "🚀 带宽择优 应为 select"
 assert not any(g in groups for g in ("♻️ 自动选择",)), "仍有旧版组名"
 # v6：DNS 防泄露布局
 dn, dd = c["dns"], data.get("dns") or {}

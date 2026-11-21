@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.11-preview"
+PANEL_VERSION = "9.1.12-preview.799+01d8bed"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -372,7 +372,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.11-preview"
+PANEL_VERSION = "9.1.12-preview.799+01d8bed"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -916,6 +916,7 @@ from .base import (
     AUTO_SUFFIX, AUTO_TAIL_OLD, BUILTIN_POLICIES, G_AUTO, G_DIRECT, G_MANUAL, G_OTHER, G_SEL, LB_SUFFIX, LEGACY_AUTO, REGIONS, SIDE_GROUPS
 )
 from .data import auto_name, lb_dropped_names, lb_names, lb_old_name
+from .sb_yaml import text_lines
 def b64d(s):
     s = s.strip().replace("-", "+").replace("_", "/")
     s += "=" * (-len(s) % 4)
@@ -1177,7 +1178,7 @@ def add_links(text, existing, d=None):
     """解析多行链接，返回 (新增节点列表, 错误列表)；节点名自动去重"""
     taken = {n["proxy"]["name"] for n in existing} | reserved_names(d)
     out, errs = [], []
-    for i, line in enumerate([x.strip() for x in text.splitlines() if x.strip()], 1):
+    for i, line in enumerate([x.strip() for x in text_lines(text) if x.strip()], 1):
         try:
             p = parse_link(line)
             if not p.get("server") or not p.get("port"):
@@ -1939,7 +1940,45 @@ LB_TOL = 150  # 负载均衡组只用延迟 ≤ 最低 + 这么多毫秒的节�
 LB_DELAY_MAX_AGE = 86400
 
 
+def _snap_file():
+    return os.path.join(PANEL_DIR, "lbsnap.json")
+
+
 def lb_delays(now=None):
+    """生成配置时负载均衡组筛成员用的延迟：固定快照（lbsnap.json），只在 core._reload_core 真正重载时刷新。
+    以前每次生成配置都读最新延迟：测速一变成员就变，看门狗每 10 分钟的 refresh_regions、更新广告 / 规则集都判定
+    「配置变了」去重载，sing-box 魔改版每次 SIGHUP 断开全部连接（v8.10.18 修过的断流又回来）。没有快照时按当前延迟建一份"""
+    snap = read_json(_snap_file(), None)
+    if isinstance(snap, dict):
+        return {k: v for k, v in snap.items() if isinstance(v, int) and not isinstance(v, bool)}
+    return lb_snap_refresh(now)
+
+
+def lb_snap_get():
+    snap = read_json(_snap_file(), None)
+    return snap if isinstance(snap, dict) else None
+
+
+def lb_snap_set(snap):
+    """写回快照（None = 删除）"""
+    try:
+        if snap is None:
+            os.remove(_snap_file())
+        else:
+            write_json(_snap_file(), snap)
+    except OSError as e:
+        if snap is not None:
+            log_err("负载均衡延迟快照", e)
+
+
+def lb_snap_refresh(now=None):
+    """按 delays.json 刷新快照并返回"""
+    out = lb_delays_live(now)
+    lb_snap_set(out)
+    return out
+
+
+def lb_delays_live(now=None):
     """面板缓存的各节点最近一次延迟（delays.json，24 小时内的）：{节点: 毫秒}，0 = 超时"""
     now = now or time.time()
     raw = read_json(os.path.join(PANEL_DIR, "delays.json"), {}) or {}
@@ -3158,7 +3197,7 @@ from .base import CONF_DIR, LOCK, wd_hold
 from .errlog import log_err
 from .corehttp import core, core_json
 from .data import config_version, load, read_json, save
-from .groups import PROV, provider_nodes
+from .groups import PROV, lb_snap_get, lb_snap_refresh, lb_snap_set, provider_nodes
 from .mihomo import build_config, check_config, migrate_ruleset_cache, write_config
 from .sb_common import SB_CONF, active_core
 from .sb_config import build_singbox, check_sb_config, sb_fetch_missing, sb_hot_reload, sb_log_error, sb_rule_need, sb_running_current, sb_sync_assets, write_sb_config
@@ -3411,6 +3450,8 @@ def _reload_core(prev, force=False):
     clean_stale_tmp()
     tmp = None
     unchanged = False
+    old_snap = lb_snap_get()
+    lb_snap_refresh()  # 真正重载时才按最新测速刷新负载均衡成员（见 groups.lb_delays）
     try:
         for i in range(RELOAD_TRIES):
             last = i == RELOAD_TRIES - 1
@@ -3433,15 +3474,18 @@ def _reload_core(prev, force=False):
                 if not ok:
                     if prev is not None:
                         _revert_data(prev, applied)
+                    lb_snap_set(old_snap)  # 正式配置没换：快照也退回
                     return False, "配置校验失败，已撤销本次修改：" + err
                 if config_version() != ver and not last:
                     os.remove(tmp)  # 校验期间 data.json 被改过：这份配置已过时，丢掉重来
                     tmp = None
                     continue
-                if sb and not force and _same_file(tmp, final) and sb_running_current():
+                if sb and not force and sb_running_current() and (
+                        _same_file(tmp, final) or (old_snap is not None and _same_except_lb(tmp, final))):
                     os.remove(tmp)  # 不替换：保留原文件的修改时间，sb_running_current 下次还能判断
                     tmp = None
                     unchanged = True
+                    lb_snap_set(old_snap)  # 只差负载均衡成员（测速变了）：不为它断开全部连接，快照退回磁盘上配置所用的那份
                     break
                 os.replace(tmp, final)
                 tmp = None
@@ -3479,6 +3523,21 @@ def _reload_core(prev, force=False):
         core("PUT", "/configs?force=true", {"path": final}, timeout=30)
         return False, "mihomo 重载失败，已撤销本次修改：" + (text[:300] or str(code))
     return True, text or "配置已重载"
+
+
+def _same_except_lb(a, b):
+    """两份 sing-box 配置只差负载均衡组（loadbalance）的成员"""
+    def norm(fp):
+        with open(fp, encoding="utf-8") as f:
+            c = json.load(f)
+        for o in c.get("outbounds") or []:
+            if isinstance(o, dict) and o.get("type") == "loadbalance":
+                o.pop("outbounds", None)
+        return c
+    try:
+        return norm(a) == norm(b)
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _same_file(a, b):
@@ -4178,7 +4237,7 @@ from .data import load, safe, write_json
 from .links import b64d, parse_link
 from .groups import PROV, rx, sub_cache_path
 from .sb_common import SB_UA
-from .sb_yaml import RAW_KEYS, yaml_lite
+from .sb_yaml import RAW_KEYS, text_lines, yaml_lite
 from .sysopt import proxy_opener
 from .notify import core_alive
 
@@ -4223,7 +4282,7 @@ def _yaml_full(text):
 
 def _yaml_section(text, key):
     """取出顶层 key: 段落原文（到下一个顶层键为止）"""
-    lines = text.replace("\\t", "  ").splitlines()
+    lines = text_lines(text.replace("\\t", "  "))
     out, on = [], False
     for ln in lines:
         top = ln[:1] not in ("", " ", "-", "#")
@@ -4240,7 +4299,7 @@ def _yaml_section(text, key):
 
 def _yaml_items(sec):
     """整段解析失败时，按列表项逐条解析，坏的跳过"""
-    lines = sec.splitlines()[1:]
+    lines = text_lines(sec)[1:]
     ind = next((len(x) - len(x.lstrip(" ")) for x in lines if x.strip().startswith("-")), None)
     if ind is None:
         return []
@@ -4294,7 +4353,7 @@ def sub_yaml(text):
             if isinstance(vf, list) and len(vf) >= (len(v) if isinstance(v, list) else 0):
                 v = vf
         if key == "proxies":
-            n_items = sum(1 for x in sec.splitlines() if re.match(r"^\\s*-\\s", x))
+            n_items = sum(1 for x in text_lines(sec) if re.match(r"^\\s*-\\s", x))
             if not isinstance(v, list) or len(v) < n_items:
                 alt = _yaml_items(sec)
                 if len(alt) > len(v if isinstance(v, list) else []):
@@ -4352,7 +4411,7 @@ def parse_sub_text(text, fetch=None, depth=0):
         except Exception:
             body = ""
     out, errs = [], []
-    for i, line in enumerate([x.strip() for x in body.splitlines() if re.match(r"^\\s*[A-Za-z][\\w+.\\-]*://", x)], 1):
+    for i, line in enumerate([x.strip() for x in text_lines(body) if re.match(r"^\\s*[A-Za-z][\\w+.\\-]*://", x)], 1):
         try:
             p = parse_link(line)
             p["name"] = (p.get("name") or f"{p['type']}-{p['server']}:{p['port']}").strip()
@@ -10121,6 +10180,7 @@ mihomo 用 dialer-proxy、sing-box 用 detour 做链式代理：设备 → 前�
 """
 import json, re, shlex, time, urllib.parse
 
+from .sb_yaml import text_lines
 from .sysopt import sh
 
 LD_PORT0 = 17900  # 检测入站端口起点（只监听 127.0.0.1）
@@ -10304,7 +10364,7 @@ def api_post(b):
             via = str(b.get("via") or "").strip() or default_via(d)
             items = []
             if str(b.get("text") or "").strip():
-                for line in str(b["text"]).splitlines():
+                for line in text_lines(str(b["text"])):
                     x = parse_line(line)
                     if x:
                         items.append(x)
@@ -10580,7 +10640,9 @@ def fix_lb_sel(px=None):
     sel = read_json(MAINSEL_FILE, {})
     for g, want in (sel if isinstance(sel, dict) else {}).items():  # 重新生成配置 / 核心缓存丢失后选择回到默认：按面板记录补回
         p = px.get(g) or {}
-        if g in LB_MAIN and p.get("type") == "Selector" and p.get("now") != want and want in (p.get("all") or []):
+        alls = p.get("all") or []
+        # 只补回「回到了默认第一项」的（配置重新生成 / 核心缓存丢失）：在别的面板 / App 里经核心接口改过的选择不覆盖
+        if g in LB_MAIN and p.get("type") == "Selector" and p.get("now") != want and want in alls and p.get("now") == alls[0]:
             code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": want}, timeout=5)
             if code < 300:
                 p["now"] = want
