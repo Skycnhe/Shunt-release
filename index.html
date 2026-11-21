@@ -2397,6 +2397,7 @@ async function delBackup(name){
   }catch(e){toast("删除失败："+e.message);loadBackups()}
 }
 // 拓扑：只显示实时在用的负载均衡组（⚖️ X轮询 / ⚖️ X哈希 / 自定义负载均衡）+ 当前链路卡片；本页可见时每 2 秒取 /api/lbtopo
+// 链路卡片从规则（含 MATCH / final 兜底）真正引用到的策略组出发沿当前选中展开，没被规则用到的组（闲置的地区竞技、手动选择等）不出卡片
 let TP=null,TPO=null,TPC=new Set(),TPS={},TPT=0,TPB=false;
 const TP_ST={'round-robin':'轮询','consistent-hashing':'一致性哈希','sticky-sessions':'粘性会话'};
 const tpSpd=b=>fmt(b)+'/s';
@@ -2416,7 +2417,7 @@ function tpChainCard(c){const p=c.path||[],d=c.delay??undefined,roots=c.roots||[
   const rt=roots.length>1?`<span class="mut small">${esc(roots.slice(0,2).join('、'))} 等 ${roots.length} 组走这条链路</span>`:'';
   return `<div class="card tp-g"><div class="tp-h" style="cursor:default"><b>🔗 当前链路</b>${rt}<span class="tp-st"><span>⇅ <em>${c.conns||0}</em></span><span class="tp-dn">↓ ${tpSpd(c.down||0)}</span><span class="tp-up">↑ ${tpSpd(c.up||0)}</span></span></div><div class="tp-chain">${chips}</div></div>`}
 function renderTopo(){const el=$('#tp-list');if(!TP)return;const gs=TP.groups||[],cs=TP.chains||[];
-  if(!gs.length&&!cs.length){el.innerHTML=(TP.total||0)>0?'<div class="card mut small" style="padding:16px 18px">当前没有正在使用的负载均衡组，也没有活动的链路。策略组选中节点或「⚖️ X轮询 / X哈希」后，这里实时显示。</div>':'<div class="card mut small" style="padding:16px 18px">没有负载均衡组。在「策略组」页打开地区负载均衡组，或新建负载均衡类型的自定义组；官方 sing-box 内核没有负载均衡（按自动测速运行），换 reF1nd / MiChongs 内核即可。</div>';return}
+  if(!gs.length&&!cs.length){el.innerHTML=(TP.total||0)>0?'<div class="card mut small" style="padding:16px 18px">当前没有正在使用的负载均衡组，也没有活动的链路。分流规则（含最后的兜底）用到的策略组选中节点或「⚖️ X轮询 / X哈希」后，这里实时显示。</div>':'<div class="card mut small" style="padding:16px 18px">没有负载均衡组。在「策略组」页打开地区负载均衡组，或新建负载均衡类型的自定义组；官方 sing-box 内核没有负载均衡（按自动测速运行），换 reF1nd / MiChongs 内核即可。</div>';return}
   el.innerHTML=cs.map(tpChainCard).join('')+gs.map(g=>{const ns=g.nodes||[],ok=ns.filter(n=>n.alive),used=ns.filter(n=>n.conns).length,open=TPO.has(g.name),s=TPS[g.name]||'name';
     const head=`<div class="tp-h" onclick="tpToggle(${jsq(g.name)})"><span class="tp-chev">▶</span><b>${esc(g.name)}</b><span class="tag k-lb">负载均衡${TP_ST[g.strategy]?' · '+TP_ST[g.strategy]:''}</span>
       <span class="tp-st"><span><em>${ok.length}</em>/${ns.length} 健康</span><span>在用 <em>${used}</em></span><span>⇅ <em>${g.conns}</em></span><span class="tp-dn">↓ ${tpSpd(g.down)}</span><span class="tp-up">↑ ${tpSpd(g.up)}</span></span></div>`;
