@@ -23,7 +23,7 @@ ENV_LOADED=""  # 不继承外部环境变量
 load_env() {
   [ -n "$ENV_LOADED" ] && return 0  # apply 已加载过：start / dns_only 不再启动第二次 Python（每次都要加载整个面板）
   ENV_LOADED=1
-  B_IP=""; B_MAC=""; B_IP6=""; LOCAL6=""; IPV6=0; MODE=""; DNS_ALL=0
+  B_IP=""; B_MAC=""; B_IP6=""; LOCAL6=""; IPV6=0; MODE=""; DNS_ALL=0; MSS=0
   if [ -n "$TPENV_FILE" ] && [ -r "$TPENV_FILE" ]; then
     ENV=$(cat "$TPENV_FILE") && eval "$ENV"  # 面板进程 / --gen 刚写好的（同一份 tp_env 输出）：省一次 Python 启动
   else
@@ -40,6 +40,13 @@ load_env() {
   [ -n "$B_MAC" ] && MAC_SET="elements = { $B_MAC }"
   [ -n "$B_IP6" ] && IP6_SET="elements = { $B_IP6 }"
   [ -n "$LOCAL6" ] && LOCAL6_SET="elements = { $LOCAL6 }"
+  # MSS 钳制（面板「TUN 设置 → MSS 钳制」，只在 TProxy / TUN 时由 tp_env 置 MSS=1）：转发链上把 TCP SYN 的 MSS
+  # 钳到路径 MTU（clamp-mss-to-pmtu），MTU 不对称的链路（PPPoE、TUN）不再因大包被静默丢弃。只降不升，直连流量同样受益
+  MSS_CHAIN=""
+  [ "$MSS" = 1 ] && MSS_CHAIN='  chain forward {
+    type filter hook forward priority mangle; policy accept;
+    tcp flags syn tcp option maxseg size set rt mtu
+  }'
 }
 
 drop_legacy() {
@@ -165,6 +172,7 @@ $(dns_chain)
     meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set $MARK tproxy ip to 127.0.0.1:$TPROXY_PORT accept
     $V6_RULES
   }
+$MSS_CHAIN
 }
 NFT
   RC=$?
@@ -185,6 +193,7 @@ delete table inet $TABLE
 table inet $TABLE {
 $(sets)
 $(dns_chain)
+$MSS_CHAIN
 }
 NFT
   RC=$?

@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.1"
+PANEL_VERSION = "9.1.13"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -34,6 +34,7 @@ MODULES = [
     "sb_common",
     "sb_yaml",
     "sb_subs",
+    "panellogin",
     "sb_nodes",
     "sb_rules",
     "sb_dns",
@@ -46,12 +47,14 @@ MODULES = [
     "core_cache",
     "sysopt",
     "notify",
+    "warp",
     "landing",
     "gguard",
     "latency",
     "stats",
     "unlock",
     "speedtest",
+    "bwtest",
     "ruletest",
     "logstream",
     "adblock",
@@ -315,33 +318,36 @@ CN_DNS = re.compile(r"(?i)(?:^|[/@\\[])(?:223\\.5\\.5\\.5|223\\.6\\.6\\.6|2400:3
                     r"101\\.226\\.4\\.6|218\\.30\\.118\\.6|117\\.50\\.\\d+\\.\\d+|52\\.80\\.\\d+\\.\\d+|"
                     r"[\\w.-]*(?:alidns\\.com|doh\\.pub|dot\\.pub|dnspod\\.(?:cn|com)|360\\.cn|114dns\\.com|onedns\\.net|baidu\\.com|volces\\.com))(?:[:/#\\]]|$)")
 AB_DEFAULT = {"enabled": False, "lists": [], "black": [], "black_cn": [], "black_proxy": [], "white": [], "interval": 86400, "dns": False}
+# 内置视频白名单：大列表（HaGeZi Multi 等）会整域名拦掉视频 CDN（如 jable 的 mushroomtrack.com），视频打不开；这些后缀始终放行，优先级同用户白名单
+AB_VIDEO_ALLOW = ["mushroomtrack.com", "googlevideo.com", "ytimg.com", "nflxvideo.net", "bilivideo.com", "bilivideo.cn", "hdslb.com", "ttvnw.net", "douyinvod.com", "vimeocdn.com"]
 # 内置预设：按「国内 / 国外 × 视频 / 网页 / 隐私」分组，前端按 cat 分行显示
 BM = "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/"
 AB_PRESETS = [
     {"cat": "国内 · 视频 / App", "name": "秋风广告规则", "url": "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt",
      "dsc": "国内 App 开屏、视频贴片、广告 SDK"},
     {"cat": "国内 · 视频 / App", "name": "小米电视广告", "url": BM + "AdvertisingMiTV/AdvertisingMiTV.list", "dsc": "小米电视 / 盒子开机与界面广告"},
-    {"cat": "国内 · 网页", "name": "anti-AD", "url": "https://anti-ad.net/easylist.txt", "dsc": "国内网页、App 广告综合"},
+    {"cat": "国内 · 网页", "name": "anti-AD", "url": "https://anti-ad.net/easylist.txt", "big": "约 10 万条", "dsc": "国内网页、App 广告综合"},
     {"cat": "国内 · 网页", "name": "EasyList China", "url": "https://easylist-downloads.adblockplus.org/easylistchina.txt",
      "dsc": "Adblock Plus 官方中文列表（只取整域名规则）"},
     {"cat": "国内 · 网页", "name": "AdGuard 中文", "url": "https://filters.adtidy.org/extension/ublock/filters/224.txt", "dsc": "中文网站广告"},
     {"cat": "国内 · 隐私", "name": "隐私追踪 (blackmatrix7)", "url": BM + "Privacy/Privacy.list", "dsc": "统计、埋点、行为追踪"},
     {"cat": "国外 · 视频 / 电视", "name": "Smart-TV", "url": "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt",
      "dsc": "三星 / LG / 索尼等电视界面广告与回传"},
-    {"cat": "国外 · 网页", "name": "AdGuard DNS filter", "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+    {"cat": "国外 · 网页", "name": "AdGuard DNS filter", "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt", "big": "约 19 万条",
      "dsc": "国外网站、App 广告综合"},
     {"cat": "国外 · 网页", "name": "EasyList", "url": "https://easylist.to/easylist/easylist.txt",
      "dsc": "Adblock Plus 默认列表（只取整域名规则）"},
-    {"cat": "国外 · 网页", "name": "HaGeZi Multi", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt",
+    {"cat": "国外 · 网页", "name": "HaGeZi Multi", "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt", "big": "约 19 万条",
      "dsc": "广告 + 追踪 + 恶意域名，覆盖更广"},
     {"cat": "国外 · 隐私", "name": "EasyPrivacy", "url": "https://easylist.to/easylist/easyprivacy.txt", "dsc": "国外统计与追踪"},
     {"cat": "国外 · 隐私", "name": "Frogeye 一方追踪", "url": "https://hostfiles.frogeye.fr/firstparty-trackers.txt",
      "dsc": "伪装成网站子域名的追踪器"}]
-TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False}
+TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False,
+               "mtu": 9000, "quic_block": True, "mss_clamp": False}
 GROUPS_DEFAULT = {"type": "url-test", "lb": True, "rr": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
                   "tolerance": 50, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
                   "lgbm": False}
-SCHED_DEFAULT = {"sub_update": "", "core_restart": "", "geo_update": "", "latency": 0}
+SCHED_DEFAULT = {"sub_update": "04:00", "core_restart": "", "geo_update": "", "latency": 0}
 DEFAULT = {"secret": "", "mode": "rule", "tproxy": True, "subs": [], "rules": [],
            "rulesets": [], "bypass": [], "tests": None, "sub_interval": 86400, "region_groups": True,
            "nodes": [], "ipv6": False, "https": False, "allow_public": False, "allow_hosts": [], "watchdog": True, "tg_token": "", "tg_chat": "",
@@ -357,6 +363,7 @@ TESTS = [
     {"name": "淘宝", "url": "https://www.taobao.com"},
 ]
 G_SEL, G_YT, G_GG, G_TG, G_FINAL = "🚀 节点选择", "📹 YouTube", "🔍 Google", "📲 Telegram", "🐟 漏网之鱼"
+G_BW = "🚀 带宽择优"  # v9.1.8：带宽择优组（select，全部节点），面板按实测带宽把最高分节点设为选中
 G_AI, G_NF = "🤖 AI 服务", "🎬 Netflix"
 G_MANUAL, G_AUTO, G_DIRECT = "\\U0001F590\\uFE0F 手动选择", "⚡ 全局自动选择", "🏠 直连"
 LB_PREFIX, AUTO_TAIL, LB_TAIL = "\\u2696\\uFE0F ", "竞技", "负载均衡"
@@ -365,7 +372,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.1"
+PANEL_VERSION = "9.1.13"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -650,6 +657,12 @@ def normalize(d):
             d["tests"][5] = dict(TESTS[5])
         d["tests_rev"] = 2
         dirty = True
+    if int(d.get("sched_rev") or 0) < 1:  # 订阅默认每天 04:00 自动更新：没设过（空）的改为 04:00，设过的保留；之后用户关掉（清空）不再改回
+        sc = d.get("schedule") if isinstance(d.get("schedule"), dict) else None
+        if sc is not None and not sc.get("sub_update"):
+            sc["sub_update"] = "04:00"
+        d["sched_rev"] = 1
+        dirty = True
     if any(k in d for k in OLD_PW_KEYS):  # v6.8.2 起面板不再有密码：清掉旧版留下的密码字段
         for k in OLD_PW_KEYS:
             d.pop(k, None)
@@ -847,7 +860,7 @@ _HISTORY_LOCK = threading.Lock()  # history.json 读-改-写原子性（update �
 
 HISTORY_FILE = os.path.join(PANEL_DIR, "history.json")
 HISTORY_MAX = 10
-HISTORY_SKIP = {"tests_rev", "core", "secret", "devices", "https", "schema", "sysopt", "sysopt_orig", "sysopt_mods", "health", "health_cfg", "gh_token"}
+HISTORY_SKIP = {"tests_rev", "sched_rev", "core", "secret", "devices", "https", "schema", "sysopt", "sysopt_orig", "sysopt_mods", "health", "health_cfg", "gh_token"}
 KEY_LABEL = {"subs": "订阅", "nodes": "节点", "rules": "自定义规则", "rulesets": "规则集", "dns": "DNS", "adblock": "广告拦截",
              "custom_groups": "自定义策略组", "groups_cfg": "地区分组", "region_groups": "地区分组", "proxy_mode": "代理方式",
              "tun": "TUN", "ipv6": "IPv6", "bypass": "绕过设备", "mode": "代理模式", "sniffer": "域名嗅探", "schedule": "定时任务",
@@ -903,6 +916,7 @@ from .base import (
     AUTO_SUFFIX, AUTO_TAIL_OLD, BUILTIN_POLICIES, G_AUTO, G_DIRECT, G_MANUAL, G_OTHER, G_SEL, LB_SUFFIX, LEGACY_AUTO, REGIONS, SIDE_GROUPS
 )
 from .data import auto_name, lb_dropped_names, lb_names, lb_old_name
+from .sb_yaml import text_lines
 def b64d(s):
     s = s.strip().replace("-", "+").replace("_", "/")
     s += "=" * (-len(s) % 4)
@@ -1164,7 +1178,7 @@ def add_links(text, existing, d=None):
     """解析多行链接，返回 (新增节点列表, 错误列表)；节点名自动去重"""
     taken = {n["proxy"]["name"] for n in existing} | reserved_names(d)
     out, errs = [], []
-    for i, line in enumerate([x.strip() for x in text.splitlines() if x.strip()], 1):
+    for i, line in enumerate([x.strip() for x in text_lines(text) if x.strip()], 1):
         try:
             p = parse_link(line)
             if not p.get("server") or not p.get("port"):
@@ -1830,6 +1844,54 @@ def pick_plan(d, cg, orig=None):
     return {s["name"]: want[s["name"]] for s in d["subs"] if s["name"] in want}
 
 
+def bw_resolve(d, names):
+    """带宽择优指定的节点（显示名）里还有效的部分 → {"manual": [手动节点名], "subs": {订阅名: [节点原名]}, "display": [核心里看到的代理名]}。
+    口径与 pick_plan 相同：手动节点按 d["nodes"] 的代理名（显示名即代理名）；订阅节点按显示名匹配——
+    mihomo 下显示名即原名（sub_orig_nodes），sing-box 下去重改名后的 tag 经 sb_sub_outbounds 对回原名。
+    同一显示名分属多个订阅时都算上；已删除 / 已不在订阅里的跳过。空输入时三项都为空，调用方按“全部节点”处理。"""
+    want = []
+    for n in names or []:
+        n = str(n).strip()
+        if n and n not in want:
+            want.append(n)
+    if not want:
+        return {"manual": [], "subs": {}, "display": []}
+    manual_names = set()
+    for n in d.get("nodes") or []:
+        p = (n or {}).get("proxy") or {}
+        if isinstance(p, dict) and p.get("name"):
+            manual_names.add(p["name"])
+    orig = sub_orig_nodes(d)  # {订阅: {原名}}
+    tag2orig = {}
+    try:
+        for s, lst in sb_sub_outbounds(d).items():
+            for tag, p in lst:
+                tag2orig.setdefault(tag, []).append((s, str(p.get("name") or "")))
+    except Exception:
+        tag2orig = {}
+    manual, subs, display = [], {}, []
+    for n in want:
+        if n in manual_names:  # 显示名即手动节点名；同名订阅节点是另一个代理（去重后叫“名 (2)”），不混
+            manual.append(n)
+            display.append(n)
+            continue
+        hit = False
+        for s, names_in_sub in orig.items():
+            if n in names_in_sub:
+                subs.setdefault(s, [])
+                if n not in subs[s]:
+                    subs[s].append(n)
+                hit = True
+        for s, o in tag2orig.get(n, []):
+            subs.setdefault(s, [])
+            if o and o not in subs[s]:
+                subs[s].append(o)
+            hit = True
+        if hit and n not in display:
+            display.append(n)
+    return {"manual": manual, "subs": {k: v for k, v in subs.items() if v}, "display": display}
+
+
 def clean_custom_group(b):
     """校验并规范化一个自定义策略组（不含引用检查）"""
     name = str(b.get("name") or "").strip()
@@ -1872,6 +1934,72 @@ def clean_custom_group(b):
                 raise ValueError("负载均衡策略只支持一致性哈希 / 轮询")
             g["strategy"] = st
     return g
+
+
+LB_TOL = 150  # 负载均衡组只用延迟 ≤ 最低 + 这么多毫秒的节点（与竞技组容差取大）
+LB_DELAY_MAX_AGE = 86400
+
+
+def _snap_file():
+    return os.path.join(PANEL_DIR, "lbsnap.json")
+
+
+def lb_delays(now=None):
+    """生成配置时负载均衡组筛成员用的延迟：固定快照（lbsnap.json），只在 core._reload_core 真正重载时刷新。
+    以前每次生成配置都读最新延迟：测速一变成员就变，看门狗每 10 分钟的 refresh_regions、更新广告 / 规则集都判定
+    「配置变了」去重载，sing-box 魔改版每次 SIGHUP 断开全部连接（v8.10.18 修过的断流又回来）。没有快照时按当前延迟建一份"""
+    snap = read_json(_snap_file(), None)
+    if isinstance(snap, dict):
+        return {k: v for k, v in snap.items() if isinstance(v, int) and not isinstance(v, bool)}
+    return lb_snap_refresh(now)
+
+
+def lb_snap_get():
+    snap = read_json(_snap_file(), None)
+    return snap if isinstance(snap, dict) else None
+
+
+def lb_snap_set(snap):
+    """写回快照（None = 删除）"""
+    try:
+        if snap is None:
+            os.remove(_snap_file())
+        else:
+            write_json(_snap_file(), snap)
+    except OSError as e:
+        if snap is not None:
+            log_err("负载均衡延迟快照", e)
+
+
+def lb_snap_refresh(now=None):
+    """按 delays.json 刷新快照并返回"""
+    out = lb_delays_live(now)
+    lb_snap_set(out)
+    return out
+
+
+def lb_delays_live(now=None):
+    """面板缓存的各节点最近一次延迟（delays.json，24 小时内的）：{节点: 毫秒}，0 = 超时"""
+    now = now or time.time()
+    raw = read_json(os.path.join(PANEL_DIR, "delays.json"), {}) or {}
+    out = {}
+    for n, v in raw.items() if isinstance(raw, dict) else ():
+        if isinstance(v, dict) and isinstance(v.get("d"), int) and now - (v.get("at") or 0) <= LB_DELAY_MAX_AGE:
+            out[n] = v["d"]
+    return out
+
+
+def lb_members(members, dl, tol):
+    """负载均衡组成员按延迟筛：内核（reF1nd / MiChongs loadbalance）只跳过测速失败的节点，慢节点照样分到连接。
+    有 ≥2 个测过且可用的节点时，只留延迟 ≤ 最低 + tol 的（至少留最快 2 个），超时 / 没测过的去掉；测过的不足 2 个时原样不动"""
+    ok = [m for m in members if (dl.get(m) or 0) > 0]
+    if len(ok) < 2:
+        return members
+    lo = min(dl[m] for m in ok)
+    keep = {m for m in ok if dl[m] <= lo + tol}
+    if len(keep) < 2:
+        keep = set(sorted(ok, key=lambda m: (dl[m], ok.index(m)))[:2])
+    return [m for m in members if m in keep]
 '''
 _SRC['shunt.mihomo'] = '''"""生成配置"""
 import ipaddress, json, os, re, shlex, threading, time
@@ -1879,12 +2007,12 @@ import ipaddress, json, os, re, shlex, threading, time
 from .base import (
     REGIONS,
     AUTO_ORDER, BUILTIN_POLICIES, CN_APP_DOMAINS, CONF_DIR, CTRL_HOST, CTRL_PORT, DEFAULT_EXCLUDE, DNS_DEFAULT, DNS_LISTS, DOH_DOMAINS, DOH_IPS, G_AI,
-    G_AUTO, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
+    G_AUTO, G_BW, G_DIRECT, G_FINAL, G_GG, G_MANUAL, G_NF, G_SEL, G_TG, G_YT, HC, LAN_IN, LB_ORDER, LGBM_URL, MIHOMO_BIN, MIXED, SIDE_GROUPS, SMART_BIN,
     LAN_DNS_SUFFIX, LAN_PTR_ZONES, TUN_DEFAULT, TUN_STACKS
 )
 from .data import LB_KINDS, auto_name, lb_name, region_label, rs_file, safe
 from . import gguard, landing
-from .groups import clean_custom_group, gcfg, group_opts, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
+from .groups import LB_TOL, bw_resolve, clean_custom_group, gcfg, group_opts, lb_delays, lb_members, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
 from .ruleutil import AB_RULE_ONLY, DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, complete_rule, dns_policy_of, norm_rule, \\
     rule_policy_index, split_rule
 from .sb_common import active_core
@@ -2098,6 +2226,7 @@ def build_config(d, strict=False):
     # 地区分组：「<旗> <地区>竞技」(url-test，选延迟最低) + 「⚖️ <地区>哈希」(load-balance，一致性哈希)
     # + 「⚖️ <地区>轮询」(load-balance，round-robin：每条新连接换下一个节点，多线程下载叠加带宽)
     autos, lbs, rrs = [], [], []
+    lbd = lb_delays()
     for rname, flt, exc, matched, total, unknown in region_plan(d, pool, use):
         label = region_label(rname)[1]
         variants = [(auto_name(rname), race, autos, None)]
@@ -2105,7 +2234,10 @@ def build_config(d, strict=False):
             variants += [(lb_name(rname, st), "load-balance", rrs if st == "round-robin" else lbs, {"strategy": st})
                          for st, _ in LB_KINDS if gc["rr" if st == "round-robin" else "lb"]]
         for gname, t, bucket, ex in variants:
-            g = with_src(dict({"name": gname}, **group_opts(t, gc, ex)), matched)
+            mem = matched
+            if t == "load-balance" and matched:  # 负载均衡只用健康且延迟 ≤ 最低 + 容差的节点（订阅源节点由 mihomo 自带健康检查剔除失效者）
+                mem = lb_members(matched, lbd, max(LB_TOL, int(gc.get("tolerance") or 0)))
+            g = with_src(dict({"name": gname}, **group_opts(t, gc, ex)), mem)
             if use:
                 if flt:
                     g["filter"] = flt
@@ -2152,14 +2284,31 @@ def build_config(d, strict=False):
         if cg["expose"]:
             exposed.append(cg["name"])
 
-    # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → WARP → ⚡ 全局自动选择 → 🏠 直连
+    # 🚀 带宽择优组：指定了节点时只含指定节点（手动节点写 proxies，订阅节点用 use + 原名精确 filter）；
+    # 没指定时与手动选择同成员；指定节点全失效时回退全部节点（测速会报错提示重新选择）
+    _bw_names = [str(n).strip() for n in ((d.get("bw_cfg") or {}).get("nodes") or []) if str(n).strip()]
+    if _bw_names:
+        _br = bw_resolve(d, _bw_names)
+        if _br["manual"] or _br["subs"]:
+            _bw_g = {"name": G_BW, "type": "select"}
+            if _br["manual"]:
+                _bw_g["proxies"] = _br["manual"]
+            if _br["subs"]:
+                _bw_g["use"] = list(_br["subs"])
+                _bw_g["filter"] = names_rx([n for v in _br["subs"].values() for n in v])
+        else:
+            _bw_g = with_src({"name": G_BW, "type": "select"}, names)
+    else:
+        _bw_g = with_src({"name": G_BW, "type": "select"}, names)
+    # 🚀 节点选择 只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → 🚀 带宽择优 → ⚡ 全局自动选择 → 🏠 直连
     have = bool(use or names)
     direct_g = {"name": G_DIRECT, "type": "select", "proxies": ["DIRECT"]}
     if have:
-        groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL] + warpn + [G_AUTO, G_DIRECT]}] + region_groups + [
+        groups = [{"name": G_SEL, "type": "select", "proxies": rnames + [G_MANUAL, G_BW] + warpn + [G_AUTO, G_DIRECT]}] + region_groups + [
             with_src({"name": G_MANUAL, "type": "select"}, names),
+            _bw_g,  # 带宽择优：默认与手动选择同成员，面板按实测带宽设选中；指定节点时只含指定节点
             with_src(dict({"name": G_AUTO}, **group_opts(race, gc)), pool), direct_g]
-        side = [G_SEL] + rnames + [G_MANUAL, G_AUTO] + exposed + ["DIRECT"] + names
+        side = [G_SEL] + rnames + [G_MANUAL, G_BW, G_AUTO] + exposed + ["DIRECT"] + names
     else:
         groups = [{"name": G_SEL, "type": "select", "proxies": [G_DIRECT]}, direct_g]
         side = [G_SEL] + exposed + ["DIRECT"]
@@ -2192,7 +2341,7 @@ def build_config(d, strict=False):
     dc = dns_cfg(d)
     rule_providers, rules, ab_prov = mihomo_rules(d, policies, dc)
     v6 = bool(d.get("ipv6"))
-    dns = mihomo_dns(d, dc, policies, ab_prov)
+    dns = mihomo_dns(d, dc, policies, ab_prov, groups)
     hosts = mihomo_hosts(dc)
     tun = mihomo_tun(d)
     if active_core(d) == "smart" and gcfg(d).get("lgbm"):  # 模型放在 -d 目录（/etc/mihomo/Model.bin），内核每 72 小时自动更新
@@ -2251,6 +2400,7 @@ BUILTIN_GEO = (
 
 
 NTP_RULE = "AND,((NETWORK,UDP),(DST-PORT,123)),DIRECT"
+QUIC_RULE = "AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((GEOSITE,cn),(GEOIP,CN,no-resolve)))))),REJECT"  # v9.1.10：QUIC 屏蔽（默认开）：拦走代理的 UDP 443；NOT 保护让 CN 域名 / IP（直连）不受影响，YouTube 等走代理的服务也能拦到。放分流规则之前、直连规则之后
 
 
 def mihomo_rules(d, policies, dc):
@@ -2280,6 +2430,10 @@ def mihomo_rules(d, policies, dc):
     # 节点不支持 UDP 时电视 / 盒子永远对不上时间，证书校验和 Google Play 安装前验证跟着失败（下载到 99% 卡住）
     rules = pre + guard + [NTP_RULE] + ab_rules + [x for x in custom if x] + rs_rules + [
         "GEOSITE,private,DIRECT", "GEOIP,private,DIRECT,no-resolve", "RULE-SET,cn-apps,DIRECT",
+        # QUIC 屏蔽（默认开）：走代理的 QUIC（UDP 443）常因节点 UDP 转发差而卡，拦掉后浏览器自动退回 TCP。
+        # 放这里：直连规则（private / cn-apps）已在前面命中；NOT 保护让 CN 域名 / IP 不受影响；
+        # 后面的 YouTube / Google 等分流规则只对 TCP 生效，UDP 443 已先被拦。以前放 MATCH 之前，域名规则已先命中，YouTube 的 QUIC 根本拦不到
+        *([QUIC_RULE] if (d.get("tun") or {}).get("quic_block", True) else []),
         *([f"DOMAIN-SUFFIX,{x},{G_GG}" for x in gguard.GEMINI] if gguard.enabled(d) else []), f"GEOSITE,category-ai-!cn,{G_AI}", f"GEOSITE,netflix,{G_NF}", f"GEOIP,netflix,{G_NF},no-resolve",
         # 国行机的 Play 下载走 services.googleapis.cn，直连时被指到 Google 国内 CDN（*.xn--ngstr-lra8j.com），下载卡在 99%：两者走 Google 组
         f"DOMAIN-SUFFIX,googleapis.cn,{G_GG}", f"DOMAIN-SUFFIX,xn--ngstr-lra8j.com,{G_GG}",
@@ -2288,17 +2442,20 @@ def mihomo_rules(d, policies, dc):
         # Cloudflare 1.1.1.1 / 1.0.0.1 国内直连常被运营商干扰：固定走节点选择，不随漏网之鱼直连
         f"IP-CIDR,1.1.1.1/32,{G_SEL},no-resolve", f"IP-CIDR,1.0.0.1/32,{G_SEL},no-resolve",
         f"GEOSITE,geolocation-!cn,{G_SEL}",
-        "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT", f"MATCH,{G_FINAL}",
+        "GEOSITE,cn,DIRECT", "GEOIP,CN,DIRECT",
+        f"MATCH,{G_FINAL}",
     ]
     return rule_providers, rules, ab_prov
 
 
-def mihomo_dns(d, dc, policies, ab_prov):
+def mihomo_dns(d, dc, policies, ab_prov, groups=()):
     """dns 段：防泄露布局 + nameserver-policy"""
     v6 = bool(d.get("ipv6"))
-    fx = lambda xs: [fix_dns_policy(x, policies) for x in xs]
+    lbs, dex = lb_groups(groups), dns_exit(groups)
+    fx = lambda xs: [dns_no_lb(fix_dns_policy(x, policies), lbs, dex) for x in xs]
     direct = fx(dc["direct"] or DNS_DEFAULT["direct"])
-    proxy_dns = fx(dc["proxy"])
+    # 代理 DNS 没写 #策略组 时固定走 DNS 出口：以前跟着规则走「🚀 节点选择」，它指向负载均衡组时会轮到死节点，每次查询卡 5–15 秒
+    proxy_dns = [x if "#" in x or not dex else x + "#" + dex for x in fx(dc["proxy"])]
     plain_direct = [x.split("#", 1)[0] for x in direct]
     mode = dc["mode"]
     # 防泄露布局：默认 nameserver = 代理 DNS（经节点发出），只有 geosite:cn / private 用直连 DNS；
@@ -2379,12 +2536,19 @@ def mihomo_hosts(dc):
 def tun_params(d):
     """TUN 参数归一化：mihomo_tun 与 sing-box sb_inbounds 共用同一决策（是否启用、协议栈回退、设备名、开关量）。"""
     tc = d.get("tun") or TUN_DEFAULT
+    try:
+        mtu = int(tc.get("mtu") or 9000)
+    except (TypeError, ValueError):
+        mtu = 9000
     return {
         "enable": d.get("proxy_mode") == "tun",
         "stack": tc.get("stack") if tc.get("stack") in TUN_STACKS else TUN_DEFAULT["stack"],
         "device": safe_dev(tc.get("device")),
         "auto_redirect": bool(tc.get("auto_redirect", True)),
         "strict_route": bool(tc.get("strict_route", False)),
+        "mtu": max(1280, min(9000, mtu)),
+        "quic_block": bool(tc.get("quic_block", True)),
+        "mss_clamp": bool(tc.get("mss_clamp", False)),
     }
 
 
@@ -2394,7 +2558,7 @@ def mihomo_tun(d):
         return {"enable": False}
     return {"enable": True, "stack": mh_tun_stack(p["stack"]), "device": p["device"], "auto-route": True,
             "auto-redirect": p["auto_redirect"], "auto-detect-interface": True, "dns-hijack": ["any:53", "tcp://any:53"],
-            "strict-route": p["strict_route"]}
+            "strict-route": p["strict_route"], "mtu": p["mtu"]}
 
 
 def mh_tun_stack(stack, path=None):
@@ -2523,6 +2687,31 @@ def dns_cfg(d):
                          "servers": [norm_dns_addr(str(x).strip()) for x in sv if str(x).strip()]})
     dc["policies"] = pols
     return dc
+
+
+def lb_groups(groups):
+    return {g.get("name") for g in groups or () if g.get("type") == "load-balance"}
+
+
+def dns_exit(groups):
+    """DNS 出口：「🚀 节点选择」里第一个不是负载均衡组的成员（竞技 / 自动 / 节点）。负载均衡组按连接轮换节点，
+    不及时剔除失败节点，DNS 轮到死节点就卡 5–15 秒、全局变慢，所以 DNS 不经负载均衡组"""
+    gm = {g.get("name"): g for g in groups or ()}
+    ms = (gm.get(G_SEL) or {}).get("proxies") or []
+    if not any((gm.get(m) or {}).get("type") == "load-balance" for m in ms):
+        return None  # 节点选择里没有负载均衡组：照旧跟随节点选择
+    for m in ms:
+        if m not in BUILTIN_POLICIES and m not in ("COMPATIBLE",) and (gm.get(m) or {}).get("type") != "load-balance":
+            return m
+    return None
+
+
+def dns_no_lb(server, lbs, dex):
+    """DNS 服务器后缀 #策略组 指向负载均衡组：改走 DNS 出口"""
+    pol = dns_policy_of(server)
+    if pol and dex and (pol in lbs or pol == G_SEL):  # 默认代理 DNS 写的就是 #🚀 节点选择
+        return server.split("#", 1)[0] + "#" + dex
+    return server
 
 
 def fix_dns_policy(server, policies):
@@ -3008,7 +3197,7 @@ from .base import CONF_DIR, LOCK, wd_hold
 from .errlog import log_err
 from .corehttp import core, core_json
 from .data import config_version, load, read_json, save
-from .groups import PROV, provider_nodes
+from .groups import PROV, lb_snap_get, lb_snap_refresh, lb_snap_set, provider_nodes
 from .mihomo import build_config, check_config, migrate_ruleset_cache, write_config
 from .sb_common import SB_CONF, active_core
 from .sb_config import build_singbox, check_sb_config, sb_fetch_missing, sb_hot_reload, sb_log_error, sb_rule_need, sb_running_current, sb_sync_assets, write_sb_config
@@ -3223,6 +3412,33 @@ def _gen_config(d, sb, tmp):
     return write_config(d, tmp)
 
 
+STALE_TMP_AGE = 120
+
+
+def clean_stale_tmp(now=None):
+    """删掉上次没删成的临时配置（config.json.newN / config.yaml.newN）：重载中途面板进程被杀（在线更新、看门狗重启、
+    断电）时 finally 来不及执行，旧版本会一直留在 /etc/sing-box 里。持 RELOAD_LOCK 调用，同进程不会有正在用的临时文件；
+    只删 2 分钟前的，防别的进程（--gen 自检）正在写"""
+    now = now or time.time()
+    n = 0
+    for final in (SB_CONF, os.path.join(CONF_DIR, "config.yaml")):
+        dr, base = os.path.split(final)
+        try:
+            names = os.listdir(dr)
+        except OSError:
+            continue
+        for f in names:
+            if f.startswith(base + ".new") and f[len(base) + 4:].isdigit():
+                fp = os.path.join(dr, f)
+                try:
+                    if now - os.path.getmtime(fp) > STALE_TMP_AGE:
+                        os.remove(fp)
+                        n += 1
+                except OSError:
+                    pass
+    return n
+
+
 def _reload_core(prev, force=False):
     """mihomo -t / sing-box check 最长 90 秒：以前整段持有全局 LOCK，期间所有 update()（设备备注、定时任务设置等）都被卡住。
     现在锁内只生成配置并记下 config_version，校验在锁外做；校验完再拿锁，版本没变才替换正式配置，变了就按最新数据重来。
@@ -3231,8 +3447,11 @@ def _reload_core(prev, force=False):
     GEO / 规则集时配置文件本身往往一个字节都没变，变的只是 rules/ 下的规则集文件，而 sing-box 1.10+ 会自动
     重新加载被修改的本地规则集文件（type: local 的 path），根本不需要 SIGHUP。所以新配置与磁盘上的完全相同、
     且正在运行的进程确实加载的就是这份文件时，跳过重载，连接不断"""
+    clean_stale_tmp()
     tmp = None
     unchanged = False
+    old_snap = lb_snap_get()
+    lb_snap_refresh()  # 真正重载时才按最新测速刷新负载均衡成员（见 groups.lb_delays）
     try:
         for i in range(RELOAD_TRIES):
             last = i == RELOAD_TRIES - 1
@@ -3255,15 +3474,18 @@ def _reload_core(prev, force=False):
                 if not ok:
                     if prev is not None:
                         _revert_data(prev, applied)
+                    lb_snap_set(old_snap)  # 正式配置没换：快照也退回
                     return False, "配置校验失败，已撤销本次修改：" + err
                 if config_version() != ver and not last:
                     os.remove(tmp)  # 校验期间 data.json 被改过：这份配置已过时，丢掉重来
                     tmp = None
                     continue
-                if sb and not force and _same_file(tmp, final) and sb_running_current():
+                if sb and not force and sb_running_current() and (
+                        _same_file(tmp, final) or (old_snap is not None and _same_except_lb(tmp, final))):
                     os.remove(tmp)  # 不替换：保留原文件的修改时间，sb_running_current 下次还能判断
                     tmp = None
                     unchanged = True
+                    lb_snap_set(old_snap)  # 只差负载均衡成员（测速变了）：不为它断开全部连接，快照退回磁盘上配置所用的那份
                     break
                 os.replace(tmp, final)
                 tmp = None
@@ -3301,6 +3523,21 @@ def _reload_core(prev, force=False):
         core("PUT", "/configs?force=true", {"path": final}, timeout=30)
         return False, "mihomo 重载失败，已撤销本次修改：" + (text[:300] or str(code))
     return True, text or "配置已重载"
+
+
+def _same_except_lb(a, b):
+    """两份 sing-box 配置只差负载均衡组（loadbalance）的成员"""
+    def norm(fp):
+        with open(fp, encoding="utf-8") as f:
+            c = json.load(f)
+        for o in c.get("outbounds") or []:
+            if isinstance(o, dict) and o.get("type") == "loadbalance":
+                o.pop("outbounds", None)
+        return c
+    try:
+        return norm(a) == norm(b)
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _same_file(a, b):
@@ -3456,7 +3693,7 @@ from urllib.parse import quote
 from .base import BUILTIN_POLICIES, HC, mass_begin, mass_end
 from .corehttp import core, core_json
 
-PROBE_WORKERS = 16   # 逐个节点测速的全局并发上限（所有调用方合计）
+PROBE_WORKERS = 8    # 逐个节点测速的全局并发上限（所有调用方合计）
 PROBE_BUDGET = 90    # 默认最多用多少秒（期间按「全节点测速中」登记，看门狗暂停判定）；必须小于 base.MASS_MAX_AGE
 UI_BUDGET = 60       # 前端发起的整组测速 / 订阅 healthcheck 的补测上限（加上整组测速本身最多约 2 分钟）
 _SEM = threading.BoundedSemaphore(PROBE_WORKERS)
@@ -4000,7 +4237,7 @@ from .data import load, safe, write_json
 from .links import b64d, parse_link
 from .groups import PROV, rx, sub_cache_path
 from .sb_common import SB_UA
-from .sb_yaml import RAW_KEYS, yaml_lite
+from .sb_yaml import RAW_KEYS, text_lines, yaml_lite
 from .sysopt import proxy_opener
 from .notify import core_alive
 
@@ -4045,7 +4282,7 @@ def _yaml_full(text):
 
 def _yaml_section(text, key):
     """取出顶层 key: 段落原文（到下一个顶层键为止）"""
-    lines = text.replace("\\t", "  ").splitlines()
+    lines = text_lines(text.replace("\\t", "  "))
     out, on = [], False
     for ln in lines:
         top = ln[:1] not in ("", " ", "-", "#")
@@ -4062,7 +4299,7 @@ def _yaml_section(text, key):
 
 def _yaml_items(sec):
     """整段解析失败时，按列表项逐条解析，坏的跳过"""
-    lines = sec.splitlines()[1:]
+    lines = text_lines(sec)[1:]
     ind = next((len(x) - len(x.lstrip(" ")) for x in lines if x.strip().startswith("-")), None)
     if ind is None:
         return []
@@ -4116,7 +4353,7 @@ def sub_yaml(text):
             if isinstance(vf, list) and len(vf) >= (len(v) if isinstance(v, list) else 0):
                 v = vf
         if key == "proxies":
-            n_items = sum(1 for x in sec.splitlines() if re.match(r"^\\s*-\\s", x))
+            n_items = sum(1 for x in text_lines(sec) if re.match(r"^\\s*-\\s", x))
             if not isinstance(v, list) or len(v) < n_items:
                 alt = _yaml_items(sec)
                 if len(alt) > len(v if isinstance(v, list) else []):
@@ -4174,7 +4411,7 @@ def parse_sub_text(text, fetch=None, depth=0):
         except Exception:
             body = ""
     out, errs = [], []
-    for i, line in enumerate([x.strip() for x in body.splitlines() if re.match(r"^\\s*[A-Za-z][\\w+.\\-]*://", x)], 1):
+    for i, line in enumerate([x.strip() for x in text_lines(body) if re.match(r"^\\s*[A-Za-z][\\w+.\\-]*://", x)], 1):
         try:
             p = parse_link(line)
             p["name"] = (p.get("name") or f"{p['type']}-{p['server']}:{p['port']}").strip()
@@ -4244,6 +4481,13 @@ def sb_fetch_sub(s, gh=""):
     """下载并解析一个订阅，写入缓存；返回 (节点数, 消息)。
     依次试 SB_UA 里的每个 UA（每个 UA 先代理后直连），第一个解析出节点的结果写入缓存；
     全部失败时抛 IOError，面板缓存里上次的节点保持不变（不会把旧节点当成这次更新的结果报成功）"""
+    panel = s.get("panel") or {}
+    if panel.get("token"):  # 面板账号绑定的订阅：先刷新订阅地址（token 可能轮换）；登录过期时直接失败，保留旧节点
+        from .panellogin import PanelExpiredError, refresh_subscribe_url
+        try:
+            refresh_subscribe_url(s)
+        except PanelExpiredError as e:
+            raise IOError(str(e) + "（已保留上次的节点）")
     last = ""
     for ua in SB_UA:
         try:
@@ -4331,6 +4575,142 @@ def sb_update_subs(names=None, d=None):
     return ok_out, bad_out
 
 
+'''
+_SRC['shunt.panellogin'] = '''"""Xboard / V2Board 面板账号登录：用面板账号拉取订阅地址。
+
+- 两套面板同一套接口，不用区分（type 字段只做展示）：
+  POST {host}/api/v1/passport/auth/login，JSON {email, password} → data.auth_data（Xboard 回 status=success、auth_data 为「Bearer xxx」；
+  V2Board 没有 status、auth_data 是 JWT）
+  GET  {host}/api/v1/user/getSubscribe，头 Authorization: {auth_data}（原样）→ data.subscribe_url（绝对地址，直接用）
+  GET  {host}/api/v1/user/info → 流量 / 到期信息（尽力而为，拿不到不影响登录）
+- 密码绝不存储、不记日志；只存 token。
+- 面板绑定的订阅更新时：先用存的 token 重新调 getSubscribe 刷新订阅地址（token 可能轮换），再拉取；
+  401 / 带 token 的 403（过期）时保留旧节点并报「面板登录已过期，请重新登录」，不清空节点。
+- 面板 host 过 dl_check 做 SSRF 防护（与订阅下载同一口径）。
+"""
+import json, urllib.request, urllib.error
+
+from .base import dl_check
+from .data import update
+from .errlog import log_err
+from .mihomo import drop_provider_cache
+
+PANEL_TYPE = "Xboard / V2Board"
+
+
+class PanelExpiredError(Exception):
+    """面板登录已过期（token 失效，需重新登录）"""
+
+
+def _api(host, path, token=None, data=None, timeout=15):
+    """调面板 API，返回解析后的 JSON。401 直接抛 PanelExpiredError；其他失败按直连/代理换路重试一次后抛 IOError"""
+    from .notify import core_alive
+    from .sysopt import proxy_opener
+    url = host.rstrip("/") + path
+    dl_check(url)  # SSRF 防护：面板地址也必须是公网地址
+    last = None
+    for use_proxy in ((True, False) if core_alive() else (False, True)):
+        # 每次新建 Request：走代理失败后 urllib 已把代理地址写进 Request，复用会让「直连重试」仍然连到代理
+        body = json.dumps(data).encode() if data is not None else None
+        headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        if token:
+            headers["Authorization"] = auth_header(token)
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST" if data is not None else "GET")
+        try:
+            with proxy_opener(use_proxy).open(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8", "ignore") or "{}")
+        except urllib.error.HTTPError as e:
+            msg = _err_message(e)
+            # 401 / 带 token 的 403：Xboard / V2Board 的用户接口登录失效时回 403「未登录或登陆已过期」（以前只认 401，过期当成网络错误）
+            if e.code == 401 or (token and e.code == 403):
+                raise PanelExpiredError("面板登录已过期，请重新登录")
+            if msg and e.code < 502:  # 面板明确回了错误原因（密码错误、账号被封、密码错误次数过多……）：直接报，不再换路重试
+                raise IOError(msg[:150])
+            last = e
+        except Exception as e:
+            last = e
+    raise IOError(f"请求面板失败：{last}"[:150])
+
+
+def auth_header(token):
+    """Authorization 头：Xboard 的 auth_data 已是「Bearer xxx」原样发送；V2Board 的 auth_data 是 JWT，中间件直接解密头的值，
+    不能再加 Bearer 前缀（以前一律加「Bearer 」，V2Board 每个用户接口都 403）"""
+    return str(token or "").strip()
+
+
+def _err_message(e):
+    """面板错误响应里的 message（Xboard {"status":"fail","message":…}、V2Board abort(500, …) 的 {"message":…}）"""
+    try:
+        j = json.loads(e.read().decode("utf-8", "ignore") or "{}")
+    except Exception:
+        return ""
+    m = j.get("message") if isinstance(j, dict) else ""
+    return str(m).strip() if isinstance(m, str) else ""
+
+
+def get_subscribe_url(host, token):
+    """调 getSubscribe 拿订阅地址（绝对地址，直接用，不要自己拼）"""
+    j = _api(host, "/api/v1/user/getSubscribe", token=token)
+    url = ((j.get("data") or {}).get("subscribe_url") or "").strip()
+    if not url.startswith("http"):
+        raise ValueError("面板没有返回有效的订阅地址")
+    return url
+
+
+def get_user_info(host, token):
+    """流量 / 到期信息（尽力而为）：返回 {} 也不影响登录"""
+    try:
+        d = _api(host, "/api/v1/user/info", token=token).get("data") or {}
+    except Exception:
+        return {}
+    return {k: d[k] for k in ("transfer_enable", "u", "d", "expired_at", "plan_id", "money") if k in d}
+
+
+def panel_login(host, email, password):
+    """登录面板账号。返回 (订阅地址, 面板信息 dict)。密码只用来登录，不存储、不记日志"""
+    host = (host or "").strip().rstrip("/")
+    if not host.startswith(("http://", "https://")):
+        raise ValueError("面板地址应以 http:// 或 https:// 开头")
+    if not email or not password:
+        raise ValueError("请填写邮箱和密码")
+    j = _api(host, "/api/v1/passport/auth/login", data={"email": email, "password": password})
+    # Xboard 回 {"status":"success","data":{…}}；V2Board 只回 {"data":{…}}，没有 status（以前要求 status=success，V2Board 一律「登录失败」）
+    data = j.get("data") if isinstance(j, dict) else None
+    if str(j.get("status") or "success") != "success" or not isinstance(data, dict):
+        raise ValueError(str(j.get("message") or "登录失败")[:120])
+    token = str(data.get("auth_data") or "").strip()
+    if not token:
+        raise ValueError("登录成功但没有返回 token")
+    url = get_subscribe_url(host, token)
+    return url, {"host": host, "token": token, "type": PANEL_TYPE, "info": get_user_info(host, token)}
+
+
+def refresh_subscribe_url(s):
+    """刷新面板绑定订阅的地址：token 可能轮换，先用存的 token 重新调 getSubscribe。
+    返回 True（地址变了）/ False（没变）。登录过期抛 PanelExpiredError；其他网络错误只记日志、沿用旧地址"""
+    panel = s.get("panel") or {}
+    token, host = panel.get("token"), panel.get("host")
+    if not token or not host:
+        return False
+    try:
+        url = get_subscribe_url(host, token)
+    except PanelExpiredError:
+        raise
+    except Exception as e:
+        log_err("面板订阅刷新", e)
+        return False
+    if url and url != s.get("url"):
+        name = s["name"]
+
+        def fn(d):
+            for x in d["subs"]:
+                if x["name"] == name:
+                    x["url"] = url
+        update(fn)
+        drop_provider_cache(name)  # mihomo 缓存按旧链接存着，换地址后不能再用
+        s["url"] = url
+        return True
+    return False
 '''
 _SRC['shunt.sb_nodes'] = '''"""节点：mihomo 字段 → sing-box outbound"""
 import re
@@ -5007,10 +5387,10 @@ _SRC['shunt.sb_config'] = '''"""生成 sing-box 配置"""
 import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, urllib.error
 
 from .base import (
-    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
+    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_BW, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
-from .groups import clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes
+from .groups import bw_resolve, clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
 from .mihomo import BUILTIN_GEO, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
@@ -5022,6 +5402,7 @@ from .ruleutil import LOGICAL_RX, _mh_domain, split_rule, strip_comment
 from .sb_dns import sb_dns
 from .sysopt import nft_ok, proxy_opener, sh, svc_restart
 from .notify import core_alive
+
 def build_singbox(d):
     """把 build_config 生成的 mihomo 结构翻译成 sing-box 配置；返回 (配置, 警告列表, 需要的规则集文件)"""
     sub_out = sb_sub_outbounds(d)
@@ -5030,6 +5411,7 @@ def build_singbox(d):
     cfg = build_config(d)
     v6 = bool(d.get("ipv6"))
     gc = gcfg(d)
+    gc["_lbd"] = lb_delays()
     warn = []
     outbounds, node_names, prov_names = sb_node_outbounds(d, cfg, sub_out, warn)
     picks = sb_custom_picks(d, sub_out, prov_names)
@@ -5289,6 +5671,18 @@ def sb_custom_picks(d, sub_out, prov_names):
             want = set(names)
             tags += [tag for tag, p in sub_out.get(sname) or [] if str(p.get("name") or "") in want and tag in alive and tag not in tags]
         out[cg["name"]] = (cg["filter"] if cg["filter"] and cg["subs"] else "", tags)
+    # 🚀 带宽择优指定节点：mihomo 的 filter 用原名，这里按原名映射回本次生成配置里去重改名后的 tag。
+    # 指定节点全失效时不写 picks——mihomo 侧已回退全部节点，sing-box 侧也按 use+filter 走全部节点。
+    bw_names = [str(n).strip() for n in ((d.get("bw_cfg") or {}).get("nodes") or []) if str(n).strip()]
+    if bw_names:
+        r = bw_resolve(d, bw_names)
+        if r["manual"] or r["subs"]:
+            tags = []
+            for sname, names in r["subs"].items():
+                alive = set(prov_names.get(sname) or [])
+                want = set(names)
+                tags += [tag for tag, p in sub_out.get(sname) or [] if str(p.get("name") or "") in want and tag in alive and tag not in tags]
+            out[G_BW] = ("", tags)
     return out
 
 
@@ -5353,6 +5747,7 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, picks=None, fork=F
         if g["type"] == "select":
             o = {"type": "selector", "tag": g["name"], "outbounds": members, "interrupt_exist_connections": False}
         elif g["type"] == "load-balance" and fork:  # 魔改版：多节点聚合，按策略把连接分摊到组内各节点，自动跳过不健康的节点
+            members = lb_members(members, gc.get("_lbd") or {}, max(LB_TOL, int(gc.get("tolerance") or 0)))
             o = {"type": "loadbalance", "tag": g["name"], "outbounds": members,
                  "strategy": g.get("strategy") or gc.get("strategy") or "consistent-hashing",
                  "url": g.get("url") or gc["url"], "interval": f"{max(int(g.get('interval') or gc['interval']), 30)}s"}
@@ -5375,7 +5770,7 @@ def sb_inbounds(d, v6, warn=None):
         inbounds.insert(1, {"type": "tproxy", "tag": "tproxy-in", "listen": lis, "listen_port": 7893})
     tp = tun_params(d)  # TUN 决策与 mihomo_tun 共用；auto_redirect 另需 nftables 可用
     if tp["enable"]:
-        tun = {"type": "tun", "tag": "tun-in", "interface_name": tp["device"], "address": ["172.19.0.1/30"] + (["fdfe:dcba:9876::1/126"] if v6 else []),
+        tun = {"type": "tun", "tag": "tun-in", "interface_name": tp["device"], "address": ["172.19.0.1/30"] + (["fdfe:dcba:9876::1/126"] if v6 else []), "mtu": tp["mtu"],
                "auto_route": True, "auto_redirect": tp["auto_redirect"] and nft_ok(), "strict_route": tp["strict_route"],
                "stack": sb_tun_stack(tp["stack"])}
         if tun["stack"] == "auto":
@@ -9253,15 +9648,562 @@ def check_nodes():
         write_json(NOTIFY_FILE, st)
         notify("⚠️ 节点选择中的所有节点均测速超时，请检查订阅或网络" if all_down else "✅ 节点已恢复可用")
 '''
+_SRC['shunt.warp'] = '''"""Cloudflare WARP（WireGuard）：注册 / 导入账号、生成 WireGuard 节点、本地优选端点 IP（预览版功能）
+
+- 账号保存在 data.json 的 warp：{private_key, peer_public_key, v4, v6, reserved, endpoint, name, ...}
+- 节点以普通手动节点的形式放进 d["nodes"]（mihomo 的 wireguard 写法；sing-box 由 sb_nodes 转成 endpoints），
+  可以和其他手动节点一样加入策略组
+- 优选：对端点 IP:端口发真正的 WireGuard 握手（Noise IK，用本账号的密钥），收到握手应答算通，统计延迟和丢包。
+  核心在 TUN 模式时，测速包打 fwmark 并临时加一条「fwmark → main 表」的策略路由绕过 TUN，测完删掉；
+  TProxy 只拦局域网经过本机转发的流量（prerouting），本机自己发的包本来就直连
+"""
+import base64, hashlib, hmac, ipaddress, json, os, random, socket, struct, threading, time, urllib.request
+
+from .errlog import log_err
+from .sysopt import proxy_opener, sh
+
+WARP_PEER = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="  # Cloudflare WARP 服务端公钥（所有端点相同）
+WARP_ENDPOINT = "162.159.192.1:2408"
+WARP_API = "https://api.cloudflareclient.com/v0a2158/reg"
+WARP_RANGES = ["162.159.192.0/24", "162.159.193.0/24", "162.159.195.0/24", "188.114.96.0/24", "188.114.97.0/24",
+               "188.114.98.0/24", "188.114.99.0/24"]
+WARP_PORTS = [2408, 500, 1701, 4500, 854, 859, 864, 878, 880, 890, 891, 894, 903, 908, 928, 934, 939, 942, 943, 945, 946,
+              955, 968, 987, 988, 1002, 1010, 1014, 1018, 1070, 1074, 1180, 1387, 1843, 2371, 2506, 3138, 3476, 3581, 3854,
+              4177, 4198, 4233, 5279, 5956, 7103, 7152, 7156, 7281, 7559, 8319, 8742, 8854, 8886]
+BYPASS_MARK = 0x5a17   # 优选测速包的 fwmark
+BYPASS_PREF = 8990     # 排在核心 TUN 的策略路由（9000 起）之前
+SCAN = {"running": False, "done": 0, "total": 0, "results": [], "mode": "", "msg": "", "t": 0}
+_SCAN_LOCK = threading.Lock()
+
+# ---------------------------------------------------------------- X25519（RFC 7748）
+_P = 2 ** 255 - 19
+
+
+def _x25519(k, u):
+    k = bytearray(k)
+    k[0] &= 248
+    k[31] = (k[31] & 127) | 64
+    k = int.from_bytes(k, "little")
+    x1 = int.from_bytes(u, "little") & ((1 << 255) - 1)
+    x2, z2, x3, z3, swap = 1, 0, x1, 1, 0
+    for t in range(254, -1, -1):
+        kt = (k >> t) & 1
+        swap ^= kt
+        if swap:
+            x2, x3, z2, z3 = x3, x2, z3, z2
+        swap = kt
+        a, b = (x2 + z2) % _P, (x2 - z2) % _P
+        aa, bb = a * a % _P, b * b % _P
+        e = (aa - bb) % _P
+        c, d = (x3 + z3) % _P, (x3 - z3) % _P
+        da, cb = d * a % _P, c * b % _P
+        x3, z3 = (da + cb) ** 2 % _P, x1 * (da - cb) ** 2 % _P
+        x2, z2 = aa * bb % _P, e * (aa + 121665 * e) % _P
+    if swap:
+        x2, z2 = x3, z3
+    return (x2 * pow(z2, _P - 2, _P) % _P).to_bytes(32, "little")
+
+
+def pubkey(priv):
+    return _x25519(priv, (9).to_bytes(32, "little"))
+
+
+def keypair():
+    priv = bytearray(os.urandom(32))
+    priv[0] &= 248
+    priv[31] = (priv[31] & 127) | 64
+    return bytes(priv), pubkey(bytes(priv))
+
+
+# ---------------------------------------------------------------- ChaCha20-Poly1305（RFC 8439，只做加密）
+def _rotl(v, c):
+    return ((v << c) & 0xffffffff) | (v >> (32 - c))
+
+
+def _chacha_block(key, counter, nonce):
+    s = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574] + list(struct.unpack("<8I", key)) + [counter] + list(struct.unpack("<3I", nonce))
+    x = s[:]
+    for _ in range(10):
+        for a, b, c, d in ((0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
+                           (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)):
+            x[a] = (x[a] + x[b]) & 0xffffffff
+            x[d] = _rotl(x[d] ^ x[a], 16)
+            x[c] = (x[c] + x[d]) & 0xffffffff
+            x[b] = _rotl(x[b] ^ x[c], 12)
+            x[a] = (x[a] + x[b]) & 0xffffffff
+            x[d] = _rotl(x[d] ^ x[a], 8)
+            x[c] = (x[c] + x[d]) & 0xffffffff
+            x[b] = _rotl(x[b] ^ x[c], 7)
+    return struct.pack("<16I", *((x[i] + s[i]) & 0xffffffff for i in range(16)))
+
+
+def _chacha20(key, counter, nonce, data):
+    out = bytearray()
+    for i in range(0, len(data), 64):
+        ks = _chacha_block(key, counter + i // 64, nonce)
+        out += bytes(a ^ b for a, b in zip(data[i:i + 64], ks))
+    return bytes(out)
+
+
+def _poly1305(key, msg):
+    r = int.from_bytes(key[:16], "little") & 0x0ffffffc0ffffffc0ffffffc0fffffff
+    s = int.from_bytes(key[16:], "little")
+    p, acc = (1 << 130) - 5, 0
+    for i in range(0, len(msg), 16):
+        acc = (acc + int.from_bytes(msg[i:i + 16] + b"\\x01", "little")) * r % p
+    return ((acc + s) & ((1 << 128) - 1)).to_bytes(16, "little")
+
+
+def aead_seal(key, counter, plain, aad):
+    nonce = b"\\0\\0\\0\\0" + struct.pack("<Q", counter)
+    otk = _chacha_block(key, 0, nonce)[:32]
+    ct = _chacha20(key, 1, nonce, plain)
+    pad = lambda b: b + b"\\0" * (-len(b) % 16)
+    tag = _poly1305(otk, pad(aad) + pad(ct) + struct.pack("<QQ", len(aad), len(ct)))
+    return ct + tag
+
+
+# ---------------------------------------------------------------- WireGuard 握手发起包（Noise_IKpsk2）
+_CONSTRUCTION = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
+_IDENTIFIER = b"WireGuard v1 zx2c4 Jason@zx2c4.com"
+
+
+def _h(*parts):
+    return hashlib.blake2s(b"".join(parts)).digest()
+
+
+def _hmac(k, d):
+    return hmac.new(k, d, hashlib.blake2s).digest()
+
+
+def _kdf(c, inp, n):
+    t0 = _hmac(c, inp)
+    t1 = _hmac(t0, b"\\x01")
+    if n == 1:
+        return t1,
+    return t1, _hmac(t0, t1 + b"\\x02")
+
+
+class Initiator:
+    """预先算好与本账号相关的部分（静态 DH），每次只算临时密钥：纯 Python 的 X25519 在路由器上要几十毫秒"""
+
+    def __init__(self, priv, peer_pub, reserved=(0, 0, 0)):
+        self.priv, self.peer = priv, peer_pub
+        self.pub = pubkey(priv)
+        self.ss = _x25519(priv, peer_pub)
+        self.reserved = bytes(int(x) & 255 for x in (list(reserved) + [0, 0, 0])[:3])
+        self.mac1_key = _h(b"mac1----", peer_pub)
+        c = _h(_CONSTRUCTION)
+        self.c0, self.h0 = c, _h(_h(c, _IDENTIFIER), peer_pub)
+
+    def packet(self):
+        sender = random.getrandbits(32)
+        e_priv, e_pub = keypair()
+        c = _kdf(self.c0, e_pub, 1)[0]
+        h = _h(self.h0, e_pub)
+        c, k = _kdf(c, _x25519(e_priv, self.peer), 2)
+        enc_static = aead_seal(k, 0, self.pub, h)
+        h = _h(h, enc_static)
+        c, k = _kdf(c, self.ss, 2)
+        now = time.time()
+        ts = struct.pack(">QI", int(now) + 2 ** 62 + 10, int((now % 1) * 1e9))
+        enc_ts = aead_seal(k, 0, ts, h)
+        msg = b"\\x01" + self.reserved + struct.pack("<I", sender) + e_pub + enc_static + enc_ts
+        mac1 = hashlib.blake2s(msg, key=self.mac1_key, digest_size=16).digest()
+        return sender, msg + mac1 + b"\\0" * 16
+
+
+# ---------------------------------------------------------------- 账号与节点
+def b64(b):
+    return base64.b64encode(b).decode()
+
+
+def _b64key(s, what):
+    try:
+        b = base64.b64decode(str(s or "").strip(), validate=True)
+    except Exception:
+        b = b""
+    if len(b) != 32:
+        raise ValueError(f"{what}格式不对（应为 44 个字符的 base64 WireGuard 密钥）")
+    return b
+
+
+def split_ep(ep):
+    """「IP:端口」/「[IPv6]:端口」/「域名:端口」→ (主机, 端口)"""
+    ep = str(ep or "").strip()
+    if ep.startswith("["):
+        host, _, port = ep[1:].partition("]:")
+    else:
+        host, _, port = ep.rpartition(":")
+    try:
+        port = int(port)
+    except ValueError:
+        port = 0
+    if not host or not 1 <= port <= 65535 or any(c in host for c in " /\\\\@,"):
+        raise ValueError(f"端点格式不对：{ep}（应为 IP:端口，如 {WARP_ENDPOINT}）")
+    return host, port
+
+
+def join_ep(host, port):
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def parse_reserved(v):
+    if isinstance(v, list) and len(v) == 3:
+        return [int(x) & 255 for x in v]
+    s = str(v or "").strip()
+    if not s:
+        return [0, 0, 0]
+    if "," in s:
+        try:
+            r = [int(x) for x in s.split(",")]
+        except ValueError:
+            raise ValueError("reserved 应为 3 个 0–255 的数字，如 12,34,56")
+        if len(r) != 3 or not all(0 <= x <= 255 for x in r):
+            raise ValueError("reserved 应为 3 个 0–255 的数字，如 12,34,56")
+        return r
+    try:  # WARP 注册返回的 client_id（base64，3 字节）
+        b = base64.b64decode(s, validate=True)
+    except Exception:
+        b = b""
+    if len(b) != 3:
+        raise ValueError("reserved 应为 3 个数字（如 12,34,56）或 client_id（4 个字符的 base64）")
+    return list(b)
+
+
+def clean_cfg(b):
+    """校验导入 / 修改的 WARP 账号；返回规范化后的 warp 设置"""
+    name = str(b.get("name") or "WARP").strip()[:40] or "WARP"
+    if any(c in name for c in ",:#\\n\\r\\"'"):
+        raise ValueError("节点名称不能包含逗号、冒号、# 或引号")
+    priv = _b64key(b.get("private_key"), "私钥")
+    peer = _b64key(b.get("peer_public_key") or WARP_PEER, "对端公钥")
+    v4 = str(b.get("v4") or "172.16.0.2").strip().split("/")[0]
+    v6 = str(b.get("v6") or "").strip().split("/")[0]
+    try:
+        if ipaddress.ip_address(v4).version != 4 or (v6 and ipaddress.ip_address(v6).version != 6):
+            raise ValueError
+    except ValueError:
+        raise ValueError("本机地址格式不对：IPv4 如 172.16.0.2，IPv6 如 2606:4700:110:8a36::1（可空）")
+    host, port = split_ep(b.get("endpoint") or WARP_ENDPOINT)
+    try:
+        mtu = int(b.get("mtu") or 1280)
+    except (TypeError, ValueError):
+        mtu = 0
+    if not 1100 <= mtu <= 1500:
+        raise ValueError("MTU 应在 1100–1500 之间")
+    out = {"name": name, "private_key": b64(priv), "peer_public_key": b64(peer), "v4": v4, "v6": v6,
+           "reserved": parse_reserved(b.get("reserved")), "endpoint": join_ep(host, port), "mtu": mtu}
+    for k in ("account_id", "token", "license", "created"):
+        if b.get(k):
+            out[k] = str(b[k])[:200]
+    return out
+
+
+def node_proxy(w):
+    """mihomo 的 wireguard 节点（sing-box 由 sb_nodes.sb_outbound 转换成 endpoints）"""
+    host, port = split_ep(w["endpoint"])
+    p = {"name": w["name"], "type": "wireguard", "server": host, "port": port, "ip": w["v4"],
+         "private-key": w["private_key"], "public-key": w["peer_public_key"], "reserved": list(w["reserved"]),
+         "udp": True, "mtu": int(w.get("mtu") or 1280), "remote-dns-resolve": False}
+    if w.get("v6"):
+        p["ipv6"] = w["v6"]
+    return p
+
+
+def sync_node(d, old_name=None):
+    """把 d["warp"] 写成手动节点（同名的替换，改名时替换旧名字的那个）"""
+    w = d.get("warp")
+    names = {old_name, (w or {}).get("name")} - {None}
+    d["nodes"] = [n for n in d.get("nodes") or [] if (n.get("proxy") or {}).get("name") not in names]
+    if w:
+        d["nodes"].append({"link": "", "proxy": node_proxy(w), "warp": True})
+
+
+def register(via_proxy=None):
+    """向 Cloudflare 注册一个免费 WARP 账号（先经核心代理，失败再直连）"""
+    priv, pub = keypair()
+    body = json.dumps({"key": b64(pub), "install_id": "", "fcm_token": "", "tos": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                       "model": "PC", "serial_number": "", "locale": "zh_CN"}).encode()
+    errs = []
+    for proxy in ((via_proxy,) if via_proxy is not None else (True, False)):
+        req = urllib.request.Request(WARP_API, data=body, method="POST", headers={
+            "Content-Type": "application/json; charset=UTF-8", "User-Agent": "okhttp/3.12.1", "CF-Client-Version": "a-6.30-3596"})
+        try:
+            with proxy_opener(proxy).open(req, timeout=20) as r:
+                j = json.loads(r.read(1 << 20))
+            cfg = j.get("config") or {}
+            peer = (cfg.get("peers") or [{}])[0]
+            addr = (cfg.get("interface") or {}).get("addresses") or {}
+            return clean_cfg({"private_key": b64(priv), "peer_public_key": peer.get("public_key") or WARP_PEER,
+                              "v4": addr.get("v4"), "v6": addr.get("v6"), "reserved": cfg.get("client_id") or "",
+                              "endpoint": WARP_ENDPOINT, "account_id": j.get("id"), "token": j.get("token"),
+                              "license": (j.get("account") or {}).get("license"), "created": time.strftime("%Y-%m-%d %H:%M")})
+        except Exception as e:
+            errs.append(("经代理" if proxy else "直连") + "：" + str(e)[:150])
+    raise IOError("注册 WARP 失败：" + "；".join(errs))
+
+
+# ---------------------------------------------------------------- 本地优选（测速走直连）
+def _default_dev():
+    code, out = sh("ip -4 route show default table main 2>/dev/null | head -n 1", timeout=5)
+    p = out.split()
+    return p[p.index("dev") + 1] if "dev" in p and p.index("dev") + 1 < len(p) else ""
+
+
+class Bypass:
+    """TUN 模式下让测速包绕过核心：打 fwmark + 临时策略路由「fwmark → main 表」，退出时删掉。
+    TProxy / 未开代理时什么都不做（本机自己发出的包不经过 prerouting，本来就直连）"""
+
+    def __init__(self, mode):
+        self.mode, self.added = mode, False
+
+    def __enter__(self):
+        if self.mode == "tun":
+            for v in ("-4", "-6"):
+                sh(f"ip {v} rule del fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF} 2>/dev/null", timeout=5)
+            code, out = sh(f"ip -4 rule add fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF}", timeout=5)
+            sh(f"ip -6 rule add fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF} 2>/dev/null", timeout=5)  # IPv6 端点；没开 IPv6 时失败无妨
+            self.added = code == 0
+            if not self.added:
+                log_err("WARP 优选", "添加直连策略路由失败：" + out[-120:])
+        return self
+
+    def __exit__(self, *a):
+        if self.added:
+            for v in ("-4", "-6"):
+                sh(f"ip {v} rule del fwmark {BYPASS_MARK} lookup main pref {BYPASS_PREF} 2>/dev/null", timeout=5)
+        return False
+
+
+def bypass_active():
+    code, out = sh("ip -4 rule show 2>/dev/null; ip -6 rule show 2>/dev/null", timeout=5)
+    return f"fwmark {hex(BYPASS_MARK)}" in out or f"fwmark {BYPASS_MARK}" in out
+
+
+def probe(ini, host, port, tries=3, timeout=1.0, mark=False, dev=""):
+    """发 tries 次握手，返回 (平均延迟 ms 或 0, 丢包率 0–1)"""
+    fam = socket.AF_INET6 if ":" in host else socket.AF_INET
+    rtts = []
+    s = socket.socket(fam, socket.SOCK_DGRAM)
+    try:
+        if mark:
+            try:
+                s.setsockopt(socket.SOL_SOCKET, 36, BYPASS_MARK)  # SO_MARK
+            except OSError:
+                pass
+            if dev:
+                try:
+                    s.setsockopt(socket.SOL_SOCKET, 25, dev.encode())  # SO_BINDTODEVICE：再保险，直接从物理网卡发
+                except OSError:
+                    pass
+        s.settimeout(timeout)
+        for _ in range(tries):
+            sender, pkt = ini.packet()
+            t0 = time.perf_counter()
+            try:
+                s.sendto(pkt, (host, port))
+                while True:
+                    data, _ = s.recvfrom(256)
+                    # 握手应答：type 2、92 字节、receiver 是我们的 sender
+                    if len(data) == 92 and data[0] == 2 and struct.unpack("<I", data[8:12])[0] == sender:
+                        rtts.append((time.perf_counter() - t0) * 1000)
+                        break
+            except (socket.timeout, OSError):
+                pass
+    finally:
+        s.close()
+    return (round(sum(rtts) / len(rtts), 1) if rtts else 0), round(1 - len(rtts) / tries, 2)
+
+
+def candidates(n=80, ports=None, extra=()):
+    """随机抽 n 个「IP:端口」：IP 来自 WARP 网段，端口优先 2408"""
+    ports = ports or WARP_PORTS
+    ips = [str(ip) for r in WARP_RANGES for ip in list(ipaddress.ip_network(r).hosts())]
+    out = list(dict.fromkeys(extra))
+    rnd = random.Random()
+    while len(out) < n:
+        p = 2408 if rnd.random() < 0.4 else rnd.choice(ports)
+        out.append(join_ep(rnd.choice(ips), p))
+        out = list(dict.fromkeys(out))
+    return out[:max(n, len(extra))]
+
+
+def proxy_state(d, core_ok):
+    """(mode, 说明)：mode 为 tun 时测速要绕过核心"""
+    pm = d.get("proxy_mode") or "off"
+    if not core_ok or pm == "off":
+        return "direct", "未开启透明代理（或核心未运行）：直接测本地线路"
+    if pm == "tun":
+        return "tun", "检测到 TUN 代理模式：测速包已用 fwmark 临时绕过 TUN 直连，测完自动恢复"
+    return "tproxy", "检测到 TProxy 代理模式：TProxy 只接管局域网转发流量，本机发出的测速包本来就直连"
+
+
+def scan(d, core_ok, n=80, tries=3, eps=None):
+    """后台优选：结果写入 SCAN（按丢包、延迟排序）"""
+    w = d.get("warp")
+    if not w:
+        return False, "还没有 WARP 账号，先注册或导入"
+    with _SCAN_LOCK:
+        if SCAN["running"]:
+            return False, "优选正在进行"
+        SCAN.update(running=True, done=0, results=[], t=time.time())
+    try:
+        # 握手包的 reserved 填 0：实测带账号 client_id 的握手 Cloudflare 不回应（数据包才需要 reserved）
+        ini = Initiator(_b64key(w["private_key"], "私钥"), _b64key(w["peer_public_key"], "对端公钥"))
+        lst = [e for e in (eps or []) if e] or candidates(n, extra=[w["endpoint"]])
+        lst = [split_ep(e) for e in lst][:300]
+    except ValueError as e:
+        SCAN["running"] = False
+        return False, str(e)
+    mode, msg = proxy_state(d, core_ok)
+    SCAN.update(total=len(lst), mode=mode, msg=msg)
+
+    def run():
+        res = []
+        try:
+            dev = _default_dev() if mode == "tun" else ""
+            with Bypass(mode) as bp:
+                def one(hp):
+                    rtt, loss = probe(ini, hp[0], hp[1], tries, mark=mode == "tun", dev=dev)
+                    with _SCAN_LOCK:
+                        SCAN["done"] += 1
+                    return {"endpoint": join_ep(*hp), "delay": rtt, "loss": loss}
+                from concurrent.futures import ThreadPoolExecutor  # 按需导入：只有扫描端点时用到
+                with ThreadPoolExecutor(16) as ex:
+                    res = list(ex.map(one, lst))
+                SCAN["bypass"] = bool(bp.added) if mode == "tun" else None
+            ok = sorted((r for r in res if r["delay"]), key=lambda r: (r["loss"], r["delay"]))
+            SCAN["results"] = ok[:30]
+            if mode == "tun" and not SCAN.get("bypass"):
+                msg = "TUN 模式下没能加直连策略路由（需要 root），测速包可能经过了核心，结果仅供参考"
+            SCAN["msg"] = msg + f"。共测 {len(res)} 个，{len(ok)} 个可用" + ("" if ok else "（全部不通：本地 UDP 被限制，或账号已失效）")
+        except Exception as e:
+            log_err("WARP 优选", e)
+            SCAN["msg"] = "优选失败：" + str(e)[:200]
+        finally:
+            SCAN["running"] = False
+            SCAN["restored"] = not bypass_active()
+    threading.Thread(target=run, daemon=True).start()
+    return True, f"开始优选 {len(lst)} 个端点"
+
+
+def view(d):
+    """给前端的状态（私钥打码）"""
+    w = d.get("warp")
+    if not w:
+        return {"account": None}
+    a = {k: w.get(k) for k in ("name", "v4", "v6", "reserved", "endpoint", "mtu", "created", "license", "peer_public_key")}
+    a["private_key"] = w["private_key"][:4] + "…" + w["private_key"][-4:]
+    a["registered"] = bool(w.get("account_id"))
+    a["in_nodes"] = any((n.get("proxy") or {}).get("name") == w["name"] for n in d.get("nodes") or [])
+    return {"account": a}
+
+
+# ---------------------------------------------------------------- 接口（webapi 里的 /api/warp 调这里）
+def api_get():
+    from .data import load
+    return 200, dict(view(load()), scan={k: SCAN.get(k) for k in ("running", "done", "total", "results", "mode", "msg", "bypass", "restored")})
+
+
+def api_post(b):
+    """action: register | import | edit（手动修改）| delete | endpoint | scan | node（重新写入节点）"""
+    from .data import load, update
+    from .core import reload_core
+    from .notify import core_alive
+    act = b.get("action")
+    d = load()
+    w = d.get("warp")
+    if act == "scan":
+        eps = b.get("endpoints")
+        eps = [str(x) for x in eps] if isinstance(eps, list) else [x for x in str(eps or "").replace(",", "\\n").split() if x]
+        try:
+            n = max(10, min(int(b.get("count") or 80), 300))
+        except (TypeError, ValueError):
+            n = 80
+        ok, msg = scan(d, core_alive(), n=n, eps=eps)
+        return (200 if ok else 409), {"message": msg}
+    if act in ("register", "import"):
+        try:
+            nw = register() if act == "register" else clean_cfg(b)
+        except ValueError as e:
+            return 400, {"message": str(e)}
+        except IOError as e:
+            return 502, {"message": str(e)}
+        taken = {(n.get("proxy") or {}).get("name") for n in d.get("nodes") or [] if not n.get("warp")}
+        if nw["name"] in taken:
+            return 400, {"message": f"已有同名节点「{nw['name']}」，换个名称"}
+        old = (w or {}).get("name")
+        prev = update(lambda d: (d.__setitem__("warp", nw), sync_node(d, old)))
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": ("已" + ("注册" if act == "register" else "导入") + f" WARP 账号，节点「{nw['name']}」已加入手动节点，可在策略组里使用") if ok else msg}
+    if not w:
+        return 400, {"message": "还没有 WARP 账号，先注册或导入"}
+    if act == "delete":
+        def rm(d):
+            d.pop("warp", None)
+            sync_node(d, w["name"])
+        prev = update(rm)
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": "已删除 WARP 账号和节点" if ok else msg}
+    if act == "endpoint":
+        try:
+            host, port = split_ep(b.get("endpoint"))
+        except ValueError as e:
+            return 400, {"message": str(e)}
+        ep = join_ep(host, port)
+
+        def fn(d):
+            d["warp"]["endpoint"] = ep
+            sync_node(d)
+        prev = update(fn)
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": f"WARP 端点已换成 {ep}，配置已重新加载" if ok else msg}
+    if act == "edit":  # 手动修改：没填的字段保留原值，私钥留空表示不改
+        cur = dict(w)
+        for k in ("name", "endpoint", "private_key", "peer_public_key", "v4", "v6", "reserved", "mtu"):
+            v = b.get(k)
+            if k in b and v is not None and (str(v).strip() or k == "v6"):
+                cur[k] = v.strip() if isinstance(v, str) else v
+        try:
+            nw = clean_cfg(cur)
+        except (ValueError, TypeError) as e:
+            return 400, {"message": str(e) if isinstance(e, ValueError) else "参数格式不对"}
+        taken = {(n.get("proxy") or {}).get("name") for n in d.get("nodes") or [] if not n.get("warp")}
+        if nw["name"] in taken:
+            return 400, {"message": f"已有同名节点「{nw['name']}」，换个名称"}
+        if all(nw.get(k) == w.get(k) for k in nw) and set(nw) == set(w):
+            return 200, {"message": "配置没有变化"}
+        def fe(d):
+            d["warp"] = nw
+            sync_node(d, w["name"])
+            if nw["name"] != w["name"] and d.get("landings"):  # 改名：以 WARP 为前置的 SOCKS5 落地跟着改
+                from .landing import sync_nodes
+                for x in d["landings"]:
+                    if x.get("via") == w["name"]:
+                        x["via"] = nw["name"]
+                sync_nodes(d)
+        prev = update(fe)
+        ok, msg = reload_core(prev)  # 核心不认新配置时 reload_core 自动换回 prev
+        if not ok:
+            return 500, {"message": "修改后的配置没能加载，已保留原配置：" + str(msg)}
+        return 200, {"message": f"WARP 配置已保存，节点「{nw['name']}」已重新生成并加载"}
+    if act == "node":
+        prev = update(lambda d: sync_node(d))
+        ok, msg = reload_core(prev)
+        return (200 if ok else 500), {"message": "WARP 节点已重新写入" if ok else msg}
+    return 400, {"message": "未知操作"}
+'''
 _SRC['shunt.landing'] = '''"""SOCKS5 落地（预览版）：指定国家的出口 IP。
 
-每个落地是一个 socks5 手动节点，可选「前置节点」（默认直连；旧数据里有 WARP 节点时默认它，也可选其它手动节点、地区竞技组），
+每个落地是一个 socks5 手动节点，可选「前置节点」（默认 WARP，也可选其它手动节点、地区竞技组或直连），
 mihomo 用 dialer-proxy、sing-box 用 detour 做链式代理：设备 → 前置节点 → SOCKS5 落地 → 目标网站。
 落地节点和 WARP 一样直接进 🚀 节点选择 / 🖐️ 手动选择 / 各分流组，不进地区竞技和全局自动。
 检测：每个落地在本机 127.0.0.1:<LD_PORT0+序号> 开一个只走该落地的 mixed 入站，curl 经它查出口 IP / 国家 / 延迟。
 """
 import json, re, shlex, time, urllib.parse
 
+from .sb_yaml import text_lines
 from .sysopt import sh
 
 LD_PORT0 = 17900  # 检测入站端口起点（只监听 127.0.0.1）
@@ -9445,7 +10387,7 @@ def api_post(b):
             via = str(b.get("via") or "").strip() or default_via(d)
             items = []
             if str(b.get("text") or "").strip():
-                for line in str(b["text"]).splitlines():
+                for line in text_lines(str(b["text"])):
                     x = parse_line(line)
                     if x:
                         items.append(x)
@@ -9657,7 +10599,7 @@ import base64, json, os, re, threading, time, urllib.request, urllib.error
 from urllib.parse import quote
 
 from .errlog import log_err
-from .base import G_MANUAL, G_SEL, HC, NOTIFY_FILE, PANEL_DIR, UA, WD_INTERVAL, dl_check, read_full
+from .base import G_MANUAL, G_SEL, SIDE_GROUPS, NOTIFY_FILE, PANEL_DIR, UA, WD_INTERVAL, dl_check, read_full
 from .data import load, read_json, write_json
 from .core import refresh_regions
 from .corehttp import core, core_json
@@ -9674,6 +10616,73 @@ BG_FILE = os.path.join(PANEL_DIR, "bg.img")  # 外观：自定义背景图（所
 BG_MAX = 8 * 2**20
 DELAYS = {"data": None, "saved": 0, "dirty": False}
 RETEST = {"pending": False, "last": 0}
+MAINSEL_FILE = os.path.join(PANEL_DIR, "mainsel.json")  # 面板里亲手切的主出口类选择组：重载 / 重启后核心选择丢了按这里补回
+LBPICK_FILE = os.path.join(PANEL_DIR, "lbpick.json")  # 用户在面板里亲手让哪些内置选择组指向负载均衡组
+LB_TYPES = ("LoadBalance",)
+LB_MAIN = [G_SEL] + SIDE_GROUPS + ["🛡️ Google 专用"]  # 主出口类的内置选择组（含预览 Google 专用）
+
+
+def note_pick(group, name, px=None):
+    """面板切换选择组（PUT /proxies/<组>）成功后记下：指向负载均衡组的记入，改回其它的删除。
+    fix_lb_sel 只放过这里记过的，其余来源（核心缓存里多年前的旧选择、升级迁移）一律改回默认"""
+    if group not in LB_MAIN or not isinstance(name, str):
+        return
+    if px is None:
+        px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    sel = read_json(MAINSEL_FILE, {})
+    sel = sel if isinstance(sel, dict) else {}
+    if sel.get(group) != name:
+        sel[group] = name
+        try:
+            write_json(MAINSEL_FILE, sel)
+        except OSError as e:
+            log_err("记录主出口选择", e)
+    picks = read_json(LBPICK_FILE, {})
+    picks = picks if isinstance(picks, dict) else {}
+    if (px.get(name) or {}).get("type") in LB_TYPES:
+        picks[group] = name
+    elif group in picks:
+        picks.pop(group)
+    else:
+        return
+    try:
+        write_json(LBPICK_FILE, picks)
+    except OSError as e:
+        log_err("记录负载均衡选择", e)
+
+
+def fix_lb_sel(px=None):
+    """「🚀 节点选择」「🐟 漏网之鱼」等内置选择组指向负载均衡（⚖️ 轮询 / 哈希）组、又不是用户在面板里选的：改回默认第一项（竞技 / 节点选择）。
+    来源：核心 cache 文件按组名记选择，旧版有过的「⚖️ X轮询」被删除后选择项一直留在缓存里，同名组恢复后内核自动还原成多年前的旧选择；
+    返回改回的组"""
+    if px is None:
+        px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    picks = read_json(LBPICK_FILE, {})
+    picks = picks if isinstance(picks, dict) else {}
+    fixed = []
+    sel = read_json(MAINSEL_FILE, {})
+    for g, want in (sel if isinstance(sel, dict) else {}).items():  # 重新生成配置 / 核心缓存丢失后选择回到默认：按面板记录补回
+        p = px.get(g) or {}
+        alls = p.get("all") or []
+        # 只补回「回到了默认第一项」的（配置重新生成 / 核心缓存丢失）：在别的面板 / App 里经核心接口改过的选择不覆盖
+        if g in LB_MAIN and p.get("type") == "Selector" and p.get("now") != want and want in alls and p.get("now") == alls[0]:
+            code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": want}, timeout=5)
+            if code < 300:
+                p["now"] = want
+                print(time.strftime("%F %T"), f"[选择] {g} 已按面板记录恢复为 {want}", flush=True)
+    for g in LB_MAIN:
+        p = px.get(g) or {}
+        now, alls = p.get("now"), p.get("all") or []
+        if p.get("type") != "Selector" or not now or (px.get(now) or {}).get("type") not in LB_TYPES or picks.get(g) == now or not alls:
+            continue
+        to = next((n for n in alls if (px.get(n) or {}).get("type") not in LB_TYPES), alls[0])
+        code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": to}, timeout=5)
+        if code < 300:
+            fixed.append(g)
+            print(time.strftime("%F %T"), f"[选择] {g} 指向负载均衡组 {now}（不是在面板里选的），已改回 {to}", flush=True)
+    return fixed
+
+
 RETEST_BUDGET = 90  # 重载后补测（sing-box 逐个补测缺席节点）的时间上限
 
 
@@ -9748,10 +10757,10 @@ def retest_soon(wait=6):
                 if core_alive():
                     break
             fix_global()
+            fix_lb_sel()
             if core_json("/proxies/" + quote(G_MANUAL), timeout=5):
-                code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=60)
-                if active_core() == "singbox":  # sing-box 整组测速只测到一部分节点：缺席的逐个补测（全局限并发）
-                    fill_group(G_MANUAL, code, raw, RETEST_BUDGET)
+                # 以前整组测速：几秒内对全部节点（约 100 个）同时发测速请求，挤占带宽、DNS。现在逐个测，全局限并发（nodeprobe）
+                fill_group(G_MANUAL, 200, b"{}", RETEST_BUDGET)
             RETEST["last"] = time.time()
             proxies_merged()
         except Exception as e:
@@ -10424,13 +11433,530 @@ def status():
             "duration": DURATION, "live": {"mbps": JOB["mbps"], "ms": JOB["ms"], "mb": round(JOB["bytes"] / 1e6, 1), "src": JOB["src"]},
             "last": {k: last.get(k) for k in KINDS}, "hist": h[::-1]}
 '''
+_SRC['shunt.bwtest'] = '''"""带宽择优：按节点实测下载带宽选优（不只是看延迟）。
+
+- 默认关闭（与健康检查一样），设置里开开关 + 周期（默认 2 小时）+ 每轮上限。
+- 每轮先经核心 delay 接口拿延迟（与健康检查同一口径），只测延迟正常的节点；再为每个节点另起一个
+  测试用核心实例（面板已有的内核二进制 + 最小配置：仅该节点 + 一个 select 组），经它的 mixed 端口下载
+  Cloudflare 测速文件（单连接、10 秒或 32MB，先到先停），测完立即杀掉实例。不动线上核心、不切换用户
+  正在用的策略组选择。单个节点失败不中断整批。
+- 选优：先排除故障 / 超时节点，再按「延迟修正后的带宽」打分（mbps × 300/(300+delay_ms)，延迟越高折扣
+  越大），把最高分节点设为「🚀 带宽择优」组的选中（走核心 API，不重启核心）。
+- 结果写 bw_hist.json（每节点 {mbps, delay, t}，最近一次为准）。
+"""
+import base64, json, os, re, shutil, socket, subprocess, threading, time, urllib.error, urllib.request
+from urllib.parse import quote, unquote
+
+from .base import CONF_DIR, G_BW, G_MANUAL, HC, PANEL_DIR
+from .corehttp import core, core_json
+from .data import load, read_json, safe, update, write_json
+from .errlog import log_err
+from .health import merge_delay
+from .groups import bw_resolve
+from .mihomo import mh_bin
+from .nodeprobe import fill_absent, probe_nodes
+from .sb_common import SB_BIN, active_core
+from .sb_nodes import sb_outbound
+
+HIST_FILE = os.path.join(PANEL_DIR, "bw_hist.json")
+RATE_LIMIT_MSG = "测速地址限流（429），请稍后再测"
+MH_TEST_NAME = "bwtest-node"  # mihomo 测试实例里节点统一叫这个名字（核心里的名字可能为空、带首尾空格）
+DL_URL = "https://speed.cloudflare.com/__down?bytes=50000000"
+DL_TIMEOUT = 10   # 每节点最多下载 10 秒
+DL_MAX = 32 << 20  # 或 32MB，先到先停
+DEFAULT_CFG = {"enabled": False, "interval": 7200, "limit": 10, "nodes": []}
+BW_STATE = {"running": False, "current": "", "done": 0, "total": 0, "last_run": 0, "best": "", "error": "",
+            "last_error": None}  # 最近一次单节点失败：{node, stage, msg, t}；stage：binary/instance/download/error
+_BG_LOCK = threading.Lock()
+
+
+def bw_cfg(d=None):
+    """读取带宽择优配置（data.json 的 bw_cfg 字段）"""
+    d = d or load()
+    cfg = dict(DEFAULT_CFG)
+    cfg.update(d.get("bw_cfg") or {})
+    return cfg
+
+
+def save_bw_cfg(cfg):
+    return update(lambda d: d.update(bw_cfg=dict(cfg)))  # 返回旧数据，供 nodes 变化时重载失败回滚
+
+
+def hist():
+    h = read_json(HIST_FILE, {})
+    return h if isinstance(h, dict) else {}
+
+
+def _save_hist(h):
+    try:
+        write_json(HIST_FILE, h)
+    except OSError as e:
+        log_err("带宽择优", e)
+
+
+def score(mbps, delay):
+    """延迟修正后的带宽分：延迟越高折扣越大（300ms 时打五折）"""
+    try:
+        return (mbps or 0) * 300.0 / (300.0 + max(0, delay or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _free_port():
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _sub_skipped(s):
+    """订阅生成 mihomo provider 时按 filter / exclude-filter（含用户删除的节点）去掉的节点名判定函数，与 mihomo.build_config 同一口径"""
+    from .base import DEFAULT_EXCLUDE
+    from .groups import names_rx, rx, rx_or, sub_removed
+    def parts(pat):  # 反引号分隔的多条正则（mihomo 写法）：命中任一条即算命中；无效的正则忽略
+        return [r for r in (rx(x) for x in str(pat).split("`") if x) if r is not None] if pat else []
+
+    def hit(rs, n):
+        return any(r.search(n) for r in rs)
+    inc = parts(s.get("filter"))
+    exc = s.get("exclude", DEFAULT_EXCLUDE)
+    gone = sub_removed(s)
+    if gone:
+        exc = rx_or(exc, names_rx(gone))
+    exc = parts(exc)
+    return lambda n: bool((inc and not hit(inc, n)) or (exc and hit(exc, n)))
+
+
+def _node_proxies(d):
+    """全部节点的代理配置 {节点名: proxy 字典}：手动节点 + 订阅节点。
+    订阅节点按当前内核取：sing-box 读面板缓存，mihomo 读 provider 缓存文件；另一份作兜底（刚切内核、缓存还没建好时）"""
+    out = {}
+    for n in d.get("nodes") or []:
+        p = n.get("proxy") or {}
+        if isinstance(p, dict) and p.get("name"):
+            out[p["name"]] = p
+    subs = [s for s in d.get("subs") or [] if isinstance(s, dict) and s.get("name")]
+    primary_sb = active_core(d) == "singbox"
+
+    def from_sb_cache(names):
+        from .groups import sb_sub_cache, sb_sub_outbounds
+        if primary_sb:
+            # sing-box 核心里订阅节点的 tag 是全局去重后的名字（与手动节点 / 其他订阅同名时叫「名 (2)」，
+            # 用户删除的节点不占名）：按 sb_sub_outbounds 同一口径取，不然「名 (2)」对不上被当成没有配置跳过，
+            # 「名」还可能对到另一个订阅的同名节点上（测的不是核心里那个节点）
+            for lst in sb_sub_outbounds(d).values():
+                for tag, p in lst:
+                    if isinstance(p, dict) and tag not in out:
+                        out[tag] = p
+            return
+        for name in names:
+            for p in (sb_sub_cache(name).get("nodes") or []):
+                if isinstance(p, dict) and p.get("name") and p["name"] not in out:
+                    out[p["name"]] = p
+
+    def from_mh_cache(names):
+        for name in names:
+            try:
+                with open(os.path.join(CONF_DIR, "providers", safe(name) + ".yaml"), encoding="utf-8", errors="ignore") as f:
+                    pairs, bad = mh_sub_nodes(f.read())
+            except (OSError, ValueError):
+                continue
+            if primary_sb:  # 只是兜底：不去核心核对
+                core_names = None
+            else:
+                pj = None if os.environ.get("PANEL_OFFLINE") else core_json("/providers/proxies/" + quote(name, safe=""), timeout=5)
+                core_names = {str(x.get("name")) for x in (pj or {}).get("proxies") or [] if isinstance(x, dict)} if pj else None
+            miss = list(bad)
+            skip = _sub_skipped(by_name.get(name) or {})
+            for mname, p in pairs:
+                if core_names is not None and mname not in core_names:
+                    if not skip(mname):  # 被订阅的筛选 / 排除正则或用户删除去掉的节点本来就不在核心里，不算对不上
+                        miss.append(mname)
+                    continue
+                if mname not in out:
+                    out[mname] = p
+            if miss and not primary_sb:
+                log_err("带宽择优", f"订阅「{name}」有 {len(miss)} 个节点与核心里的名字对不上，不测带宽："
+                        + "、".join(repr(x) for x in miss[:5]) + (" 等" if len(miss) > 5 else ""))
+
+    names = [s["name"] for s in subs]
+    by_name = {s["name"]: s for s in subs}
+    (from_sb_cache if primary_sb else from_mh_cache)(names)
+    # 另一份缓存只补主来源里没有的节点（同名节点以主来源的为准，避免旧缓存的旧参数覆盖新的）
+    (from_mh_cache if primary_sb else from_sb_cache)(names)
+    return out
+
+
+def _mh_link_name(line):
+    """分享链接在 mihomo 里的原始名字（与 mihomo convert 一致）：vmess 取 JSON 的 ps，其余取 # 后面百分号解码的部分；
+    不去首尾空格、不把「+」当空格，没有名字就是空串"""
+    if line[:8].lower() == "vmess://":
+        try:
+            raw = line[8:].split("#", 1)[0].strip()
+            j = json.loads(base64.b64decode(raw.replace("-", "+").replace("_", "/") + "=" * (-len(raw) % 4)).decode("utf-8", "ignore"))
+            if isinstance(j, dict):
+                return str(j.get("ps") or "")
+        except Exception:
+            pass
+    if line[:6].lower() == "ssr://":  # ssr 的名字在 base64 内容的 remarks 参数里（也是 base64）
+        try:
+            from .links import b64d
+            body = b64d(line[6:].split("#", 1)[0])
+            m = re.search(r"[?&]remarks=([^&]*)", body)
+            return b64d(m.group(1)) if m else ""
+        except Exception:
+            return ""
+    return unquote(line.split("#", 1)[1]) if "#" in line else ""
+
+
+def mh_sub_nodes(text):
+    """mihomo 订阅缓存（providers/<订阅>.yaml，核心下载的原始内容）→ ([(核心里的节点名, 面板解析的 proxy)], [对不上的条目])。
+    节点名按 mihomo 的规则算，才能对上核心 /proxies 和整组测速返回的名字：
+    - Clash YAML：名字原样（不去首尾空格），同名只认第一个，name 不是文本的条目核心会丢掉；
+    - 分享链接：名字见 _mh_link_name，重名依次加「-01」「-02」…（每条链接都占计数，包括解析失败的）。"""
+    from .sb_subs import parse_sub_text, sub_yaml
+    from .links import b64d, parse_link
+    from .sb_yaml import text_lines
+    t = text.strip().lstrip("\\ufeff")
+    pairs, bad = [], []
+    if t.startswith("{"):  # sing-box JSON：mihomo 读不了，只能按面板的名字
+        nodes, _ = parse_sub_text(t)
+        return [(p["name"], p) for p in nodes if isinstance(p, dict) and p.get("name")], bad
+    if re.search(r"(?m)^[\\"']?(proxies|proxy-providers)[\\"']?\\s*:", t):
+        seen = set()
+        for i, p in enumerate(sub_yaml(t).get("proxies") or [], 1):
+            if not isinstance(p, dict) or not p.get("type"):
+                continue
+            n = p.get("name")
+            if not isinstance(n, str) or not n:
+                bad.append(f"第 {i} 个节点（名字 {n!r}）")
+                continue
+            if n in seen:
+                continue
+            seen.add(n)
+            pairs.append((n, dict(p)))
+        return pairs, bad
+    body = t
+    if "://" not in t:
+        try:
+            body = b64d(re.sub(r"\\s+", "", t))
+        except Exception:
+            body = ""
+    used = {}
+    for line in [x.strip() for x in text_lines(body) if re.match(r"^\\s*[A-Za-z][\\w+.\\-]*://", x)]:
+        n = _mh_link_name(line)
+        if n in used:  # mihomo uniqueName：「名-01」「名-02」…
+            used[n] += 1
+            n = "%s-%02d" % (n, used[n])
+        else:
+            used[n] = 0
+        try:
+            p = parse_link(line)
+        except Exception:
+            continue
+        pairs.append((n, p))
+    return pairs, bad
+
+
+def _delays(pool=None):
+    """经核心 delay 接口批量测延迟（与健康检查同一口径，只取结果不记录）。返回 ({节点: 延迟}, 错误)。
+    pool 指定时只逐个测池内节点（probe_nodes，与健康检查同一口径，省时间）；否则整组测手动选择组。"""
+    if pool is not None:
+        if not pool:
+            return {}, ""
+        if active_core() == "singbox":
+            res = probe_nodes(list(pool), budget=90)
+            return {n: v for n, v in res.items() if v}, ""
+        # mihomo：/proxies/<名>（probe_nodes 逐个测用的接口）只认顶层代理和策略组，订阅（proxy-provider）节点一律 404，
+        # 结果是「没有结论」被丢掉，指定节点里只剩手动节点能测。改成整组测速（与不指定时同一口径），再按指定的节点过滤
+        res, err = _delays(None)
+        if res is None:
+            return None, err
+        want = set(pool)
+        return {n: v for n, v in res.items() if n in want and v}, ""
+    pg = core_json("/proxies/" + quote(G_MANUAL))
+    if not pg:
+        return None, "核心未运行或手动选择组不存在"
+    members = pg.get("all") or []
+    code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=180)
+    if code not in (200, 504):  # 504：mihomo 全部节点超时，按全部失败处理
+        return None, f"测速接口返回 {code}"
+    data = {}
+    if code == 200:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return None, "测速结果解析失败"
+    results = merge_delay(members, code, data)
+    if not results:
+        return None, "手动选择组里没有节点"
+    if code == 200 and active_core() == "singbox":
+        # sing-box 整组测速同时只测 10 个：缺席不等于失败，逐个补测；仍无结论的本轮不测带宽
+        results = fill_absent(results, 120)
+    return results, ""
+
+
+def _wait_port(port, timeout=10, proc=None):
+    end = time.time() + timeout
+    while time.time() < end:
+        if proc is not None and proc.poll() is not None:
+            return False  # 实例已退出（配置错误等）：不必等满超时
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+def _last_err_line(path):
+    """测试实例日志里最后一条 FATAL / ERROR（去掉颜色码），截 150 字"""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            lines = [re.sub(r"\\x1b\\[[0-9;]*m", "", x).strip() for x in f.read().splitlines()]
+    except OSError:
+        return ""
+    lines = [x for x in lines if x]
+    bad = [x for x in lines if re.search(r"FATAL|ERROR|level=(fatal|error)", x)]
+    last = (bad or lines or [""])[-1]
+    m = re.search(r'msg="(.*)"', last)  # mihomo：time=… level=fatal msg="…"，只要 msg
+    return (m.group(1) if m else last)[-150:]
+
+
+class RateLimited(Exception):
+    """测速地址返回 429：同一出口再测只会继续 429，本轮提前结束"""
+
+
+def _download(port):
+    """经测试实例的 mixed 端口下载测速文件：单连接、DL_TIMEOUT 秒或 DL_MAX 字节，先到先停。返回 Mbps（0 = 没收到数据）"""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(
+        {"http": f"http://127.0.0.1:{port}", "https": f"http://127.0.0.1:{port}"}))
+    req = urllib.request.Request(DL_URL, headers={"User-Agent": "Mozilla/5.0"})
+    t0, n = time.time(), 0
+    with opener.open(req, timeout=DL_TIMEOUT + 5) as r:
+        while time.time() - t0 < DL_TIMEOUT and n < DL_MAX:
+            b = r.read(1 << 16)
+            if not b:
+                break
+            n += len(b)
+    dt = max(time.time() - t0, 0.001)
+    return round(n * 8 / dt / 1e6, 1) if n > 0 else 0.0
+
+
+def _fail(name, stage, msg):
+    """单节点失败：记诊断日志（同文案 10 分钟只记一次）+ 最近一次失败原因（供 /api/bwtest 返回）。"""
+    log_err("带宽择优", msg)
+    BW_STATE["last_error"] = {"node": name, "stage": stage, "msg": msg, "t": int(time.time())}
+
+
+def _test_node(name, proxy):
+    """另起一个测试用核心实例测单个节点：最小配置（仅该节点 + 一个 select 组），测完立即杀掉。
+    失败返回 None（调用方不中断整批），失败阶段记到 BW_STATE["last_error"]。"""
+    kind = active_core()
+    bin_path = mh_bin(kind) if kind in ("mihomo", "smart") else SB_BIN
+    if not os.path.isfile(bin_path):
+        _fail(name, "binary", f"核心程序不存在：{bin_path}")
+        return None
+    port = _free_port()
+    tmp = os.path.join(PANEL_DIR, f"bwtest-{os.getpid()}")
+    os.makedirs(tmp, exist_ok=True)
+    proc = None
+    try:
+        p = dict(proxy)
+        p.pop("dialer-proxy", None)  # 落地前置节点在测试实例里不存在，留着会让配置加载失败
+        if kind == "singbox":
+            # sing-box 1.14 已移除 legacy DNS 格式 {"tag","address"}：旧写法配置加载即 FATAL，实例起不来。
+            # 新格式 {"type":"udp","server":...}，不写 detour 就是直连（detour 指 direct 出站反而启动即报错）。
+            o = sb_outbound(p, name)
+            o.pop("detour", None)  # 订阅 JSON 节点的 detour（direct / 同订阅的前置节点）在测试实例里不存在，留着启动即 FATAL
+            cfg = {"log": {"level": "warning"},
+                   "dns": {"servers": [{"type": "udp", "tag": "dns-direct", "server": "223.5.5.5"}]},
+                   "inbounds": [{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": port}],
+                   "outbounds": [{"type": "selector", "tag": G_BW, "outbounds": [name]}],
+                   "route": {"rules": [], "final": G_BW}}
+            if o.get("type") == "wireguard":  # sing-box 1.11 起 WireGuard 是 endpoint（与 build_singbox 一致），写进 outbounds 解析即失败
+                cfg["endpoints"] = [o]
+            else:
+                cfg["outbounds"].insert(0, o)
+            cfg_path = os.path.join(tmp, "config.json")
+            write_json(cfg_path, cfg)
+            cmd = [bin_path, "run", "-c", cfg_path, "-D", tmp]
+        else:
+            p["name"] = MH_TEST_NAME  # 核心里的名字可能为空或带首尾空格，测试实例里统一改名
+            cfg = {"mixed-port": port, "allow-lan": False, "mode": "rule", "log-level": "warning",
+                   "dns": {"enable": True, "nameserver": ["223.5.5.5"], "default-nameserver": ["223.5.5.5"]},
+                   "proxies": [p], "proxy-groups": [{"name": G_BW, "type": "select", "proxies": [MH_TEST_NAME]}],
+                   "rules": [f"MATCH,{G_BW}"]}
+            cfg_path = os.path.join(tmp, "config.yaml")
+            write_json(cfg_path, cfg)  # JSON 是 YAML 的子集，mihomo 可直接读取
+            cmd = [bin_path, "-d", tmp, "-f", cfg_path]
+        log_path = os.path.join(tmp, "core.log")
+        with open(log_path, "wb") as logf:
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+        if not _wait_port(port, 10, proc):
+            why = _last_err_line(log_path)
+            _fail(name, "instance", ("测试实例起不来：" + why) if why else "测试实例 10 秒内未启动（端口未监听）")
+            return None
+        try:
+            mbps = _download(port)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                _fail(name, "ratelimit", RATE_LIMIT_MSG)
+                raise RateLimited() from None
+            _fail(name, "download", f"下载失败：{e}"[:150])
+            return None
+        except Exception as e:
+            _fail(name, "download", f"下载失败：{e}"[:150])
+            return None
+        if not mbps:
+            _fail(name, "download", "下载 0 字节")
+            return None
+        return mbps
+    finally:
+        if proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _apply_best(name):
+    """把最高分节点设为「🚀 带宽择优」组的选中（走核心 API，不重启核心）"""
+    code, _ = core("PUT", "/proxies/" + quote(G_BW, safe=""), {"name": name}, timeout=10)
+    if code not in (200, 204):
+        log_err("带宽择优", f"设置 {G_BW} 选中失败：HTTP {code}")
+
+
+def run_round():
+    """执行一轮带宽测试：延迟正常的节点按延迟从低到高取 limit 个，逐个测带宽，最高分设为带宽择优组选中。
+    返回 (成功?, 消息)。失败要隔离：单个节点失败不中断整批"""
+    BW_STATE.update(running=True, current="", done=0, total=0, error="", last_error=None)
+    try:
+        d = load()
+        cfg = bw_cfg(d)
+        # 指定节点时只测指定节点（过滤掉改名/删除/已不在订阅里的；全失效则不跑，给出可读提示）
+        pool = None
+        designated = [str(n).strip() for n in (cfg.get("nodes") or []) if str(n).strip()]
+        if designated:
+            pool = bw_resolve(d, designated)["display"]
+            if not pool:
+                BW_STATE["error"] = "指定的节点都已失效（改名/删除/不在订阅里），请重新选择"
+                return False, BW_STATE["error"]
+        delays, err = _delays(pool)
+        if delays is None:
+            BW_STATE["error"] = err or "测速失败"
+            return False, BW_STATE["error"]
+        proxies = _node_proxies(d)
+        nocfg = [n for n, v in delays.items() if v > 0 and n not in proxies]
+        if nocfg:  # 延迟正常但取不到节点配置：记一行诊断，不静默跳过
+            log_err("带宽择优", f"{len(nocfg)} 个节点取不到配置（订阅缓存里对不上核心的名字），本轮不测："
+                    + "、".join(repr(x) for x in nocfg[:5]) + (" 等" if len(nocfg) > 5 else ""))
+        cands = sorted(((n, v) for n, v in delays.items() if v > 0 and n in proxies), key=lambda x: x[1])
+        cands = cands[:max(1, int(cfg.get("limit") or DEFAULT_CFG["limit"]))]
+        BW_STATE["total"] = len(cands)
+        if not cands:
+            BW_STATE["error"] = "没有延迟正常的节点可测（节点可能都不通，或节点配置取不到）"
+            return False, BW_STATE["error"]
+        h = hist()
+        results = {}
+        limited = False
+        for name, delay in cands:
+            BW_STATE["current"] = name
+            try:
+                mbps = _test_node(name, proxies[name])
+            except RateLimited:
+                limited = True  # 同一出口继续测只会一直 429：本轮到此为止，不再对后续节点逐个失败
+                break
+            except Exception as e:
+                log_err("带宽择优", e)
+                BW_STATE["last_error"] = {"node": name, "stage": "error", "msg": str(e)[:150],
+                                          "t": int(time.time())}
+                mbps = None
+            if mbps:
+                h[name] = {"mbps": mbps, "delay": delay, "t": int(time.time())}
+                results[name] = (mbps, delay)
+            BW_STATE["done"] += 1
+        _save_hist(h)
+        BW_STATE["last_run"] = int(time.time())
+        if limited:
+            BW_STATE["last_error"] = {"node": BW_STATE["current"], "stage": "ratelimit", "msg": RATE_LIMIT_MSG,
+                                      "t": int(time.time())}
+        if not results:
+            BW_STATE["error"] = RATE_LIMIT_MSG if limited else "没有节点测出带宽（测试实例起不来或下载失败）"
+            return False, BW_STATE["error"]
+        best = max(results, key=lambda n: score(results[n][0], results[n][1]))
+        BW_STATE["best"] = best
+        _apply_best(best)
+        msg = f"已测 {len(results)}/{len(cands)} 个节点，带宽最优：{best}（{results[best][0]} Mbps，延迟 {results[best][1]} ms）"
+        if limited:
+            BW_STATE["error"] = RATE_LIMIT_MSG
+            msg += "；" + RATE_LIMIT_MSG + "，本轮提前结束"
+        return True, msg
+    finally:
+        BW_STATE.update(running=False, current="")
+
+
+def run_round_bg():
+    """后台线程跑一轮，API 立即返回。已在跑时不重复开始，返回 False"""
+    with _BG_LOCK:
+        if BW_STATE["running"]:
+            return False
+        BW_STATE["running"] = True
+
+    def job():
+        try:
+            run_round()
+        except Exception as e:
+            log_err("带宽择优", e, tb=True)
+            BW_STATE["error"] = str(e)[:120]
+        finally:
+            BW_STATE["running"] = False
+    try:
+        threading.Thread(target=job, daemon=True).start()
+    except Exception:
+        BW_STATE["running"] = False
+        raise
+    return True
+
+
+def bw_tick(d=None):
+    """定时任务循环调用：启用且到周期时在后台跑一轮"""
+    d = d or load()
+    cfg = bw_cfg(d)
+    if not cfg.get("enabled") or BW_STATE["running"]:
+        return
+    h = hist()
+    last = BW_STATE["last_run"] or max([r.get("t", 0) for r in h.values()] or [0])
+    if time.time() - last >= max(600, int(cfg.get("interval") or DEFAULT_CFG["interval"])):
+        run_round_bg()
+
+
+def status():
+    h = hist()
+    best = BW_STATE["best"]
+    if not best and h:
+        best = max(h, key=lambda n: score(h[n].get("mbps") or 0, h[n].get("delay") or 0))
+    return {"cfg": bw_cfg(), "running": BW_STATE["running"], "current": BW_STATE["current"],
+            "done": BW_STATE["done"], "total": BW_STATE["total"],
+            "last_run": BW_STATE["last_run"] or max([r.get("t", 0) for r in h.values()] or [0]),
+            "best": best, "error": BW_STATE["error"], "last_error": BW_STATE["last_error"], "results": h}
+'''
 _SRC['shunt.ruletest'] = '''"""规则测试"""
-import ipaddress, json, re, socket, threading, time
+import ipaddress, json, re, socket, threading, time, urllib.request
 from urllib.parse import quote
 
 from .base import MIXED
 from .corehttp import core_json
 from .logstream import core_stream
+
+IP_ECHO = "https://api.ipify.org"  # 轻量 IP 回显，返回纯文本公网 IP（出口 IP 用）
 def clean_target(t):
     t = t.strip()
     t = re.sub(r"^[a-z][a-z0-9+.\\-]*://", "", t, flags=re.I).split("/")[0].split("?")[0].split("#")[0]
@@ -10598,6 +12124,58 @@ def rule_test(target):
     res["host"] = host
     return res
 
+
+def _dns_lookup(host):
+    """经核心 /dns/query 解析（与 static_rule 同一口径：按 nameserver-policy 分流，不用本机系统 DNS）。
+    核心没跑时返回空列表，不抛异常"""
+    ips = []
+    for qt in ("A", "AAAA"):
+        j = core_json(f"/dns/query?name={quote(host)}&type={qt}", timeout=8) or {}
+        for a in j.get("Answer") or []:
+            if a.get("type") in (1, 28) and is_ip(str(a.get("data"))):
+                ips.append(str(a["data"]))
+    return ips
+
+
+def _fetch(url, proxy, timeout=10):
+    """经代理 / 直连 GET 一次：返回 {ok, status, ms} 或 {ok: False, error, ms}"""
+    from .sysopt import proxy_opener
+    t0 = time.time()
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with proxy_opener(proxy).open(req, timeout=timeout) as r:
+            r.read(1 << 16)
+            return {"ok": True, "status": r.status, "ms": int((time.time() - t0) * 1000)}
+    except Exception as e:
+        return {"ok": False, "ms": int((time.time() - t0) * 1000), "error": str(e)[:120]}
+
+
+def _exit_ip():
+    """经代理查出口 IP（轻量回显）。拿不到时返回空串，不影响其他结果"""
+    try:
+        from .sysopt import proxy_opener
+        with proxy_opener(True).open(IP_ECHO, timeout=8) as r:
+            v = r.read(64).decode(errors="ignore").strip()
+            return v if is_ip(v) else ""
+    except Exception:
+        return ""
+
+
+def route_verify(target):
+    """真实路由验证：命中规则 / 策略链（复用 rule_test）+ 真实请求（代理 vs 直连）+ DNS 解析 + 出口 IP。
+    核心没跑、目标不通时返回可读的错误，不抛 500"""
+    host = clean_target(target)
+    if not host:
+        raise ValueError("请输入域名或 IP")
+    res = rule_test(target)
+    res["dns"] = [host] if is_ip(host) else _dns_lookup(host)
+    chain = res.get("chain") or []
+    res["exit_node"] = chain[-1] if chain else ""
+    res["exit_ip"] = _exit_ip()
+    res["proxy"] = _fetch(f"https://{host}/", True)
+    res["direct"] = _fetch(f"https://{host}/", False)
+    return res
+
 '''
 _SRC['shunt.logstream'] = '''"""实时日志 (SSE)"""
 import secrets, socket, time
@@ -10675,8 +12253,8 @@ from collections import deque
 from urllib.parse import quote
 
 from .errlog import log_err
-from .base import AB_DIR, AB_STATS_FILE, CONF_DIR, FAKEIP_NETS, UA, dl_check, read_full, udp_dns_query
-from .data import load, read_json, write_json
+from .base import AB_DIR, AB_VIDEO_ALLOW, AB_STATS_FILE, CONF_DIR, FAKEIP_NETS, UA, dl_check, read_full, udp_dns_query
+from .data import _atomic_write, load, read_json, write_json
 from .mihomo import build_config
 from .core import reload_core
 from .corehttp import core
@@ -10844,10 +12422,9 @@ def domain_lines(suffix, exact):
 
 
 def write_lines(path, lines):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + ".tmp", "w") as f:
-        f.write("\\n".join(lines) + ("\\n" if lines else ""))
-    os.replace(path + ".tmp", path)
+    """唯一临时文件 + 改名（_atomic_write）：以前固定用 path + ".tmp"，后台下载列表后的合成与「保存广告拦截」同时写 allow.txt 时
+    一方 os.replace 后另一方 FileNotFoundError，保存接口回 500"""
+    _atomic_write(path, ("\\n".join(lines) + ("\\n" if lines else "")).encode(), mode=0o644)
 
 
 def ab_meta():
@@ -10938,6 +12515,14 @@ def ab_compose(d):
     以及 $important：important.txt（不限范围的已启用列表里的 $important 拦截）和 allow-important.txt
     （能压过 $important 的放行：用户白名单 + 列表里的 @@…$important）。列表普通的 @@ 例外压不住 $important 拦截；
     限定了范围（只拦国内直连 / 国外代理）的列表里的 $important 按普通拦截处理"""
+    with _COMPOSE_LOCK:  # 后台列表更新与保存接口可能同时合成：串行，几份文件来自同一次合成
+        return _ab_compose(d)
+
+
+_COMPOSE_LOCK = threading.RLock()
+
+
+def _ab_compose(d):
     ab = d["adblock"]
     bs, be, _, _, _ = parse_filter("\\n".join(ab.get("black") or []), plain_suffix=True)
     write_lines(os.path.join(AB_DIR, "custom.txt"), domain_lines(bs, be)[0])
@@ -10945,6 +12530,7 @@ def ab_compose(d):
         bs, be, _, _, _ = parse_filter("\\n".join(ab.get(key) or []), plain_suffix=True)
         write_lines(os.path.join(AB_DIR, fn), domain_lines(bs, be)[0])
     ws, we, was, wae, _ = parse_filter("\\n".join(ab.get("white") or []), plain_suffix=True)
+    ws = set(ws) | set(AB_VIDEO_ALLOW)  # 内置视频白名单，与用户白名单同级
     suffix, exact = ws | was, we | wae
     isuf, iex = set(suffix), set(exact)  # 用户白名单永远优先，$important 也压不过
     bsuf, bex = set(), set()
@@ -11489,15 +13075,217 @@ GET /api/lbtopo 只在打开「拓扑」页且页面可见时由前端每 2 秒�
 - 连接数、速度：conns_snapshot()（与连接页 / live / 统计共用的 2 秒快照，不额外请求内核）
   每条连接的 chains 是反向链 [节点, 组, 上层组…]，组 G 在 chains 里的前一个就是 G 选中的成员；
   速度 = 两次快照之间每条连接 upload / download 的差值 ÷ 间隔（新连接按全部字节计）。
+- 顶层组（「当前链路」卡片和在用负载均衡组的起点）：规则真正引用到的策略组，见 rule_tops()。
+  内核会把所有策略组都放进 GLOBAL，所以不能再拿 GLOBAL.all 当顶层（没在用的地区竞技 / 手动选择 / 带宽择优也会各出一张卡）。
 """
-import threading, time
+import re, threading, time
 
 from .core import conns_snapshot
+from .corehttp import core_json
 from .latency import proxies_merged
+from .sb_common import active_core
 
 _ST = {"t": 0.0, "prev": {}, "res": None, "rt": 0.0}
+_RT = {"t": 0.0, "tops": None}  # 规则引用的顶层组：/rules 与模式只在重载 / 切换模式时变，缓存 5 秒
+RULES_TTL = 5
 _LK = threading.Lock()
 STRATEGY_BY_SUFFIX = (("轮询", "round-robin"), ("哈希", "consistent-hashing"))
+_TERMINAL_NOW = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"}
+_CHAIN_TYPES = ("Selector", "URLTest", "Fallback", "Smart")
+
+
+def _is_group(px, n):
+    return isinstance(n, str) and n and isinstance(px.get(n), dict) and px[n].get("all") is not None
+
+
+_SB_ROUTE = re.compile(r"^route\\((.*)\\)$", re.S)
+
+
+def _sb_target(px, proxy):
+    """sing-box /rules 的 proxy 是动作描述：route(出站[,选项…]) / reject / resolve / sniff / hijack-dns / route-options(…)，
+    只有 route(…) 把流量交给出站"""
+    m = _SB_ROUTE.match(proxy or "")
+    if not m:
+        return None
+    body = m.group(1)
+    return body if body in px else body.split(",", 1)[0].strip()
+
+
+def rule_tops(px, rules, mode="rule", kind="mihomo"):
+    """规则真正引用到的策略组（按规则顺序去重），即流量入口：
+    - mihomo / Smart：/rules 每条的 proxy 就是目标；MATCH 是兜底，之后的规则不再生效。
+      全局模式只走 GLOBAL 当前选中的组，直连模式不走任何组。
+    - sing-box：/rules 的 proxy 形如 route(出站)；带 clash_mode= 的规则只在对应模式下生效（全局模式那条吃掉全部流量）；
+      route.final 不在 /rules 里，clash API 把它作为 GLOBAL 的 now（GLOBAL.all 也把它排第一），作为最后的兜底。
+    只保留策略组（DIRECT / REJECT / 单个节点不算）；负载均衡组也保留，由 _active_lb 标记在用（_walk_chain 遇到它不出链路卡片）。
+    rules 为 None（核心没应答）时返回 None，由调用方退回旧口径。"""
+    if not isinstance(px, dict) or rules is None:
+        return None
+    mode = str(mode or "rule").lower()
+    out = []
+
+    def add(n):
+        if _is_group(px, n) and n != "GLOBAL" and n not in out:
+            out.append(n)
+
+    gl = px.get("GLOBAL") if isinstance(px.get("GLOBAL"), dict) else {}
+    if kind == "singbox":
+        for r in rules:
+            if not isinstance(r, dict):
+                continue
+            pl = str(r.get("payload") or "")
+            cm = re.findall(r"clash_mode=(\\S+)", pl)
+            if cm and cm[0].lower() != mode:
+                continue
+            t = _sb_target(px, str(r.get("proxy") or ""))
+            if t is None:
+                continue
+            add(t)
+            if cm and pl.strip() == "clash_mode=" + cm[0]:  # 只按模式匹配的规则（全局模式）：后面的规则都到不了
+                return out
+        add(gl.get("now"))  # route.final
+        return out
+    if mode == "direct":
+        return out
+    if mode == "global":
+        add(gl.get("now"))
+        return out
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        add(r.get("proxy"))
+        if str(r.get("type") or "").lower() == "match":
+            break
+    return out
+
+
+def _rules_now(kind):
+    """接口用：取 /rules 和当前模式（缓存 RULES_TTL 秒）。核心没应答时返回 None"""
+    now = time.time()
+    if _RT["tops"] is not None and now - _RT["t"] < RULES_TTL and _RT["tops"][2] == kind:
+        return _RT["tops"]
+    rj = core_json("/rules", timeout=5)
+    cf = core_json("/configs", timeout=5) or {}
+    if not isinstance(rj, dict):
+        return None
+    _RT.update(t=now, tops=(rj.get("rules") or [], cf.get("mode") or "rule", kind))
+    return _RT["tops"]
+
+
+def _top_groups(px):
+    """旧口径（只在拿不到规则时兜底）：GLOBAL.all 里的非负载均衡组；没有 GLOBAL 时退化为不被其他组引用的非负载均衡组。
+    负载均衡组本身也在 GLOBAL.all 里，但它永远是被到达的目标、不是入口——不把它算成顶层，
+    否则顶层负载均衡组会永远显示。"""
+    gl = px.get("GLOBAL")
+    if isinstance(gl, dict) and isinstance(gl.get("all"), list):
+        return [n for n in gl["all"] if isinstance(n, str) and isinstance(px.get(n), dict)
+                and px[n].get("all") is not None and px[n].get("type") != "LoadBalance"]
+    referenced = set()
+    for p in px.values():
+        if not isinstance(p, dict):
+            continue
+        for m in p.get("all") or []:
+            if isinstance(m, str):
+                referenced.add(m)
+    return [n for n, p in px.items() if isinstance(p, dict) and p.get("all") is not None
+            and p.get("type") != "LoadBalance" and n not in referenced]
+
+
+def _active_lb(px, tops=None):
+    """在活跃链路上的 LoadBalance 组名集合：从顶层策略组出发，沿当前选中（now）一路走下去。
+    Selector/URLTest/Fallback/Smart 跟 now，LoadBalance 标记为在用并继续走它
+    成员里是组的那些（嵌套组也跟进去）；now 指向 DIRECT/REJECT 等终端或不存在时停。防环、限深 10 层。"""
+    if not isinstance(px, dict):
+        return set()
+    active, seen = set(), set()
+
+    def walk(name, depth):
+        if depth > 10 or name in seen:
+            return
+        seen.add(name)
+        p = px.get(name)
+        if not isinstance(p, dict):
+            return
+        t = p.get("type")
+        if t == "LoadBalance":
+            active.add(name)
+            for m in p.get("all") or []:
+                q = px.get(m) if isinstance(m, str) else None
+                if isinstance(q, dict) and q.get("all") is not None:
+                    walk(m, depth + 1)
+            return
+        if t in _CHAIN_TYPES:
+            nxt = p.get("now")
+            if isinstance(nxt, str) and nxt and nxt.upper() not in _TERMINAL_NOW:
+                walk(nxt, depth + 1)
+
+    for top in tops if tops is not None else _top_groups(px):
+        walk(top, 0)
+    return active
+
+
+def _walk_chain(px, start):
+    """从顶层组出发沿 now 走到底：落到节点返回完整 path（[顶层组, …, 节点]）；
+    遇到 LoadBalance / 终端 / 不存在 / 环 / 超深（10 层）返回 None（不成链路卡片）。"""
+    path, seen = [], set()
+    cur = start
+    while isinstance(cur, str) and cur and cur not in seen and len(path) < 10:
+        seen.add(cur)
+        p = px.get(cur)
+        if not isinstance(p, dict):
+            return None
+        if p.get("type") == "LoadBalance":
+            return None
+        path.append(cur)
+        if p.get("type") in _CHAIN_TYPES:
+            nxt = p.get("now")
+            if not isinstance(nxt, str) or not nxt or nxt.upper() in _TERMINAL_NOW:
+                return None
+            cur = nxt
+            continue
+        return path
+    return None
+
+
+def _merge_chains(walks):
+    """walks: [(起点顶层组, path)]（按 GLOBAL.all 顺序）。path 互为后缀的合成一条链路，
+    先出现的 path 为准；后来 walk 的起点若不在 path 里，记入 roots（共用这条链路的顶层组）。
+    例如 漏网之鱼(now=节点选择) 与 节点选择都走 [节点选择, 带宽择优, jp] 时合成一条，roots 记两个。"""
+    chains = []
+    for start, path in walks:
+        if not path:
+            continue
+        merged = False
+        for c in chains:
+            cp = c["path"]
+            if (len(cp) <= len(path) and cp == path[-len(cp):]) or \\
+               (len(path) <= len(cp) and path == cp[-len(path):]):
+                if start not in cp and start not in c["roots"]:
+                    c["roots"].append(start)
+                merged = True
+                break
+        if not merged:
+            chains.append({"path": list(path), "roots": [start]})
+    for c in chains:
+        c["_m"] = [c["path"]]  # 连接归属用的完整 path（合并后可能有多条）
+    # 第二轮：顶层组之后的链路完全相同（如 Netflix → 节点选择 → 香港01 与 YouTube → 节点选择 → 香港01）合成一张卡：
+    # path 只留共同部分，heads 记被合并的顶层组（前端画成第一个格子），roots 列出全部共用的组
+    out, by_tail = [], {}
+    for c in chains:
+        tail = tuple(c["path"][1:])
+        o = by_tail.get(tail) if tail else None
+        if o is None:
+            if tail:
+                by_tail[tail] = c
+            out.append(c)
+            continue
+        if "heads" not in o:
+            o["heads"] = [o["path"][0]]
+            o["path"] = list(tail)
+        o["heads"].append(c["path"][0])
+        o["roots"] += [r for r in c["roots"] if r not in o["roots"]]
+        o["_m"] += c["_m"]
+    return out
 
 
 def _delay(p):
@@ -11521,16 +13309,22 @@ def _strategy(name, p):
     return ""
 
 
-def lb_topo(px, conns, now, prev=None, prev_t=0.0):
-    """纯函数（测试用）：返回 (结果, 本次每条连接的 {id: (up, down)})"""
+def lb_topo(px, conns, now, prev=None, prev_t=0.0, tops=None):
+    """纯函数（测试用）：返回 (结果, 本次每条连接的 {id: (up, down)})。
+    tops：规则引用的顶层组（rule_tops 的结果）；None 时按旧口径 _top_groups 兜底"""
     prev = prev or {}
     dt = now - prev_t if prev_t else 0
     fresh = not prev_t or dt <= 0 or dt > 15  # 第一次或间隔太久：速度记 0
     order = (px.get("GLOBAL") or {}).get("all") or []
     names = [n for n in order if (px.get(n) or {}).get("type") == "LoadBalance"]
     names += sorted(n for n, p in px.items() if isinstance(p, dict) and p.get("type") == "LoadBalance" and n not in names)
+    if tops is None:
+        tops = _top_groups(px)
+    active = _active_lb(px, tops)  # 拓扑页只显示实时在用的负载均衡组
+    total = len(names)
     stat = {g: {} for g in names}
     cur = {}
+    conn_chains = []  # (反转后的自顶向下链, up 差值, down 差值)，供链路卡片归属
     for c in conns or []:
         if not isinstance(c, dict):
             continue
@@ -11544,6 +13338,8 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
             pu, pd = prev.get(cid, (0, 0))
             du, dd = max(0, up - pu), max(0, dn - pd)
         ch = c.get("chains") or []
+        if ch and all(isinstance(x, str) for x in ch):
+            conn_chains.append((tuple(reversed(ch)), du, dd))
         for i in range(1, len(ch)):
             g = ch[i]
             if g in stat:
@@ -11551,6 +13347,24 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
                 s[0] += 1
                 s[1] += du
                 s[2] += dd
+    # 当前链路卡片：顶层组沿 now 走到底落到节点的链路（走到 LB 组就停，由 LB 组卡片覆盖）；
+    # path 互为后缀的合成一条，roots 合并。连接按反转后的自顶向下链以后缀匹配归属到链路卡片。
+    chains = _merge_chains([(t, _walk_chain(px, t)) for t in tops])
+    for c in chains:
+        c["conns"] = 0
+        c["up"] = 0
+        c["down"] = 0
+        c["delay"] = _delay(px.get(c["path"][-1]) or {})
+    for rch, du, dd in conn_chains:
+        for c in chains:
+            if any(len(rch) >= len(p) and list(rch[-len(p):]) == p for p in c["_m"]):
+                c["conns"] += 1
+                if not fresh:
+                    c["up"] += int(du / dt)
+                    c["down"] += int(dd / dt)
+                break  # 链路 path 互不为后缀，一条连接最多命中一条卡片
+    for c in chains:
+        c.pop("_m", None)
     groups = []
     for g in names:
         p = px.get(g) or {}
@@ -11562,8 +13376,9 @@ def lb_topo(px, conns, now, prev=None, prev_t=0.0):
             nodes.append({"name": n, "type": q.get("type") or "", "alive": q.get("alive", True) is not False,
                           "delay": _delay(q), "conns": c, "up": up_s, "down": dn_s})
             gc, gu, gd = gc + c, gu + up_s, gd + dn_s
-        groups.append({"name": g, "strategy": _strategy(g, p), "nodes": nodes, "conns": gc, "up": gu, "down": gd})
-    return {"groups": groups, "t": now}, cur
+        if g in active or gc > 0:  # 在活跃链路上，或当前有活动连接
+            groups.append({"name": g, "strategy": _strategy(g, p), "nodes": nodes, "conns": gc, "up": gu, "down": gd})
+    return {"groups": groups, "total": total, "chains": chains, "t": now}, cur
 
 
 def lb_topo_now():
@@ -11579,7 +13394,17 @@ def lb_topo_now():
         if snap and snap is _ST.get("snap") and _ST["res"] is not None:  # 连接快照还没更新（2 秒 TTL）：差值为 0，沿用上次结果
             return _ST["res"]
         _ST["snap"] = snap
-        res, cur = lb_topo(px, snap.get("connections") or [], now, _ST["prev"], _ST["t"])
+        tops = None
+        try:
+            rr = _rules_now(active_core())
+            if rr is not None:
+                tops = rule_tops(px, rr[0], rr[1], rr[2])
+            elif _ST.get("tops") is not None:  # 核心这次没应答 /rules：沿用上次的顶层组
+                tops = _ST["tops"]
+        except Exception:
+            tops = _ST.get("tops")
+        _ST["tops"] = tops
+        res, cur = lb_topo(px, snap.get("connections") or [], now, _ST["prev"], _ST["t"], tops)
         _ST.update(prev=cur, t=now, res=res, rt=now)
         return res
 '''
@@ -11805,9 +13630,33 @@ def mh_unchanged_note(before, after):
 
 
 def mh_update_subs(names):
-    """mihomo：让核心重新拉取订阅；返回 (成功列表「名称：节点数（提示）」, 失败列表「名称：原因」)"""
+    """mihomo：让核心重新拉取订阅；返回 (成功列表「名称：节点数（提示）」, 失败列表「名称：原因」)。
+    面板账号绑定的订阅先刷新订阅地址（token 可能轮换）：地址变了要先重载核心（配置里的 provider URL 才更新），
+    登录过期时跳过该订阅、保留旧节点并报错"""
+    from .panellogin import PanelExpiredError, refresh_subscribe_url
     okl, bad = [], []
+    subs = {s["name"]: s for s in load().get("subs") or [] if isinstance(s, dict)}
+    need_reload = False
+    skipped = set()
     for nm in names:
+        s = subs.get(nm)
+        if s and (s.get("panel") or {}).get("token"):
+            try:
+                if refresh_subscribe_url(s):
+                    need_reload = True
+            except PanelExpiredError:
+                bad.append(nm + "：面板登录已过期，请重新登录（已保留旧节点）")
+                skipped.add(nm)
+                continue
+    if need_reload:
+        from .core import reload_core
+        ok, msg = reload_core()
+        if not ok:
+            bad.append("面板订阅地址已刷新，但核心重载失败：" + msg)
+            return okl, bad
+    for nm in names:
+        if nm in skipped:
+            continue
         before = mh_provider_names(nm)
         code, raw = core("PUT", "/providers/proxies/" + quote(nm, safe=""), timeout=120)
         if code >= 300:
@@ -11818,6 +13667,29 @@ def mh_update_subs(names):
 
 
 LATENCY_PROBE_BUDGET = 60  # sing-box 定时测速逐个补测的时间上限（定时任务在 sched_loop 里同步执行，不能拖太久）
+
+
+def _selections():
+    """各选择组当前选中项（更新订阅、重新生成配置前记下）"""
+    px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    return {n: p["now"] for n, p in px.items() if isinstance(p, dict) and p.get("type") == "Selector" and p.get("now") and n != "GLOBAL"}
+
+
+def _restore_selections(sel):
+    """更新订阅后重新生成配置：选择组被重置（如竞技又回到轮询）的按更新前的选择改回；选项已不存在的不动"""
+    if not sel:
+        return
+    for _ in range(10):  # 等核心重载完
+        if core_alive():
+            break
+        time.sleep(2)
+    px = (core_json("/proxies", timeout=5) or {}).get("proxies") or {}
+    for g, now in sel.items():
+        p = px.get(g) or {}
+        if p.get("type") == "Selector" and p.get("now") != now and now in (p.get("all") or []):
+            code, _ = core("PUT", "/proxies/" + quote(g, safe=""), {"name": now}, timeout=5)
+            if code < 300:
+                print(time.strftime("%F %T"), f"[schedule] 更新订阅后恢复选择：{g} → {now}", flush=True)
 
 
 def run_task(name):
@@ -11895,10 +13767,18 @@ def sched_loop():
             now = time.strftime("%H:%M")
             today = time.strftime("%Y-%m-%d")
             due = [k for k in ("sub_update", "core_restart", "geo_update") if daily_due(k, str(sc.get(k) or ""), now, today)]
+            if SCHED.get("sub_retry") and time.time() >= SCHED["sub_retry"] and "sub_update" not in due:
+                SCHED["sub_retry"] = 0
+                due.append("sub_update")  # 定时更新订阅失败后的重试
             # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
             hcfg = health_cfg(d)
             if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
                 due.append("health")
+            try:  # 带宽择优：启用且到周期时在后台跑一轮（不阻塞定时循环）
+                from .bwtest import bw_tick
+                bw_tick(d)
+            except Exception as e:
+                log_err("带宽择优：定时触发", e)
             mins = int(sc.get("latency") or 0)
             if mins and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
                 due.append("latency")
@@ -11940,10 +13820,18 @@ def sched_loop():
                         AB_STATE["retry"] = time.time() + 60
                         continue
                 try:  # 一个任务抛异常不能连累同一轮的其他任务（它们已被 daily_due 记成今天执行过，跳过就漏一天）
+                    sel = _selections() if k == "sub_update" else None
                     ok, msg = run_task(k)
+                    _restore_selections(sel)  # 更新订阅后重新生成配置：保留各选择组的选择
                 except Exception as e:
                     log_err("定时任务：" + TASK_NAMES[k], e)
                     ok, msg = False, f"执行出错：{str(e)[:150]}"
+                if k == "sub_update":  # 失败（旧订阅保留不动）：10 分钟后重试，最多 3 次
+                    tries = SCHED.get("sub_retries", 0)
+                    if not ok and tries < 3:
+                        SCHED.update(sub_retry=time.time() + 600, sub_retries=tries + 1)
+                    else:
+                        SCHED.update(sub_retry=0, sub_retries=0)
                 if k == "adblock":
                     tries = AB_STATE.get("retries", 0)  # 自己的计数：以前复用了循环计数 n，广告规则一更新就把它改成重试次数
                     if not ok and tries < AB_RETRY_MAX:
@@ -14186,6 +16074,8 @@ class SubsAPI:
         def save_sub(d):
             old = next((s for s in d["subs"] if s["name"] == name), None)
             new = {"name": name, "url": url, "filter": flt, "exclude": exc}
+            if old and old.get("panel") and old.get("url") == url:  # 面板绑定的订阅：没换链接时保留登录信息
+                new["panel"] = old["panel"]
             if old and sub_removed(old):  # 编辑订阅时保留「从订阅删除」的节点名单
                 new["removed"] = sub_removed(old)
             # 编辑时留在原位置：以前先删再追加到末尾，订阅顺序一变，sing-box 里不同订阅的同名节点去重后缀（「HK (2)」）
@@ -14195,6 +16085,10 @@ class SubsAPI:
             else:
                 d["subs"].append(new)
         prev = update(save_sub)
+        return self._sub_saved(prev, name, cur, url)
+
+    def _sub_saved(self, prev, name, cur, url):
+        """订阅已写入 data.json 后的流程：清旧缓存 → 下载 / 重载核心。api_subs_post 与面板账号登录共用"""
         if not cur or cur.get("url") != url:  # 新订阅 / 换了链接：旧链接留下的 mihomo 缓存不能再用（sing-box 下载失败时也会拿它兜底）
             drop_provider_cache(name)
         if active_core() == "singbox":  # 先由面板下载节点，再生成配置
@@ -14207,6 +16101,39 @@ class SubsAPI:
         if ok:
             refresh_after_sub(name)  # 订阅下载完成后按实际节点生成地区 / 均衡分组
         return self.reply(ok, msg)
+
+    @api_route("/api/subs/panel-login", "POST")
+    def api_subs_panel_login(self, m, p, b, q):
+        """Xboard / V2Board 面板账号登录：登录 → 拿订阅地址 → 按现有订阅结构创建 / 更新订阅 → 走现有流程拉节点。
+        密码只用来登录，不存储、不记日志；只存 token"""
+        from .panellogin import panel_login
+        name = str(b.get("name") or "").strip()
+        host = str(b.get("host") or "").strip()
+        email = str(b.get("email") or "").strip()
+        password = b.get("password") if isinstance(b.get("password"), str) else ""
+        if not name or not host or not email or not password:
+            return self.send(400, {"message": "请填写名称、面板地址、邮箱和密码"})
+        other = sub_name_clash(name, [s.get("name") for s in load()["subs"] if isinstance(s, dict) and s.get("name")])
+        if other:  # 「机场 A」和「机场_A」会共用同一个缓存文件，互相覆盖
+            return self.send(400, {"message": f"与已有订阅「{other}」只差符号，会共用同一个缓存文件，请改个名字"})
+        cur = next((s for s in load()["subs"] if isinstance(s, dict) and s.get("name") == name), None)
+        try:
+            url, panel = panel_login(host, email, password)
+        except (ValueError, IOError) as e:
+            return self.send(400, {"message": str(e)[:150]})
+
+        def save_sub(d):
+            old = next((s for s in d["subs"] if s["name"] == name), None)
+            new = {"name": name, "url": url, "filter": "", "exclude": DEFAULT_EXCLUDE, "panel": panel}
+            if old and sub_removed(old):  # 重新登录时保留「从订阅删除」的节点名单
+                new["removed"] = sub_removed(old)
+            # 编辑时留在原位置：以前先删再追加到末尾，订阅顺序一变，sing-box 里不同订阅的同名节点去重后缀会互换
+            if old:
+                d["subs"] = [new if s["name"] == name else s for s in d["subs"]]
+            else:
+                d["subs"].append(new)
+        prev = update(save_sub)
+        return self._sub_saved(prev, name, cur, url)
 
     @api_route("/api/subs", "DELETE")
     def api_subs_delete(self, m, p, b, q):
@@ -14307,7 +16234,7 @@ from .corehttp import core, core_json
 from .sb_common import active_core
 from .sb_config import sb_ab_loaded, write_active_config
 from .latency import fix_global
-from .ruletest import clean_target, rule_test
+from .ruletest import clean_target, route_verify, rule_test
 from .adblock import AB_CACHE, AB_STATE, ab_check, ab_compose, ab_meta, adblock_update, list_id, parse_filter
 from .dnsleak import antileak_dns, dns_route, leak_check
 from .webapi_base import tp_apply, api_route, rs_caches_sync, rs_drop_removed, sub_caches_sync, sub_refetch
@@ -14426,6 +16353,14 @@ class RulesAPI:
         try:
             return self.send(200, rule_test(str(b.get("target") or "")))
         except ValueError as e:  # 空目标（如只填了 http://）：给出原因，不再 500「内部错误」
+            return self.send(400, {"message": str(e)})
+
+    @api_route("/api/routetest", "POST")
+    def api_routetest_post(self, m, p, b, q):
+        """真实路由验证：命中规则 / 策略链 + 真实请求（代理 vs 直连）+ DNS 解析 + 出口 IP"""
+        try:
+            return self.send(200, route_verify(str(b.get("target") or "")))
+        except ValueError as e:  # 空目标：给出原因，不再 500「内部错误」
             return self.send(400, {"message": str(e)})
 
     @api_route("/api/rules", "PUT")
@@ -14553,7 +16488,7 @@ import copy, os, re, ssl, threading, time
 from urllib.parse import parse_qs
 
 from .errlog import log_err
-from . import landing, stats
+from . import landing, stats, warp
 from . import gguard
 from .base import (
     CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, KEY, LOCK, MIHOMO_BIN, PANEL_VERSION, PROXY_MODES, SMART_BIN, TUN_STACKS, UPD_STATE, upd_begin,
@@ -14602,15 +16537,24 @@ class SysAPI:
             return self.send(400, {"message": "tun 参数格式不正确"})
         if tun_in.get("stack") is not None and tun_in["stack"] not in TUN_STACKS:
             return self.send(400, {"message": "TUN 协议栈只能是 auto / system / gvisor / mixed"})
+        if "mtu" in tun_in:
+            try:
+                mtu = int(tun_in["mtu"])
+            except (TypeError, ValueError):
+                return self.send(400, {"message": "TUN MTU 必须是数字"})
+            if not 1280 <= mtu <= 9000:
+                return self.send(400, {"message": "TUN MTU 应为 1280–9000"})
 
         def fn(d):
             d["proxy_mode"], d["tproxy"] = mode, mode == "tproxy"
             t = d["tun"]
-            for k in ("stack", "auto_redirect", "strict_route"):
+            for k in ("stack", "auto_redirect", "strict_route", "quic_block", "mss_clamp"):
                 if k in tun_in:
                     t[k] = tun_in[k] if k == "stack" else bool(tun_in[k])
             if "device" in tun_in:
                 t["device"] = safe_dev(tun_in["device"])
+            if "mtu" in tun_in:  # 上面已校验过范围，这里只做钳制
+                t["mtu"] = max(1280, min(9000, int(tun_in["mtu"])))
         prev = update(fn)
         ok, msg = reload_core(prev)  # TUN 开关在配置里，先校验并重载核心
         if not ok:
@@ -14897,6 +16841,14 @@ class SysAPI:
         ok, info = self_update(True, d.get("gh_proxy") or "", d.get("update_channel") or "stable")
         return self.send(200 if ok else 500, info)
 
+    @api_route("/api/warp", "GET")
+    def api_warp_get(self, m, p, b, q):
+        return self.send(*warp.api_get())
+
+    @api_route("/api/warp", "POST")
+    def api_warp_post(self, m, p, b, q):
+        return self.send(*warp.api_post(b if isinstance(b, dict) else {}))
+
     @api_route("/api/gguard", "GET")
     def api_gguard_get(self, m, p, b, q):
         return self.send(*gguard.api_get())
@@ -15048,6 +17000,9 @@ class SysAPI:
         d = load()
         if "tg_token" in b:
             d.update(tg_token=unmask(b.get("tg_token", ""), d.get("tg_token"), mask_secret), tg_chat=b.get("tg_chat", ""))
+        if not str(d.get("tg_token") or "").strip() or not str(d.get("tg_chat") or "").strip():
+            # 没填 Token / Chat ID 是请求的问题，不是服务端出错：回 400（以前经 reply 回 500）
+            return self.send(400, {"message": "未配置 Telegram：请先填写 Bot Token 和 Chat ID"})
         return self.reply(*tg_send("✅ 测试消息：通知已配置成功", d))
 
     @api_route("/api/backup", "GET")
@@ -15196,6 +17151,62 @@ class SysAPI:
         health_mod.save_health_cfg(cfg)
         return self.send(200, {"ok": True, "cfg": cfg})
 
+    @api_route("/api/bwtest", "GET")
+    def api_bwtest_get(self, m, p, b, q):
+        from . import bwtest as bw_mod
+        return self.send(200, bw_mod.status())
+
+    @api_route("/api/bwtest/run", "POST")
+    def api_bwtest_run(self, m, p, b, q):
+        from . import bwtest as bw_mod
+        ok = bw_mod.run_round_bg()
+        return self.send(200, {"ok": ok, "message": "已开始带宽测试" if ok else "带宽测试正在进行中"})
+
+    @api_route("/api/bwtest/cfg", "PUT")
+    def api_bwtest_cfg(self, m, p, b, q):
+        from . import bwtest as bw_mod
+        cfg = bw_mod.bw_cfg()
+        old_nodes = [str(n) for n in (cfg.get("nodes") or [])]
+        if "enabled" in b:
+            cfg["enabled"] = bool(b["enabled"])
+        if "interval" in b:
+            try:
+                v = int(b["interval"])
+                if v < 600 or v > 86400:
+                    raise ValueError
+                cfg["interval"] = v
+            except (ValueError, TypeError):
+                return self.send(400, {"ok": False, "message": "测试周期应为 600-86400 秒"})
+        if "limit" in b:
+            try:
+                v = int(b["limit"])
+                if v < 1 or v > 30:
+                    raise ValueError
+                cfg["limit"] = v
+            except (ValueError, TypeError):
+                return self.send(400, {"ok": False, "message": "每轮上限应为 1-30 个节点"})
+        if "nodes" in b:
+            ns = b.get("nodes")
+            if not isinstance(ns, list):
+                return self.send(400, {"ok": False, "message": "指定节点应为节点名列表"})
+            clean = []
+            for n in ns:
+                n = str(n).strip()
+                if n and n not in clean:
+                    clean.append(n)
+            if len(clean) > 100:
+                return self.send(400, {"ok": False, "message": "指定节点最多 100 个"})
+            cfg["nodes"] = clean
+        # 指定节点变化会改 🚀 带宽择优组的成员（在生成配置里），要重载核心才生效；
+        # 其他字段只影响下一轮测试，不重载。核心没跑时 reload_core 只保存配置，下次启动生效。
+        prev = bw_mod.save_bw_cfg(cfg)
+        if [str(n) for n in (cfg.get("nodes") or [])] != old_nodes:
+            ok, msg = reload_core(prev)
+            if not ok:
+                return self.send(500, {"ok": False, "message": msg})
+            return self.send(200, {"ok": True, "cfg": cfg, "message": msg})
+        return self.send(200, {"ok": True, "cfg": cfg})
+
     @api_route("/api/restore", "POST")
     def api_restore_post(self, m, p, b, q):
         try:  # 恢复残缺 / 旧格式的备份：任何一项形状不对都整体拒绝，不写进 data.json
@@ -15258,7 +17269,7 @@ from .sb_switch import CHANNELS as SB_CHANNELS, sb_arch, sb_remote_version, sb_u
 from .core_update import CORE_UPD, MANUAL_NOTE, core_job_start
 from .sysopt import delay_test, favicon, svc_restart
 from .notify import WD
-from .latency import BG_FILE, bg_type
+from .latency import BG_FILE, bg_type, note_pick
 from .unlock import unlock_test
 from .logstream import core_stream, ticket_use
 from .nodeprobe import UI_BUDGET, fill_group, probe_nodes
@@ -15596,6 +17607,9 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
         if p.startswith("/api/core/"):
             slow = p.endswith("/delay") or p.endswith("/healthcheck")  # 测速可能超过默认 10 秒
             code, raw = core(m, p[len("/api/core"):] + ("?" + q if q else ""), b if b else None, timeout=60 if slow else 10)
+            m_sel = re.match(r"^/api/core/proxies/([^/?]+)$", p) if m == "PUT" and code < 300 else None
+            if m_sel:
+                note_pick(unquote(m_sel.group(1)), b.get("name"))
             return self.send(code, raw or b"{}")
         if p == "/api/coreupdate" and m == "GET" and (q1(parse_qs(q), "core") or active_core()) == "singbox":
             ch = q1(parse_qs(q), "channel", default="stable")
@@ -15713,7 +17727,8 @@ def tp_env():
     local6 = [str(n) for n in ipaddress.collapse_addresses(local6)]
     return (f"B_IP='{','.join(ips)}'\\nB_MAC='{','.join(macs)}'\\nB_IP6='{','.join(ip6s)}'\\n"
             f"LOCAL6='{','.join(local6)}'\\nIPV6={1 if d.get('ipv6') else 0}\\nTPROXY={1 if d.get('tproxy') else 0}\\n"
-            f"MODE={d['proxy_mode']}\\nDNS_ALL={1 if dns_cfg(d)['block_bypass'] else 0}")
+            f"MODE={d['proxy_mode']}\\nDNS_ALL={1 if dns_cfg(d)['block_bypass'] else 0}\\n"
+            f"MSS={1 if (d.get('proxy_mode') in ('tproxy', 'tun') and (d.get('tun') or {}).get('mss_clamp')) else 0}")
 
 
 def write_prep(path=None):
@@ -15804,7 +17819,7 @@ def main():
     if "--allow-public" in sys.argv:  # 允许 / 禁止从外网（非局域网地址）访问面板
         on = (sys.argv[sys.argv.index("--allow-public") + 1:] or ["on"])[0] in ("on", "1", "yes", "true")
         update(lambda x: x.update(allow_public=on))
-        print(("已允许外网访问面板" + ("" if auth_on() else "。面板还没有设置密码，强烈建议执行 --password <新密码> 设置"))
+        print(("已允许外网访问面板" + ("" if auth_on() else "。面板还没有设置密码，强烈建议执行 python3 /opt/mihomo-panel/server.py --password <新密码> 设置"))
               if on else "已恢复为只允许局域网访问")
         sys.exit(0)
     if "--password" in sys.argv:  # 设置面板密码（默认没有密码）；--password off 关闭
