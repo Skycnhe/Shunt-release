@@ -230,7 +230,12 @@ pre{background:var(--pre);padding:12px;border-radius:14px;max-height:65vh;overfl
 .snav::-webkit-scrollbar{display:none}
 .snav button{flex:0 0 auto;background:none;border:0;color:var(--txt);opacity:.75;padding:6px 14px;border-radius:10px;cursor:pointer;font-size:13.5px;font-weight:500}
 .snav button.on{background:var(--segon);color:var(--segtxt);opacity:1;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.12)}
-.sgrid{columns:2 460px;column-gap:16px}.sgrid>.card{break-inside:avoid;display:inline-block;width:100%;margin:0 0 16px}
+.sgrid{column-gap:16px}.sgrid>.card{break-inside:avoid;display:block;width:100%;margin:0 0 16px}
+/* 设置双栏只看「设置页内容区」自己的宽度（容器查询），够放两栏（≥940px）才分栏并在 .colbrk 处换栏。
+   以前是 columns:2 460px + 视口 ≥721px 时强制 break-before:column：内容区 721–940px（手机「桌面版网站」按 980px 排版、
+   平板、宽屏侧边栏占去 232px 时）只排得下 1 栏，强制换栏却又生出第 2 栏，溢出到视口右侧，整页变成两倍宽、被浏览器缩小 */
+section[data-tab="设置"]{container-type:inline-size}
+@container (min-width:940px){.sgrid{columns:2}.sgrid>.colbrk{break-before:column}}
 .nfilter{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
 .nfilter input{width:220px}.chipf{border:1px solid var(--line);background:var(--b2);color:var(--txt);border-radius:999px;padding:4px 11px;font-size:12.5px;cursor:pointer}
 .chipf.on{background:var(--pri);border-color:var(--pri);color:#fff}
@@ -319,7 +324,6 @@ pre{background:var(--pre);padding:12px;border-radius:14px;max-height:65vh;overfl
   .dnsmain #dns-lists{columns:2;column-gap:28px}
   .dnsmain #dns-lists>.lbox{break-inside:avoid;border-bottom:0}
   .abft{display:none}
-  .sgrid>.card{display:block}.sgrid>.colbrk{break-before:column}
   /* v7.7.0 连接表：主机 / 规则 / 链路单行省略（悬停看全文），不再被挤成一字一行 */
   .ctable td.ch,.ctable td.cr,.ctable td.cc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;word-break:normal}
   .ctable td.ch,.ctable td.cr,.ctable td.cc{max-width:0}.ctable td.ch{width:22%}.ctable td.cr{width:24%}.ctable td.cc{width:26%}
@@ -836,6 +840,230 @@ html.docked:root[data-ui=flat] #drawer{border-radius:0}
 .tp-h{padding:14px 18px}
 /* 深色下网站图标底色：GitHub 等深色图标在深色底上几乎看不见，图标加载成功时垫一层浅色底 */
 :root:not([data-theme=light]) .stile .fv:has(img){background:#e8ecf2}
+/* ===== v9.1.16「科技控制台」=====
+   在 modern.css（安静控制台）之上：深海军蓝底 + 点阵 / 微弱光晕（纯 CSS，一个固定层，不模糊）、卡片 1px 渐变描边、
+   青—蓝—紫强调渐变（只用在 logo、当前导航、主按钮、图表描边、环形指示）、带光点的状态色、等宽数字。
+   性能：没有给卡片 / 列表加 backdrop-filter；动画只用 transform / opacity；「减少动态效果」时全部关闭。
+   版面防溢出：任何页面都不超出视口宽度（main 横向裁切兜底、长串可断行、顶栏在中等宽度收起文字） */
+:root{--c1:#22d3ee;--c2:#3b82f6;--c3:#8b5cf6;--c-up:#34d399;--grad:linear-gradient(135deg,var(--c1),var(--c2) 52%,var(--c3));
+  --grid:rgba(148,163,184,.10);--glow:rgba(56,189,248,.32);--font-mono:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --hair:linear-gradient(160deg,rgba(125,211,252,.26),rgba(148,163,184,.10) 30%,rgba(148,163,184,.07) 68%,rgba(139,92,246,.20))}
+:root[data-theme=light]{--c1:#0891b2;--c2:#2563eb;--c3:#7c3aed;--c-up:#059669;--grid:rgba(15,23,42,.07);--glow:rgba(37,99,235,.20);
+  --hair:linear-gradient(160deg,rgba(37,99,235,.28),#e2e7f0 30%,#e2e7f0 68%,rgba(124,58,237,.20))}
+
+/* ---------- 防溢出（根因修在 style.css 的设置页分栏；这里是所有页面的兜底） ---------- */
+html,body{max-width:100%}
+main{min-width:0;overflow-x:clip}
+.opt .sp,.card .row>.sp{min-width:0}
+.opt .dsc,.card>.mut,.card .mut.small,.exch,.tag{overflow-wrap:anywhere}
+/* 顶栏：721–1180px（含宽屏侧边栏占去 232px 的情况）搜索框只留图标，≤900px 启停按钮只留图标；品牌区可收缩 */
+.hrow>.brand{min-width:0;flex-shrink:1}.brand .bpage{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (min-width:721px) and (max-width:1180px){.hrow>.kbtn{min-width:0;width:34px;padding:0;justify-content:center;flex:none}.hrow>.kbtn .tx,.hrow>.kbtn kbd{display:none}}
+@media (min-width:721px) and (max-width:900px){.corebox .ib .tx{display:none}.corebox .ib{padding:0 9px}}
+html.docked .hrow>.ptitle{min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* 手机「桌面版网站」提示 */
+.dmh{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:10px 14px;border-radius:var(--r-md);border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);
+  background:color-mix(in srgb,var(--warn) 10%,var(--card));font-size:14px;line-height:1.5}.dmh span{flex:1;min-width:0}
+
+/* ---------- 默认深色：配色 ---------- */
+:root[data-ui=flat]{--bg:#05080f;--txt:#e7ebf3;--sub:#8b94a9;--mut:#8b94a9;--card:#0a0f1c;--card-b:#19213a;--line:#151c2e;--hl:rgba(148,163,184,.045);
+  --in:#070b16;--in-b:#212a42;--b2:rgba(148,163,184,.07);--b2h:rgba(148,163,184,.13);--pre:#060a14;--nbg:#0c1222;--nsel:rgba(59,130,246,.14);
+  --segbg:#070b16;--segon:#17203a;--shadow:0 1px 0 rgba(255,255,255,.025) inset,0 10px 30px -18px rgba(0,0,0,.8);--sw-off:#273049}
+:root[data-ui=flat][data-theme=light]{--bg:#f3f5fa;--txt:#0f172a;--sub:#5b6478;--mut:#5b6478;--card:#ffffff;--card-b:#e2e7f0;--line:#edf0f6;--hl:rgba(15,23,42,.025);
+  --in:#ffffff;--in-b:#d6dce7;--b2:#f1f4f9;--b2h:#e5e9f1;--pre:#f6f8fb;--nbg:#fbfcfe;--nsel:#edf3ff;--segbg:#eef1f6;--segon:#ffffff;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 10px 30px -20px rgba(15,23,42,.18);--sw-off:#cfd6e2}
+/* 底：一个固定层画光晕 + 点阵，向下渐隐（没有背景图时） */
+:root[data-ui=flat]:not(.has-bg) body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(1100px 520px at 80% -10%,rgba(34,211,238,.085),transparent 62%),radial-gradient(900px 560px at -8% 0%,rgba(139,92,246,.08),transparent 60%),
+    radial-gradient(rgba(148,163,184,.14) 1px,transparent 1.3px) 0 0/22px 22px;
+  -webkit-mask-image:linear-gradient(#000,rgba(0,0,0,.45) 55%,rgba(0,0,0,.15));mask-image:linear-gradient(#000,rgba(0,0,0,.45) 55%,rgba(0,0,0,.15))}
+:root[data-ui=flat][data-theme=light]:not(.has-bg) body::after{background:radial-gradient(1100px 520px at 80% -10%,rgba(37,99,235,.07),transparent 62%),radial-gradient(900px 560px at -8% 0%,rgba(124,58,237,.05),transparent 60%),
+    radial-gradient(rgba(15,23,42,.09) 1px,transparent 1.3px) 0 0/22px 22px}
+
+/* ---------- 卡片：1px 渐变描边、悬停 / 聚焦时内发光 ---------- */
+:root[data-ui=flat]:not(.has-bg) main .card{background:linear-gradient(var(--card),var(--card)) padding-box,var(--hair) border-box;border:1px solid transparent}
+:root[data-ui=flat]:not(.has-bg) main .card .card{background:var(--nbg);border:1px solid var(--card-b)}
+:root[data-ui=flat] main .card{transition:box-shadow .2s,border-color .2s}
+:root[data-ui=flat] main .card:hover,:root[data-ui=flat] main .card:focus-within{box-shadow:var(--shadow),inset 0 0 0 1px color-mix(in srgb,var(--c1) 10%,transparent),0 0 28px -14px var(--glow)}
+:root[data-ui=flat] main .card .card:hover{box-shadow:none}
+/* 卡片标题：左侧一道强调渐变短竖线（设置页用分组图标代替） */
+main .card h3{font-weight:650;letter-spacing:.005em}
+main .card h3::before{content:"";display:inline-block;width:3px;height:.95em;border-radius:2px;background:var(--grad);margin-right:9px;vertical-align:-.12em}
+section[data-tab="设置"] .card h3::before,main .card .card h3::before,#login h3::before{display:none}
+
+/* ---------- 品牌、导航、顶栏 ---------- */
+.logo,:root[data-ui=flat] .logo{background:var(--grad);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 6px 18px -6px rgba(59,130,246,.65)}
+:root[data-ui=flat] header.glass{background:color-mix(in srgb,var(--bg) 82%,transparent)}
+header{position:sticky}
+header::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--c1) 45%,transparent) 30%,color-mix(in srgb,var(--c3) 45%,transparent) 70%,transparent)}
+:root[data-ui=flat] #drawer{background:color-mix(in srgb,var(--bg) 70%,var(--card))}
+:root[data-ui=flat] .dnav button.on{background:linear-gradient(90deg,color-mix(in srgb,var(--c1) 14%,transparent),color-mix(in srgb,var(--c2) 6%,transparent) 60%,transparent);box-shadow:inset 2px 0 0 var(--c1);color:var(--txt)}
+:root[data-ui=flat] .dnav button.on .ico{color:var(--c1)}
+#tabbar button.on{box-shadow:inset 0 -2px 0 var(--c2),0 2px 8px rgba(0,0,0,.12)}
+:root[data-ui=flat] #tabbar{box-shadow:inset 0 0 0 1px var(--line)}
+@media (max-width:720px){.bnav button.on{color:var(--c1)}.bnav button.on .ico{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--c1) 60%,transparent))}}
+/* 状态光点 */
+.dot.on{box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent),0 0 10px color-mix(in srgb,var(--ok) 75%,transparent)}
+.dot.off{box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 20%,transparent),0 0 10px color-mix(in srgb,var(--bad) 70%,transparent)}
+/* 主按钮 / 开关 / 分段：强调渐变 */
+:root[data-ui=flat] .btn:not(.g):not(.r):not(.sm.g){background:linear-gradient(135deg,var(--c2),color-mix(in srgb,var(--c2) 60%,var(--c3)));box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 6px 16px -10px var(--c2)}
+:root[data-ui=flat] .btn:not(.g):not(.r):hover{filter:brightness(1.12)}
+:root[data-ui=flat] .sw input:checked+span{background:linear-gradient(135deg,var(--c1),var(--c2));box-shadow:0 0 12px -3px var(--glow)}
+:root[data-ui=flat] .seg button.on{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c2) 40%,var(--card-b)),0 0 14px -8px var(--glow)}
+:root[data-ui=flat] .snav{box-shadow:inset 0 0 0 1px var(--line)}
+:root[data-ui=flat] .snav button.on{box-shadow:inset 0 -2px 0 var(--c2),0 2px 8px rgba(0,0,0,.14)}
+:root[data-ui=flat] input:focus,:root[data-ui=flat] select:focus,:root[data-ui=flat] textarea:focus{border-color:color-mix(in srgb,var(--c2) 60%,var(--in-b))}
+
+/* ---------- 数字：等宽、单位小号大写 ---------- */
+.stat .v,.spd b,#ov .sysbar .chip b,.heat .hb,.node .nd,td,.ring .rv,.exitc .ipr b,.dfc .v,.stile .sv{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.nu{font-size:.5em;font-weight:600;color:var(--sub);letter-spacing:.03em;margin-left:.3em}
+.stat .v .nu{font-size:.55em}
+
+/* ---------- 概览：主视觉 ---------- */
+.trf .spd{gap:28px;margin-top:8px;align-items:flex-end}
+.trf .spd b{font-size:34px;font-weight:700;letter-spacing:-.025em;line-height:1.05}
+.trf .spd .dn b{color:var(--txt)}.trf .spd .upx b{color:var(--txt)}
+.trf .spd .k{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;font-size:12px;font-weight:700;margin-right:8px;vertical-align:6px}
+.trf .spd .dn .k{color:var(--c2);background:color-mix(in srgb,var(--c2) 16%,transparent)}.trf .spd .upx .k{color:var(--c-up);background:color-mix(in srgb,var(--c-up) 16%,transparent)}
+.trf .lg::before{background:var(--grad)}.trf .lg.up::before{background:var(--c-up)}
+.trf{display:flex;flex-direction:column}
+.chartw{position:relative;flex:1 1 auto;min-height:170px;margin-top:10px}
+.chartw #chart{position:absolute;inset:0;width:100%;height:100%;display:block}
+.cpulse{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;color:var(--c3);background:currentColor;pointer-events:none;box-shadow:0 0 10px currentColor}
+.cpulse.up{color:var(--c-up)}
+.cpulse::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid currentColor;opacity:0;animation:cpulse 1.8s ease-out infinite}
+@keyframes cpulse{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.6);opacity:0}}
+/* 环形指示（conic 渐变 + 遮罩挖空，静态绘制，数值变化时才重绘） */
+.ring{--p:0;--rc:var(--c2);--rw:7px;position:relative;width:84px;height:84px;border-radius:50%;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--rc) 9%,transparent),transparent)}
+.ring::before{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(var(--rc) calc(var(--p)*1turn),var(--b2h) 0);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--rw)),#000 calc(100% - var(--rw) + .5px));mask:radial-gradient(farthest-side,transparent calc(100% - var(--rw)),#000 calc(100% - var(--rw) + .5px));transition:none}
+.ring.pri::before{background:conic-gradient(var(--c1),var(--c3) calc(var(--p)*1turn),var(--b2h) 0)}
+.ring.zero{background:none}.ring.ok{--rc:var(--ok)}.ring.warn{--rc:var(--warn)}.ring.bad{--rc:var(--bad)}.ring.mut{--rc:var(--sub)}
+.ring .rv{position:relative;font-size:21px;font-weight:700;letter-spacing:-.02em}.ring small{position:relative;font-size:10px;font-weight:600;color:var(--sub);letter-spacing:.08em;text-transform:uppercase}
+.ring.sm{--rw:5px;width:46px;height:46px;position:absolute;right:16px;top:50%;margin-top:-23px}
+.stat.srg{position:relative;padding-right:76px!important}
+/* 当前出口：延迟环 + 节点名，下面是「设备 → 分流组 → 节点 → 出口 IP」链路 */
+.exhero{display:flex;align-items:center;gap:16px;margin-top:14px;min-width:0}
+.exmain{flex:1;min-width:0}.exhero .exn{margin-top:0;flex-wrap:wrap;row-gap:4px}.exhero .exn b{max-width:100%}.exhero .exd{flex:0 1 auto;min-width:0}
+.route{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.3fr);gap:6px;align-items:start;margin:16px 0 6px;padding:14px 8px 12px;
+  border-radius:var(--r-md);background:var(--b2);border:1px solid var(--line);overflow:hidden}
+.route:empty{display:none}
+/* 一条贯穿四个节点的轨道（图标盖在上面；出口一栏宽 1.3 份放得下完整 IP，轨道两端对准首尾图标中心），有连接时一道光沿轨道流过 */
+.route::before,.route::after{content:"";position:absolute;left:11.6%;right:15.2%;top:31px;height:2px;border-radius:2px;pointer-events:none}
+.route::before{background:linear-gradient(90deg,var(--c1),var(--c2),var(--c3));opacity:.3}
+.route.live::before{opacity:.8}
+.route.live::after{right:auto;width:18%;background:linear-gradient(90deg,transparent,#fff,transparent);opacity:.85;animation:rtflow 2.2s linear infinite}
+@keyframes rtflow{from{transform:translateX(0)}to{transform:translateX(310%)}}
+.rt-n{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0;gap:3px}
+.rt-i{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:var(--card);border:1px solid var(--card-b);color:var(--c1);margin-bottom:3px;
+  box-shadow:0 0 0 4px var(--card),0 0 0 5px color-mix(in srgb,var(--c1) 14%,transparent)}
+.rt-i svg{width:18px;height:18px}
+.rt-n.exit .rt-i{color:var(--c3);box-shadow:0 0 0 4px var(--card),0 0 0 5px color-mix(in srgb,var(--c3) 22%,transparent),0 0 18px -4px var(--c3)}
+.rt-n.ok .rt-i{color:var(--ok)}.rt-n.warn .rt-i{color:var(--warn)}.rt-n.bad .rt-i{color:var(--bad)}
+.rt-n b{font-size:12.5px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-n small{font-size:11px;color:var(--sub);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-n.exit small{font-variant-numeric:tabular-nums;font-family:var(--font-num)}
+.rt-n.ok small{color:var(--ok)}.rt-n.warn small{color:var(--warn)}.rt-n.bad small{color:var(--bad)}
+.exitc{min-height:0}
+.exitc .iplist{margin-top:auto}
+/* 统计格、系统信息条 */
+#ov .g4 .stat .v{font-size:26px;font-weight:700}
+#ov .g4 .stat .k,#ov .sysbar .chip .k{text-transform:none;letter-spacing:.02em}
+#ov .sysbar .chip b{font-size:16px}
+/* 地区延迟热力格：深色下格子带微光 */
+.heat .hc{gap:4px}.heat .hc i{border-radius:4px}
+:root:not([data-theme=light]) .h1{background:#10b981;box-shadow:0 0 8px -1px rgba(16,185,129,.7)}
+:root:not([data-theme=light]) .h2{background:#34d399;box-shadow:0 0 8px -1px rgba(52,211,153,.6)}
+:root:not([data-theme=light]) .h3{background:#a3e635;box-shadow:0 0 8px -1px rgba(163,230,53,.55)}
+:root:not([data-theme=light]) .h4{background:#facc15;box-shadow:0 0 8px -1px rgba(250,204,21,.55)}
+:root:not([data-theme=light]) .h5{background:#fb923c;box-shadow:0 0 8px -1px rgba(251,146,60,.6)}
+:root:not([data-theme=light]) .h6{background:#f43f5e;box-shadow:0 0 8px -1px rgba(244,63,94,.65)}
+.heat .hl i{box-shadow:none!important}
+@media (max-width:720px){
+  .trf .spd b{font-size:28px}.trf .spd{gap:20px}.chartw{min-height:130px}
+  .ring{width:72px;height:72px}.ring .rv{font-size:18px}
+  .rt-i{width:32px;height:32px;border-radius:10px}.rt-i svg{width:16px;height:16px}
+  .route{padding:12px 4px 10px;gap:4px}.route::before,.route::after{top:28px}
+  .rt-n b{font-size:12px}.rt-n small{font-size:10.5px}
+  #ov .g4 .stat .v{font-size:22px}.ring.sm{width:40px;height:40px;margin-top:-20px;right:12px}.stat.srg{padding-right:60px!important}
+}
+
+/* ---------- 节点：延迟信号格、选中发光 ---------- */
+.node .dbar.sig{display:inline-flex;align-items:flex-end;gap:2px;height:12px;background:none;margin:0;overflow:visible;border-radius:0;flex:none}
+.node .dbar.sig i{width:3px;border-radius:1px;background:var(--b2h);display:block}
+.node .dbar.sig i:nth-child(1){height:4px}.node .dbar.sig i:nth-child(2){height:6.5px}.node .dbar.sig i:nth-child(3){height:9px}.node .dbar.sig i:nth-child(4){height:12px}
+.sig.l1 i:nth-child(-n+1),.sig.l2 i:nth-child(-n+2),.sig.l3 i:nth-child(-n+3),.sig.l4 i{background:currentColor!important}
+.sig.lx i{background:var(--bad)!important;opacity:.4}
+#groups:not(.nlist) .ngrid .node{position:relative}
+#groups:not(.nlist) .ngrid .node .dbar.sig{position:absolute;top:10px;right:10px}
+#groups:not(.nlist) .ngrid .node .n{padding-right:20px}
+#groups.nlist .node .dbar.sig{justify-self:end}
+:root[data-ui=flat] .node.sel{border-color:color-mix(in srgb,var(--c2) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c2) 50%,transparent),0 0 20px -8px var(--glow)}
+:root[data-ui=flat] .gcard.open .ghead{box-shadow:inset 0 -1px 0 var(--line)}
+
+/* ---------- 表格：表头吸顶（表格自己的滚动区内）、行悬停 ---------- */
+th{font-size:11.5px;font-weight:600;color:var(--sub);letter-spacing:.04em}
+.tw thead th{position:sticky;top:0;z-index:1;background:var(--card)}
+:root.has-bg .tw thead th{background:color-mix(in srgb,var(--card) 92%,var(--bg))}
+section[data-tab="连接"] .tw,section[data-tab="统计"] .tw{max-height:min(72vh,900px);overflow:auto}
+tbody tr{transition:background .12s}
+tbody tr:hover>td{background:var(--hl)}
+@media (max-width:720px){section[data-tab="连接"] .tw{max-height:none}}
+
+/* ---------- 拓扑：霓虹连线 ---------- */
+.tp-map path.flow,.otp svg path.flow{stroke:var(--c1);stroke-opacity:.95;stroke-width:2.4;stroke-dasharray:1.5 10}
+:root[data-theme=light] .tp-map path.flow,:root[data-theme=light] .otp svg path.flow{stroke:var(--c2)}
+.tp-map path[stroke="var(--pri)"],.otp svg path[stroke="var(--pri)"]{stroke:color-mix(in srgb,var(--c2) 75%,var(--c3));stroke-opacity:.75}
+:root[data-ui=flat] .tp-hub{background:linear-gradient(var(--card),var(--card)) padding-box,var(--hair) border-box;border:1px solid transparent;box-shadow:0 0 30px -12px var(--glow)}
+.ntool .nsearch{flex:1 1 160px;min-width:140px}
+.tp-arr.live{background:color-mix(in srgb,var(--c1) 35%,transparent)}.tp-arr.live::after{border-left-color:var(--c1)}
+.tp-arr.live i{background:linear-gradient(90deg,transparent 0,var(--c1) 50%,transparent 100%) no-repeat;background-size:60% 100%}
+
+/* ---------- 日志：终端风格（两种主题都是深色终端） ---------- */
+#livelog,#logs{background:#04070e;color:#c8d3e6;border:1px solid var(--card-b);font:12.5px/1.65 var(--font-mono);padding:12px 12px 12px 10px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03),inset 0 0 40px rgba(34,211,238,.03)}
+#livelog{min-height:min(62vh,600px)}
+#livelog div{border-bottom:0;padding:1px 6px;border-radius:4px}
+#livelog div:hover{background:rgba(148,163,184,.08)}
+#livelog div::before{content:"›";color:#22d3ee;opacity:.7;margin-right:8px}
+#livelog .mut,#logs .mut{color:#5f6b82}#livelog .ok{color:#34d399}#livelog .warn{color:#fbbf24}#livelog .bad{color:#f87171}
+#livelog .lv{width:64px;text-transform:uppercase;font-size:11px;letter-spacing:.06em}
+#livelog>.mut:only-child{display:block;padding:10px 6px}
+
+/* ---------- 设置：分组列表（类似系统设置）+ 分组图标 ---------- */
+.sgrid{max-width:900px}
+@container (min-width:940px){.sgrid{max-width:none}}
+.sic{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;margin-right:10px;vertical-align:middle;flex:none;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--c1) 18%,transparent),color-mix(in srgb,var(--c3) 18%,transparent));color:var(--c1);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c1) 22%,transparent)}
+.sic svg{width:16px;height:16px}
+:root[data-theme=light] .sic{color:var(--c2)}
+section[data-tab="设置"] .card h3{display:flex;align-items:center;font-size:15px;margin-bottom:10px}
+section[data-tab="设置"] .card .row>h3{margin:0!important}
+section[data-tab="设置"] .opt{padding:12px 0;border-bottom:1px solid var(--line)}
+section[data-tab="设置"] .opt .t{font-weight:600}
+section[data-tab="设置"] .opt .dsc{line-height:1.5;margin-top:2px}
+section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 14px}
+@media (max-width:720px){
+  section[data-tab="设置"] .opt .t{font-size:15px}section[data-tab="设置"] .opt .dsc{font-size:13px}
+  section[data-tab="设置"] .card .mut.small{font-size:13px}section[data-tab="设置"] .card h3{font-size:16px}
+  .snav{width:100%}.snav button{flex:1 0 auto}
+  /* 手机：说明文字至少留 180px，放不下的宽控件（分段、下拉、输入框）换到下一行靠右，不再把说明挤成一字一行 */
+  section[data-tab="设置"] .opt{flex-wrap:wrap;row-gap:8px}
+  section[data-tab="设置"] .opt>.sp,section[data-tab="设置"] .card .row>.sp{flex:1 1 180px}
+  section[data-tab="设置"] .opt>.seg,section[data-tab="设置"] .card .row>.seg{margin-left:auto;max-width:100%}
+}
+
+/* ---------- 动效：切页淡入上滑；「减少动态效果」全部关闭 ---------- */
+@media (prefers-reduced-motion:no-preference){main>section:not(.hide){animation:pgin .26s cubic-bezier(.2,.7,.2,1)}}
+@keyframes pgin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){
+  .cpulse::after,.route.live::after{animation:none;display:none}
+  main .card{transition:none}tbody tr{transition:none}
+}
+/* 行内「删除」等危险小按钮：描边红字，悬停才填充（整列大红块太抢眼） */
+:root[data-ui=flat] .btn.r.sm{background:transparent;color:var(--bad);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bad) 45%,transparent)}
+:root[data-ui=flat] .btn.r.sm:hover{background:var(--bad);color:#fff;filter:none}
 </style>
 </head>
 <body><div id="bgimg"></div><div id="bgdim"></div>
@@ -872,10 +1100,12 @@ html.docked:root[data-ui=flat] #drawer{border-radius:0}
     <div class="ovdash">
       <div class="o1 card trf"><div class="row"><h3 class="sp" style="margin:0">实时流量<span class="mut small" style="font-weight:400;margin-left:8px">近 5 分钟</span></h3><span class="lg dn">下载</span><span class="lg up">上传</span></div>
         <div class="spd"><span class="dn"><span class="k">↓</span><b id="ov-down">-</b></span><span class="upx"><span class="k">↑</span><b id="ov-up">-</b></span><span class="mut small" id="ov-tot" style="margin-left:auto"></span></div>
-        <canvas id="chart" height="150" style="width:100%;margin-top:8px;display:block" aria-label="近 5 分钟上传 / 下载速率曲线" role="img"></canvas></div>
+        <div class="chartw"><canvas id="chart" height="150" aria-label="近 5 分钟上传 / 下载速率曲线" role="img"></canvas><i class="cpulse" id="cp-dn" aria-hidden="true"></i><i class="cpulse up" id="cp-up" aria-hidden="true"></i></div></div>
       <div class="o2 card exitc"><div class="row"><h3 class="sp" style="margin:0">当前出口</h3><button class="btn g sm" id="ipmask-btn" onclick="toggleIpMask()">隐藏 IP</button></div>
-        <div class="exn"><b id="ip-node" class="w">-</b><span id="ip-node-d" class="exd"></span></div>
-        <div class="mut small exch" id="ex-chain"></div>
+        <div class="exhero"><div class="ring mut" id="rg-lat" role="img" aria-label="出口节点延迟"><span class="rv">--</span><small>ms</small></div>
+          <div class="exmain"><div class="exn"><b id="ip-node" class="w">-</b><span id="ip-node-d" class="exd"></span></div>
+          <div class="mut small exch" id="ex-chain"></div></div></div>
+        <div class="route" id="ex-route" aria-label="出口链路：设备 → 分流组 → 节点 → 出口 IP"></div>
         <div class="iplist">
           <div class="ipr"><span class="k">代理出口</span><b id="ip-proxy">-</b><span class="mut small" id="loc-proxy"></span></div>
           <div class="ipr"><span class="k">本地公网</span><b id="ip-direct">-</b><span class="mut small" id="loc-direct"></span></div>
@@ -885,8 +1115,8 @@ html.docked:root[data-ui=flat] #drawer{border-radius:0}
     <div class="o3 grid g4" style="margin-bottom:16px">
       <div class="card stat" style="margin:0"><div class="k">代理模式</div><div class="seg" id="mode" style="margin-top:8px"><button data-m="rule">规则</button><button data-m="global">全局</button><button data-m="direct">直连</button></div></div>
       <div class="card stat" style="margin:0"><div class="k">代理方式</div><div class="v" id="s-pm">-</div><div class="s" id="s-pm2"></div></div>
-      <div class="card stat" style="margin:0"><div class="k">活动连接</div><div class="v" id="s-conn">-</div><div class="s" id="s-devs"></div></div>
-      <div class="card stat" style="margin:0"><div class="k">今日拦截广告</div><div class="v" id="s-ad">-</div><div class="s" id="s-ad2"></div></div>
+      <div class="card stat srg" style="margin:0"><div class="k">活动连接</div><div class="v" id="s-conn">-</div><div class="s" id="s-devs"></div><div class="ring sm pri" id="rg-conn" aria-hidden="true"></div></div>
+      <div class="card stat srg" style="margin:0"><div class="k">今日拦截广告</div><div class="v" id="s-ad">-</div><div class="s" id="s-ad2"></div><div class="ring sm warn" id="rg-ad" title="今天被拦截的请求占全部连接请求的比例" aria-hidden="true"></div></div>
     </div>
         <div class="o4 hstats sysbar" aria-label="系统信息">
       <div class="chip up dup" title="当前上传速率"><span class="k"><i>↑</i> 上传</span><b id="h-up">-</b></div>
@@ -1628,7 +1858,7 @@ function renderCore(run){$('#h-dot').className='dot '+(run?'on':'off');$('#h-run
   if(!SVC_ING){$('#h-restart').classList.toggle('hide',!run);$('#h-stop').classList.toggle('hide',!run);$('#h-start').classList.toggle('hide',run)}}  // 启停进行中按钮保持原样（禁用中），完成后再切换
 function renderHdr(l){$('#h-up').textContent=fmt(l.up)+'/s';$('#h-down').textContent=fmt(l.down)+'/s';
   $('#h-ut').textContent=fmt(l.upTotal);$('#h-dt').textContent=fmt(l.downTotal);$('#h-mem').textContent=l.inuse?fmt(l.inuse):'-';
-  $('#ov-up').textContent=fmt(l.up)+'/s';$('#ov-down').textContent=fmt(l.down)+'/s';
+  setNum($('#ov-up'),fmt(l.up),'/s');setNum($('#ov-down'),fmt(l.down),'/s');
   $('#ov-tot').textContent=`累计 ↑${fmt(l.upTotal)} ↓${fmt(l.downTotal)} · 内存 ${l.inuse?fmt(l.inuse):'-'}`;
   if(l.running!==undefined&&l.running!==STATE.running){STATE.running=l.running;renderCore(l.running)}}
 function renderOverview(){renderMode();renderWD();renderPMStat();loadDevs();loadAdStat();loadQS();loadIpInfo();loadExitBw();if(Date.now()-SITES_T>55e3)testSites()}
@@ -1670,7 +1900,7 @@ async function loadQS(){let px;try{px=await loadPX()}catch(e){$('#qs-card').clas
   const g=px[SEL];$('#qs-card').classList.toggle('hide',!g);PROXIES=px;renderHeat(px);if(!g)return;
   const ch=nowChain(SEL);$('#qs-now').textContent=ch.length?'当前：'+ch.join(' → ')+(PROXIES[ch[0]]?.type==='LoadBalance'?'　⚠ 主出口是负载均衡，建议改用竞技组':''):'';$('#qs-now').title=PROXIES[ch[0]]?.type==='LoadBalance'&&typeof LB_TIP==='string'?LB_TIP:'';loadOvTopo();{const last=ch[ch.length-1]||'',d=last&&!isGroup(last)?lastDelay(last):undefined;$('#ip-node').textContent=last||'-';$('#ip-node').title=ch.join(' → ');$('#ip-node-d').textContent=last&&isGroup(last)?(PROXIES[last]?.type==='LoadBalance'?'负载均衡，按连接分到多个节点':''):(d?d+' ms':'');
     const xd=$('#ip-node-d');if(xd)xd.className='exd'+(d?' pillv '+dcls(d):'');const ec=$('#ex-chain'),lt=PROXIES[last]?.type;
-    if(ec)ec.textContent=(ch.length>1?ch.slice(0,-1).join(' → ')+' →':'')+(lt==='Smart'?(ch.length>1?' ':'')+'智能竞技，按延迟 / 丢包自动选节点':'')||(ch.length?'':'核心未运行或没有「🚀 节点选择」')}
+    if(ec)ec.textContent=(ch.length>1?ch.slice(0,-1).join(' → ')+' →':'')+(lt==='Smart'?(ch.length>1?' ':'')+'智能竞技，按延迟 / 丢包自动选节点':'')||(ch.length?'':'核心未运行或没有「🚀 节点选择」')}renderRoute();
   const tested=grpTested(g.all);
   $('#qs').innerHTML=g.all.map(n=>{if(HIDEDEAD&&isHideable(n,g.now,tested))return '';const d=lastDelay(n),p=px[n]||{},sub=p.type==='Smart'?'智能竞技':p.now?'→ '+p.now:(p.type==='LoadBalance'?'负载均衡':'');
     return `<div class="node ${n===g.now?'sel':''}" onclick="qsPick(${jsq(n)})" title="${esc(n)}"><div class="n">${esc(n)}</div><div class="d"><span class="mut" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sub)}</span><span class="${dcls(d)}">${dtxt(d)}</span></div></div>`}).join('')}
@@ -1694,13 +1924,14 @@ function spark(vals,col,empty){let pts=vals.map((v,i)=>[i,v]).filter(p=>p[1]!=nu
     <path d="${d} L${xy[xy.length-1][0].toFixed(1)},${H} L${xy[0][0].toFixed(1)},${H} Z" fill="url(#${id})"/><path d="${d}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`}
 async function loadAdStat(){let a;try{a=await api('/api/adblock')}catch(e){return}
   const n=v=>(+v||0).toLocaleString('zh-CN'),rules=Object.entries(a.loaded||{}).filter(([k])=>k!=='ad-allow').reduce((s,[,v])=>s+(v||0),0);
-  $('#s-ad').textContent=a.enabled?n(a.stats.today):'未开启';AD_TODAY=a.stats.today;STATE.adblock_on=a.enabled;renderAdChip();$('#s-ad2').textContent=a.enabled?'规则 '+n(rules)+' 条':'在“广告拦截”中开启';
+  if(a.enabled)setNum($('#s-ad'),n(a.stats.today));else{$('#s-ad').textContent='未开启';$('#s-ad')._nv=null}AD_TODAY=a.stats.today;STATE.adblock_on=a.enabled;renderAdChip();$('#s-ad2').textContent=a.enabled?'规则 '+n(rules)+' 条':'在“广告拦截”中开启';
   const on=$('#ovab-on');on.checked=a.enabled;on.disabled=!!a.updating;
   on.onchange=async e=>{const v=e.target.checked;try{toast('正在应用…');const j=await api('/api/adblock','PUT',{enabled:v});toast(/下载/.test(j.message||'')?j.message:'广告拦截已'+(v?'开启':'关闭'))}catch(x){toast(x.message)}loadAdStat()};
   const H=a.stats.hours||[],req=H.reduce((s,h)=>s+h.req,0),blk=H.reduce((s,h)=>s+h.blk,0),dv=H.filter(h=>h.dns!=null),
     D=a.stats.dns||{},dns=D.avg!=null?Math.round(D.avg):dv.length?Math.round(dv.reduce((s,h)=>s+h.dns,0)/dv.length):null,
     dser=D.series||H.map(h=>h.dns),dsub=D.samples?(D.mode==='recent'?'最近 '+D.series.length+' 次':'24 小时 · '+D.samples+' 次')+(D.last!=null?' · 最新 '+D.last+' ms':''):'',pct=req?(blk/req*100).toFixed(1)+'%':'',
     top=(a.stats.top||[]).slice(0,5),tmx=top.length?top[0][1]:1,O='#ff9f0a';
+  setRing('#rg-ad',a.enabled&&req?blk/req:0,a.enabled?'warn':'mut');
   $('#ovab-body').innerHTML=`<div class="dft">
     <div class="card dfc"><div class="k row"><span class="sp">平均解析耗时</span><span class="mut" style="font-size:11.5px" title="${esc(dsub)}">${esc(dsub)}</span></div><div class="v">${dns==null?'-':dns+'<small>ms</small>'}</div>${spark(dser,cssv('--ok'),'等待首次检测（约 10 秒）')}</div>
     <div class="card dfc"><div class="k">连接请求</div><div class="v">${n(req)}</div>${spark(H.map(h=>h.req),cssv('--pri'))}</div>
@@ -1737,7 +1968,7 @@ async function loadIpInfo(){let j;try{j=await api('/api/ipinfo')}catch(e){IP_FAI
       $(locEl).textContent=k?((d.loc||'').split(' ')[0]||''):f.loc}
     else{el.textContent=d.ip;el.title='';$(locEl).textContent=d.loc||''}};
   set('#ip-direct','#loc-direct',j.direct||{},0);set('#ip-proxy','#loc-proxy',j.proxy||{},1);
-  $('#ipmask-btn').textContent=IPMASK?'显示 IP':'隐藏 IP'}
+  $('#ipmask-btn').textContent=IPMASK?'显示 IP':'隐藏 IP';renderRoute()}
 function toggleIpMask(){IPMASK=!IPMASK;localStorage.setItem('ipmask',IPMASK?'1':'0');loadIpInfo()}
 
 // 概览「DNS 查询结果」：最近 100 条查询里缓存命中 / 上游应答 / 查无此名的占比（sing-box debug 日志统计）
@@ -1785,7 +2016,7 @@ async function tickOnce(){
       renderConns(CONNS)}catch(e){$('#s-conn').textContent='-'}}
   else if(TAB==='概览'&&_cn%3===0){ // 概览只要两个数字：走轻量的 /api/conns/stats，不再拉完整连接列表
     try{const s=await api('/api/conns/stats');showConnStat(s.count,s.devices)}catch(e){$('#s-conn').textContent='-'}}}
-function showConnStat(n,d){$('#s-conn').textContent=n;$('#s-devs').textContent=d+' 台设备'}
+function showConnStat(n,d){setNum($('#s-conn'),String(n));$('#s-devs').textContent=d+' 台设备';ringConns(n);if(TAB==='概览')renderRoute()}
 // 站点延迟：每个站点一张卡片，图标 + 最近 30 次延迟柱状图 + 当前值；柱高按 max(300ms, 近期最大值) 缩放，超时为满高红柱
 const SITE_SVG='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3.2 2.8 14.8 0 18M12 3c-2.8 3.2-2.8 14.8 0 18"/></svg>';
 function favFail(im){const p=im.parentNode;p.classList.add('nf');p.innerHTML=esc(p.dataset.l)||SITE_SVG}
@@ -1962,7 +2193,9 @@ function setNView(v,save){NVIEW=v==='list'?'list':'card';if(save!==false)try{loc
   $('#groups')?.classList.toggle('nlist',NVIEW==='list');
   document.querySelectorAll('#nview button').forEach(b=>{const on=b.dataset.v===NVIEW;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on))})}
 // 延迟色条：0–1000 ms 按比例，越短越快；超时满格红色，没测过不画
-function dbar(d){if(d===undefined)return '<div class="dbar"></div>';const w=d<=0?100:Math.max(4,Math.min(100,d/10));return `<div class="dbar"><i class="${dcls(d)}" style="width:${w.toFixed(0)}%"></i></div>`}
+// 延迟信号格（v9.1.16）：4 格，<150 ms 满格、<300 三格、<800 两格、更慢一格，超时打叉、未测全灰
+function dbar(d){const lv=d===undefined?0:d<=0?-1:d<150?4:d<300?3:d<800?2:1;
+  return `<div class="dbar sig ${lv<0?'lx':'l'+lv} ${dcls(d)}" title="${d===undefined?'未测速':d<=0?'超时':d+' ms'}"><i></i><i></i><i></i><i></i></div>`}
 // 成员多（≥10 个节点）的组按地区分段显示：地区 = 节点所在的「xx竞技」组（与地区筛选同一口径），子分组在最前，认不出地区的归「其他」
 function nodeSections(list,g){const nodes=list.filter(n=>!isGroup(n));if(nodes.length<10||NF.r)return [['',list]];
   const rg=regionGroups();if(!rg.length)return [['',list]];
@@ -2638,18 +2871,28 @@ const HIST={up:[],down:[]},HIST_N=300;
 function pushHist(u,d){HIST.up.push(u);HIST.down.push(d);if(HIST.up.length>HIST_N){HIST.up.shift();HIST.down.shift()}if(TAB==='概览')drawChart()}
 // 纵轴取整到 1/2/5 × 10^n 个 KB / MB（与 fmt 同为 1024 进制），刻度显示成 5 MB/s、200 KB/s 这样的整数
 function niceMax(v){v=Math.max(1024,v)*1.12;let u=1;while(v/u>=1024&&u<1024**3)u*=1024;const x=v/u,p=Math.pow(10,Math.floor(Math.log10(x))),m=x/p;const r=(m<=1?1:m<=2?2:m<=5?5:10)*p;return r>=1000?1024*u:r*u}
+// 面积图（v9.1.16）：渐变描边 + 发光（宽低透明线叠细线，不用 shadowBlur）+ 渐隐填充、纵横网格、最新点脉冲（DOM 小圆点 + CSS 动画）。
+// 刚打开页面不满 5 分钟时横轴只铺开已有的时长（至少 10 秒），曲线从左边开始长，不再挤在右侧一小段；没数据时只画网格基线
+const hexA=(c,a)=>/^#[0-9a-f]{6}$/i.test(c)?c+Math.round(a*255).toString(16).padStart(2,'0'):c;
+const spanTxt=s=>s<60?Math.round(s)+' 秒':(s%60?(s/60).toFixed(1):s/60)+' 分钟';
 function drawChart(){const c=$('#chart');if(!c||c.offsetParent===null)return;const r=devicePixelRatio||1,H=c.clientHeight||150,w=c.width=c.clientWidth*r,h=c.height=H*r,x=c.getContext('2d');
-  x.clearRect(0,0,w,h);const max=niceMax(Math.max(...HIST.up,...HIST.down,0)),top=16*r,bot=h-18*r,ph=bot-top,step=w/(HIST_N-1);
-  x.font=(11*r)+'px '+(cssv('--font-num')||'-apple-system,sans-serif');x.lineWidth=1;x.strokeStyle=cssv('--line');x.fillStyle=cssv('--sub');
-  for(let i=0;i<=2;i++){const y=Math.round(bot-i*ph/2)+.5;x.beginPath();x.setLineDash(i?[3*r,4*r]:[]);x.moveTo(0,y);x.lineTo(w,y);x.stroke();if(i)x.fillText(fmt(max*i/2)+'/s',4*r,y-4*r)}
-  x.setLineDash([]);x.textBaseline='top';[['5 分钟前',0,'left'],['2.5 分钟',w/2,'center'],['现在',w,'right']].forEach(([t,px,al])=>{x.textAlign=al;x.fillText(t,px,bot+5*r)});x.textAlign='left';x.textBaseline='alphabetic';
-  [[HIST.down,cssv('--pri')],[HIST.up,cssv('--ok')]].forEach(([a,col])=>{if(a.length<2)return;
+  x.clearRect(0,0,w,h);const n=HIST.down.length,S=n>=HIST_N?HIST_N:Math.max(10,n),max=niceMax(Math.max(...HIST.up,...HIST.down,0)),top=16*r,bot=h-18*r,ph=bot-top,step=w/(S-1);
+  const grid=cssv('--grid')||cssv('--line'),sub=cssv('--sub');
+  x.font=(10.5*r)+'px '+(cssv('--font-num')||'-apple-system,sans-serif');x.lineWidth=1;x.strokeStyle=grid;x.fillStyle=sub;
+  for(let i=1;i<5;i++){const gx=Math.round(w*i/5)+.5;x.beginPath();x.setLineDash([2*r,5*r]);x.moveTo(gx,top);x.lineTo(gx,bot);x.stroke()}
+  for(let i=0;i<=2;i++){const y=Math.round(bot-i*ph/2)+.5;x.beginPath();x.setLineDash(i?[2*r,5*r]:[]);x.moveTo(0,y);x.lineTo(w,y);x.stroke();if(i)x.fillText(fmt(max*i/2)+'/s',4*r,y-5*r)}
+  x.setLineDash([]);x.textBaseline='top';[[spanTxt(S)+'前',0,'left'],[spanTxt(S/2)+'前',w/2,'center'],['现在',w,'right']].forEach(([t,px,al])=>{x.textAlign=al;x.fillText(t,px,bot+5*r)});x.textAlign='left';x.textBaseline='alphabetic';
+  const c1=cssv('--c1')||cssv('--pri'),c2=cssv('--c2')||cssv('--pri'),c3=cssv('--c3')||c2,cu=cssv('--c-up')||cssv('--ok');
+  [[HIST.down,[c1,c2,c3],'#cp-dn'],[HIST.up,[cu,cu,cu],'#cp-up']].forEach(([a,cs,pid])=>{const pe=$(pid);
+    if(a.length<2){if(pe)pe.style.display='none';return}
     const pts=a.map((v,i)=>[w-(a.length-1-i)*step,bot-(v/max)*ph]);
     const path=()=>{x.moveTo(pts[0][0],pts[0][1]);for(let k=1;k<pts.length;k++){const [x0,y0]=pts[k-1],[x1,y1]=pts[k],cx=(x0+x1)/2;x.bezierCurveTo(cx,y0,cx,y1,x1,y1)}};
-    const g=x.createLinearGradient(0,top,0,bot);g.addColorStop(0,col+'40');g.addColorStop(1,col+'00');
+    const g=x.createLinearGradient(0,top,0,bot);g.addColorStop(0,hexA(cs[1],.30));g.addColorStop(.7,hexA(cs[1],.06));g.addColorStop(1,hexA(cs[1],0));
     x.beginPath();path();x.lineTo(pts[pts.length-1][0],bot);x.lineTo(pts[0][0],bot);x.closePath();x.fillStyle=g;x.fill();
-    x.strokeStyle=col;x.lineWidth=1.6*r;x.lineJoin='round';x.beginPath();path();x.stroke();
-    const [lx,ly]=pts[pts.length-1];x.fillStyle=col;x.beginPath();x.arc(lx-2*r,ly,2.6*r,0,7);x.fill()})}
+    const sg=x.createLinearGradient(pts[0][0],0,w,0);sg.addColorStop(0,cs[0]);sg.addColorStop(.55,cs[1]);sg.addColorStop(1,cs[2]);
+    x.lineJoin='round';x.lineCap='round';x.strokeStyle=sg;
+    x.globalAlpha=.18;x.lineWidth=6*r;x.beginPath();path();x.stroke();x.globalAlpha=1;x.lineWidth=1.8*r;x.beginPath();path();x.stroke();
+    const [lx,ly]=pts[pts.length-1];if(pe){pe.style.display='';pe.style.left=(lx/r)+'px';pe.style.top=(ly/r+c.offsetTop)+'px'}})}
 addEventListener('resize',()=>{if(TAB==='概览')drawChart()});
 // 规则集
 const RS_BASE='https://github.com/MetaCubeX/meta-rules-dat/raw/meta/geo/geosite/';
@@ -2965,6 +3208,63 @@ document.addEventListener('keydown',e=>{const k=(e.key||'').toLowerCase();
   if(k==='enter'&&e.target===$('#cmdk-q')){e.preventDefault();cmdkRun(CMDK_I);return}
   if(k==='tab'){e.preventDefault();$('#cmdk-q').focus()}});
 $('#cmdk-q').addEventListener('input',()=>{CMDK_I=0;cmdkRender()});
+// 「科技控制台」界面层（v9.1.16）：数字补间、环形指示、出口链路图、设置分组图标、切页动效、手机「桌面版网站」提示
+// 只改显示，不发新请求：数据都来自已有的 /api/live、/api/conns/stats、/api/px、/api/ipinfo、/api/adblock
+const RMOTION=matchMedia('(prefers-reduced-motion: reduce)');
+// 「12.3 MB」→ 数字 + 小号单位；单位相同时数字补间（380ms），减少动态效果时直接替换
+function numParts(s){const m=/^(-?[\d.,]+)\s*(.*)$/.exec(String(s));return m?[m[1],m[2]]:[String(s),'']}
+function setNum(el,txt,suf){if(!el)return;const [n,u]=numParts(txt),unit=u+(suf||''),old=el._nv;
+  const put=v=>{el.innerHTML=`<span class="nv">${esc(v)}</span>${unit?`<small class="nu">${esc(unit)}</small>`:''}`};
+  const to=parseFloat(String(n).replace(/,/g,''));el._nv={n:to,u:unit,raw:n};
+  if(RMOTION.matches||!old||old.u!==unit||!isFinite(to)||!isFinite(old.n)||old.n===to||document.hidden){put(n);return}
+  const from=old.n,dec=(String(n).split('.')[1]||'').length,t0=performance.now(),D=380,grp=/,/.test(n);
+  cancelAnimationFrame(el._raf);
+  const step=t=>{const k=Math.min(1,(t-t0)/D),e=1-Math.pow(1-k,3),v=from+(to-from)*e;
+    put(k>=1?n:grp?Math.round(v).toLocaleString('zh-CN'):v.toFixed(dec));if(k<1)el._raf=requestAnimationFrame(step)};
+  el._raf=requestAnimationFrame(step)}
+// 环形指示：p 取 0..1，cls 决定颜色（ok / warn / bad / pri）
+function setRing(id,p,cls,label,unit){const r=$(id);if(!r)return;p=Math.max(0,Math.min(1,+p||0));
+  r.style.setProperty('--p',p.toFixed(3));r.classList.toggle('zero',p<=0);['ok','warn','bad','mut','pri'].forEach(k=>r.classList.toggle(k,k===(cls||'pri')));
+  if(label!==undefined){const t=r.querySelector('.rv');if(t)t.textContent=label}if(unit!==undefined){const u=r.querySelector('small');if(u)u.textContent=unit}}
+let CONN_PEAK=64;
+function ringConns(n){n=+n||0;CONN_PEAK=Math.max(CONN_PEAK,Math.ceil(n*1.25/16)*16);setRing('#rg-conn',n/CONN_PEAK,n>CONN_PEAK*.85?'warn':'pri')}
+// 出口链路图：设备 → 分流组 → 节点 → 出口 IP（链路来自 nowChain，IP 来自「当前出口」卡片已显示的内容）
+const RT_ICO={dev:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',grp:'<path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+  node:'<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',exit:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'};
+function rtStep(k,t,s,cls){return `<div class="rt-n ${cls||''}"><span class="rt-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${RT_ICO[k]}</svg></span><b title="${esc(t)}">${esc(t)}</b><small title="${esc(s)}">${esc(s)}</small></div>`}
+function renderRoute(){const el=$('#ex-route');if(!el)return;const ch=typeof nowChain==='function'&&typeof SEL==='string'&&PROXIES[SEL]?nowChain(SEL):[];
+  const devs=($('#s-devs')?.textContent||'').trim(),ip=($('#ip-proxy')?.textContent||'-').trim(),loc=($('#loc-proxy')?.textContent||'').trim(),
+    last=ch[ch.length-1]||'',d=last&&!isGroup(last)?lastDelay(last):undefined,grp=ch.length>1?ch[ch.length-2]:SEL||'',
+    gt=last&&isGroup(last)?PROXIES[last].type:'',gk=gt==='Smart'?['AI','智能','智能竞技']:gt==='LoadBalance'?['LB','均衡','负载均衡']:['--','ms','分组'];
+  const live=STATE.running!==false&&ch.length>0;
+  el.classList.toggle('live',live);
+  el.innerHTML=rtStep('dev','局域网设备',devs&&devs!=='0 台设备'?devs:'透明代理')+
+    rtStep('grp',grp||'-',ch.length>2?ch.length-1+' 级':'分流组')+
+    rtStep('node',last||'-',d?d+' ms':gt?gk[2]:'节点',d?dcls(d):'')+
+    rtStep('exit',loc.split(' ').slice(0,2).join(' ')||'出口',ip||'-','exit');
+  // 出口延迟环：0–600 ms 映射到满圈的 100%–8%（越快越满）
+  const g=$('#rg-lat');if(g){if(d>0)setRing('#rg-lat',Math.max(.08,1-d/600),dcls(d),d,'ms');else if(gt==='Smart'||gt==='LoadBalance')setRing('#rg-lat',1,'pri',gk[0],gk[1]);else setRing('#rg-lat',0,'mut','--','ms')}}
+// 设置页：卡片标题前加分组图标（沿用导航 / 命令面板的线性图标风格）
+const SET_ICO=[[/代理方式|TUN/,'<path d="M4 12h4l3-7 4 14 3-7h2"/>'],[/解锁|流媒体/,'<rect x="3" y="5" width="18" height="12" rx="2"/><path d="m10 9 5 2-5 2z"/>'],
+  [/系统优化/,'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'],[/绕过/,'<path d="M5 12h14M13 6l6 6-6 6"/><path d="M5 6v12"/>'],[/备注/,'<path d="M4 20h4L19 9l-4-4L4 16z"/>'],
+  [/订阅/,'<path d="M5 11a8 8 0 0 1 8 8M5 5a14 14 0 0 1 14 14"/><circle cx="6" cy="18" r="1.5"/>'],[/诊断/,'<path d="M3 12h4l2-5 4 10 2-5h6"/>'],
+  [/^内核/,'<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'],[/核心服务/,'<path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/>'],
+  [/定时/,'<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/>'],[/延迟检测/,'<path d="M2 18a10 10 0 0 1 20 0"/><path d="m12 18 4-6"/>'],[/日志/,'<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'],
+  [/安全|密码/,'<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>'],[/Telegram|通知/,'<path d="M21 4 3 11l6 2 2 7 3-5 5 4z"/>'],[/布局/,'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>'],
+  [/主题/,'<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>'],[/背景/,'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 17 5-5 4 4 3-3 6 6"/><circle cx="15.5" cy="8.5" r="1.5"/>'],
+  [/备份|恢复/,'<path d="M4 7h16v13H4zM9 3h6v4H9z"/><path d="M9 13h6"/>'],[/更新/,'<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>']];
+function setIcons(){document.querySelectorAll('section[data-tab="设置"] .sgrid>.card').forEach(c=>{const h=c.querySelector('h3');if(!h||h.querySelector('.sic'))return;
+  const t=h.textContent.trim(),m=SET_ICO.find(([re])=>re.test(t));
+  h.insertAdjacentHTML('afterbegin',`<span class="sic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${m?m[1]:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'}</svg></span>`)})}
+// 手机 Chrome 开了「桌面版网站」：浏览器忽略 viewport，按 980px 排版后整页缩小，字很小。检测到时在顶部给一次可关闭的提示
+function deskModeHint(){try{if(localStorage.getItem('mp_dmh')==='1')return}catch(e){}
+  const sw=Math.min(screen.width||0,screen.height||0),coarse=matchMedia('(pointer:coarse)').matches;
+  if(!(coarse&&sw&&sw<=600&&innerWidth>=900))return;
+  const d=document.createElement('div');d.className='dmh';d.setAttribute('role','note');
+  d.innerHTML='<span>当前是浏览器的「桌面版网站」模式，页面按电脑宽度排版、字会很小。在浏览器菜单里取消勾选「桌面版网站」即可使用手机版界面。</span><button class="btn g sm" type="button">知道了</button>';
+  d.querySelector('button').onclick=()=>{d.remove();try{localStorage.setItem('mp_dmh','1')}catch(e){}};
+  const m=document.querySelector('main');if(m)m.prepend(d)}
+setIcons();deskModeHint();
 </script>
 </body>
 </html>
