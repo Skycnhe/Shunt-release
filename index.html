@@ -765,18 +765,18 @@ a.lnk{color:var(--pri);cursor:pointer;text-decoration:none}a.lnk:hover{text-deco
 .rsec-h{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--sub);margin:12px 2px 6px}
 .rsec-h:first-child{margin-top:2px}
 .rsec-h span{font-weight:500;background:var(--b2);border-radius:999px;padding:0 7px;font-size:11px}
-#groups.nlist .ngrid{grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:2px 18px}
-#groups.nlist .node{display:grid;grid-template-columns:minmax(0,1fr) auto 56px 58px;align-items:center;column-gap:10px;padding:6px 10px;border-color:transparent;background:none;border-radius:var(--r-sm)}
-#groups.nlist .node:hover{background:var(--b2);transform:none}
-#groups.nlist .node.sel{background:var(--nsel);box-shadow:inset 3px 0 0 var(--pri);border-color:transparent}
-#groups.nlist .node .d{display:contents}
-#groups.nlist .node .nt,#groups.nlist .node .sub2{display:none}
-#groups.nlist .node .d>.mut:not(.nt){grid-column:2;font-size:11.5px}
-#groups.nlist .node .dbar{grid-column:3;margin:0}
-#groups.nlist .node .nd{grid-column:4;text-align:right;font-size:12.5px}
-#groups.nlist .node>.btn{grid-column:1/-1;justify-self:start;margin-top:4px}
-#groups.nlist .node .n{grid-column:1;grid-row:1}
-#groups.nlist .node .dbar,#groups.nlist .node .nd,#groups.nlist .node .d>.mut:not(.nt){grid-row:1}
+#node-groups.nlist .ngrid{grid-template-columns:repeat(auto-fill,minmax(min(100%,330px),1fr));gap:2px 18px}
+#node-groups.nlist .node{display:grid;grid-template-columns:minmax(0,1fr) auto 56px 58px;align-items:center;column-gap:10px;padding:6px 10px;border-color:transparent;background:none;border-radius:var(--r-sm)}
+#node-groups.nlist .node:hover{background:var(--b2);transform:none}
+#node-groups.nlist .node.sel{background:var(--nsel);box-shadow:inset 3px 0 0 var(--pri);border-color:transparent}
+#node-groups.nlist .node .d{display:contents}
+#node-groups.nlist .node .nt,#node-groups.nlist .node .sub2{display:none}
+#node-groups.nlist .node .d>.mut:not(.nt){grid-column:2;font-size:11.5px}
+#node-groups.nlist .node .dbar{grid-column:3;margin:0}
+#node-groups.nlist .node .nd{grid-column:4;text-align:right;font-size:12.5px}
+#node-groups.nlist .node>.btn{grid-column:1/-1;justify-self:start;margin-top:4px}
+#node-groups.nlist .node .n{grid-column:1;grid-row:1}
+#node-groups.nlist .node .dbar,#node-groups.nlist .node .nd,#node-groups.nlist .node .d>.mut:not(.nt){grid-row:1}
 
 /* ---------- 拓扑：有连接的连线上流动的光点（尊重「减少动态效果」） ---------- */
 .tp-map path.flow,.otp svg path.flow{stroke:#fff;stroke-opacity:.75;stroke-dasharray:1.5 11;stroke-linecap:round;animation:tpflow 1s linear infinite}
@@ -995,10 +995,10 @@ header::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px
 .node .dbar.sig i:nth-child(1){height:4px}.node .dbar.sig i:nth-child(2){height:6.5px}.node .dbar.sig i:nth-child(3){height:9px}.node .dbar.sig i:nth-child(4){height:12px}
 .sig.l1 i:nth-child(-n+1),.sig.l2 i:nth-child(-n+2),.sig.l3 i:nth-child(-n+3),.sig.l4 i{background:currentColor!important}
 .sig.lx i{background:var(--bad)!important;opacity:.4}
-#groups:not(.nlist) .ngrid .node{position:relative}
-#groups:not(.nlist) .ngrid .node .dbar.sig{position:absolute;top:10px;right:10px}
-#groups:not(.nlist) .ngrid .node .n{padding-right:20px}
-#groups.nlist .node .dbar.sig{justify-self:end}
+#node-groups:not(.nlist) .ngrid .node{position:relative}
+#node-groups:not(.nlist) .ngrid .node .dbar.sig{position:absolute;top:10px;right:10px}
+#node-groups:not(.nlist) .ngrid .node .n{padding-right:20px}
+#node-groups.nlist .node .dbar.sig{justify-self:end}
 :root[data-ui=flat] .node.sel{border-color:color-mix(in srgb,var(--c2) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c2) 50%,transparent),0 0 20px -8px var(--glow)}
 :root[data-ui=flat] .gcard.open .ghead{box-shadow:inset 0 -1px 0 var(--line)}
 
@@ -1021,13 +1021,13 @@ tbody tr:hover>td{background:var(--hl)}
 .tp-arr.live i{background:linear-gradient(90deg,transparent 0,var(--c1) 50%,transparent 100%) no-repeat;background-size:60% 100%}
 
 /* ---------- 日志：终端风格（两种主题都是深色终端） ---------- */
-#livelog,#logs{background:#04070e;color:#c8d3e6;border:1px solid var(--card-b);font:12.5px/1.65 var(--font-mono);padding:12px 12px 12px 10px;
+#livelog,#log-file{background:#04070e;color:#c8d3e6;border:1px solid var(--card-b);font:12.5px/1.65 var(--font-mono);padding:12px 12px 12px 10px;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.03),inset 0 0 40px rgba(34,211,238,.03)}
 #livelog{min-height:min(62vh,600px)}
 #livelog div{border-bottom:0;padding:1px 6px;border-radius:4px}
 #livelog div:hover{background:rgba(148,163,184,.08)}
 #livelog div::before{content:"›";color:#22d3ee;opacity:.7;margin-right:8px}
-#livelog .mut,#logs .mut{color:#5f6b82}#livelog .ok{color:#34d399}#livelog .warn{color:#fbbf24}#livelog .bad{color:#f87171}
+#livelog .mut,#log-file .mut{color:#5f6b82}#livelog .ok{color:#34d399}#livelog .warn{color:#fbbf24}#livelog .bad{color:#f87171}
 #livelog .lv{width:64px;text-transform:uppercase;font-size:11px;letter-spacing:.06em}
 #livelog>.mut:only-child{display:block;padding:10px 6px}
 
@@ -1064,6 +1064,68 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
 /* 行内「删除」等危险小按钮：描边红字，悬停才填充（整列大红块太抢眼） */
 :root[data-ui=flat] .btn.r.sm{background:transparent;color:var(--bad);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bad) 45%,transparent)}
 :root[data-ui=flat] .btn.r.sm:hover{background:var(--bad);color:#fff;filter:none}
+
+/* ===== v9.1.17「科技控制台」延伸到其余页面：连接 / 统计 / 测速 / 日志 / 规则 / 订阅 / WARP =====
+   数字一律等宽并右对齐、单位统一 1024 进制；有数据就给比例条 / 趋势线，空状态说明原因；颜色只用主题变量，深浅色通用 */
+.vh{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+th.num,td.num{text-align:right;white-space:nowrap}
+td.num,td.num0,.csum b,.lcnt b,.stat .sm,.spst b,.daytip{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+/* 可排序表头：整格是按钮，键盘可用，当前排序列显示方向 */
+th .thb{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:4px;color:inherit;font:inherit}
+th .thb:focus-visible{outline:2px solid var(--c2);outline-offset:2px}
+th .thb:hover{color:var(--txt)}
+th.num .thb{flex-direction:row-reverse}
+th[aria-sort] .thb::after{content:"";width:0;height:0;border:4px solid transparent;opacity:0;margin-top:2px}
+th[aria-sort=descending] .thb::after{border-top-color:currentColor;opacity:1;margin-top:6px}
+th[aria-sort=ascending] .thb::after{border-bottom-color:currentColor;opacity:1;margin-top:-4px}
+th.on{color:var(--c1)}
+/* 连接页汇总条 */
+.csum{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
+.csum:empty{display:none}
+.csum .cs{display:flex;flex-direction:column;gap:1px;padding:7px 12px;border-radius:var(--r-md,8px);border:1px solid var(--card-b);background:var(--nbg,var(--b2));min-width:88px}
+.csum .cs small{font-size:11.5px;color:var(--sub)}.csum .cs b{font-size:16px;font-weight:650;letter-spacing:-.01em}
+.csum .cs.dn b{color:var(--c2)}.csum .cs.up b{color:var(--c-up)}
+.net{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--card-b);color:var(--sub)}
+.net.udp{color:var(--c3);border-color:color-mix(in srgb,var(--c3) 40%,var(--card-b))}
+.ctable td.num{color:var(--sub)}.ctable td.num.act{color:var(--c2);font-weight:600}.ctable td.num.act.up{color:var(--c-up)}
+#c-more:not(:empty){margin-top:8px}
+@media (max-width:720px){.csum .cs{flex:1 1 calc(33% - 8px);min-width:0;padding:6px 9px}.csum .cs b{font-size:14px}.ctable td.num{color:inherit}}
+/* 统计页：概要卡片的上下行占比条、副行 */
+.stk .stat .sm{font-size:12.5px;color:var(--sub);margin-top:4px;overflow-wrap:anywhere}
+.stbar{display:flex;height:4px;border-radius:2px;overflow:hidden;background:var(--b2);margin-top:8px}
+.stbar i{display:block;height:100%}.stbar i.d,.lgd i.d,.daytip i.d{background:var(--c2)}.stbar i.u,.lgd i.u,.daytip i.u{background:var(--c-up)}
+.lgd{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--sub)}
+.lgd i{width:9px;height:9px;border-radius:2px;display:inline-block}.lgd i.a{height:0;width:12px;border-top:2px dashed var(--warn);border-radius:0}
+.dayw{position:relative;touch-action:pan-y}
+.daytip{position:absolute;left:0;top:6px;pointer-events:none;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;font-size:12px;
+  background:color-mix(in srgb,var(--card) 94%,transparent);border:1px solid var(--card-b);box-shadow:var(--shadow);white-space:nowrap;z-index:2}
+.daytip span{display:flex;align-items:center;gap:6px;color:var(--sub)}.daytip b{color:var(--txt)}.daytip i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.daytip em{font-style:normal}
+.sttab td.shr{min-width:84px;width:96px}
+td.shr span{display:block}
+td.shr i,td.spdl i{display:block;position:relative;height:4px;border-radius:2px;margin-top:4px;background:var(--b2);overflow:hidden}
+td.shr i::before,td.spdl i::before{content:"";position:absolute;inset:0 auto 0 0;width:var(--w);min-width:2px;border-radius:2px;background:var(--grad)}
+/* 测速：趋势线、记录表下载列比例条 */
+.sptr{display:flex;align-items:center;gap:14px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--card-b)}
+.spark{flex:0 0 46%;max-width:240px;height:36px;overflow:visible}
+.spark .sl{fill:none;stroke:var(--c2);stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+.spark .sa{fill:color-mix(in srgb,var(--c2) 14%,transparent);stroke:none}.spark circle{fill:var(--c1);stroke:var(--card);stroke-width:1.5}
+.spst{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12px;color:var(--sub);min-width:0}.spst b{color:var(--txt);font-weight:650}
+td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:currentColor;opacity:.8}
+.sptab td:first-child{white-space:nowrap}
+@media (max-width:720px){.sptr{flex-direction:column;align-items:stretch;gap:8px}.spark{max-width:none;flex:none;width:100%}}
+/* 日志：级别计数 */
+.lcnt{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 10px}
+.lcnt:empty{display:none}
+.lc{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:12px;color:var(--sub);border:1px solid var(--card-b)}
+.lc i{width:6px;height:6px;border-radius:50%;background:var(--sub);opacity:.5}
+.lc.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--card-b))}.lc.bad i{background:var(--bad);opacity:1}
+.lc.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--card-b))}.lc.warn i{background:var(--warn);opacity:1}
+.lc.ok i{background:var(--ok);opacity:1}.lc b{color:var(--txt);font-weight:650}
+@media (prefers-reduced-motion:reduce){.spark *{transition:none}}
+@media (max-width:720px){.sttab th:nth-child(2),.sttab th:nth-child(3),.sttab td:nth-child(2),.sttab td:nth-child(3){display:none}
+  .sttab td:first-child{min-width:120px;word-break:normal;overflow-wrap:anywhere}
+  section[data-tab="统计"] .card>.row:first-child>h3{flex:1 0 100%;margin-bottom:6px!important}}
 </style>
 </head>
 <body><div id="bgimg"></div><div id="bgdim"></div>
@@ -1173,7 +1235,7 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
     <div class="card" id="pol-card"><div class="row"><h3 class="sp" style="margin:0">策略选择</h3><span class="mut small pdesc">各分流组当前使用的节点 / 分组，直接下拉切换</span>
       <button class="btn g sm" onclick="go('策略组')">管理策略组</button></div>
       <div id="policies" class="pgrid"></div></div>
-    <div id="groups"><div class="card skel-card"><div class="skel" style="width:40%"></div><div class="skel" style="width:70%;margin-top:10px"></div></div><div class="card skel-card"><div class="skel" style="width:30%"></div><div class="skel" style="width:60%;margin-top:10px"></div></div><div class="card skel-card"><div class="skel" style="width:35%"></div><div class="skel" style="width:55%;margin-top:10px"></div></div></div>
+    <div id="node-groups"><div class="card skel-card"><div class="skel" style="width:40%"></div><div class="skel" style="width:70%;margin-top:10px"></div></div><div class="card skel-card"><div class="skel" style="width:30%"></div><div class="skel" style="width:60%;margin-top:10px"></div></div><div class="card skel-card"><div class="skel" style="width:35%"></div><div class="skel" style="width:55%;margin-top:10px"></div></div></div>
     <div class="card"><div class="row"><h3 class="sp" style="margin:0">订阅节点管理</h3><span class="mut small pdesc">勾选不想要的订阅节点「从订阅删除」，订阅更新后也不会再出现；可在「订阅」页恢复</span>
       <button class="btn g sm" id="sn-toggle" onclick="toggleSN()">选择节点删除</button></div>
       <div id="sn-box" class="hide"><div class="row mt"><input id="sn-q" class="sp" placeholder="搜索订阅节点" oninput="renderSN()"><span id="sn-cnt" class="mut small">已选 0 个</span>
@@ -1239,7 +1301,7 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
         <input id="sub-exclude" placeholder="排除节点（正则）" class="sp"></div>
       <div class="row" style="margin-top:8px"><span class="sp mut small">排除规则默认过滤“剩余流量 / 到期时间 / 官网”等信息节点；清空表示不排除</span>
         <button class="btn g hide" id="sub-cancel" onclick="resetSubForm()">取消</button><button class="btn" id="sub-btn" onclick="addSub()">添加并应用</button></div></div>
-    <div class="card"><h3>订阅列表</h3><div class="tw"><table><thead><tr><th>名称</th><th>节点数</th><th>过滤</th><th>流量</th><th>到期</th><th>更新时间</th><th></th></tr></thead><tbody id="subs"></tbody></table></div>
+    <div class="card"><h3>订阅列表</h3><div class="tw"><table><thead><tr><th>名称</th><th>节点数</th><th>过滤</th><th>流量</th><th>到期</th><th>更新时间</th><th></th></tr></thead><tbody id="sub-list"></tbody></table></div>
       <div id="sub-removed" class="hide"></div></div>
     <div class="card"><h3>面板账号登录（Xboard / V2Board）</h3>
       <div class="mut small" style="margin-bottom:6px">用面板账号直接拉取订阅：登录后拿到订阅地址并添加为订阅，之后更新订阅时自动用保存的 token 刷新地址；密码只用来登录，不保存</div>
@@ -1278,8 +1340,8 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
         <select id="rs-fmt"><option value="yaml">yaml</option><option value="text">text</option><option value="mrs">mrs</option></select>
         <select id="rs-target"></select><button class="btn" onclick="addRS()">添加</button></div>
       <div class="tw"><table><thead><tr><th>名称</th><th>类型</th><th>策略</th><th>规则数</th><th>更新</th><th></th></tr></thead><tbody id="rulesets"></tbody></table></div></div>
-    <div class="card"><div class="row"><h3 class="sp" style="margin:0">当前生效规则</h3><input id="r-filter" placeholder="搜索" oninput="renderActiveRules()"></div>
-      <div class="tw"><table style="margin-top:10px"><thead><tr><th>#</th><th>类型</th><th>内容</th><th>策略</th></tr></thead><tbody id="rules"></tbody></table></div></div>
+    <div class="card"><div class="row"><h3 class="sp" style="margin:0">当前生效规则 <span class="mut small" id="r-count" style="font-weight:400"></span></h3><input id="r-filter" placeholder="搜索 类型 / 内容 / 策略" aria-label="搜索生效规则" oninput="renderActiveRules()"></div>
+      <div class="tw"><table style="margin-top:10px"><thead><tr><th class="num0">#</th><th>类型</th><th>内容</th><th>策略</th></tr></thead><tbody id="rule-list"></tbody></table></div></div>
   </section>
   <!-- 广告拦截 -->
   <section data-tab="广告拦截">
@@ -1365,37 +1427,39 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
   </section>
   <!-- 连接 -->
   <section data-tab="连接">
-    <div class="card"><div class="row" style="margin-bottom:10px"><input id="c-filter" placeholder="搜索 域名 / IP / 设备 / 规则 / 节点" class="sp"><label class="mut row" style="gap:4px"><input type="checkbox" id="c-pause"> 暂停</label><button class="btn r" onclick="closeAll()">断开全部</button></div>
-      <div class="tw"><table class="ctable"><thead><tr><th>主机</th><th>来源设备</th><th>网络</th><th>规则</th><th>链路</th><th>↓速度</th><th>↑速度</th><th>下载</th><th>时长</th><th></th></tr></thead><tbody id="conns"></tbody></table></div></div>
+    <div class="card"><div class="row" style="margin-bottom:10px"><input id="c-filter" placeholder="搜索 域名 / IP / 设备 / 规则 / 节点" aria-label="搜索连接" class="sp" oninput="drawConns()"><label class="mut row" style="gap:4px"><input type="checkbox" id="c-pause"> 暂停</label><button class="btn r" onclick="closeAll()">断开全部</button></div>
+      <div class="csum" id="c-sum" aria-live="off"></div>
+      <div class="tw"><table class="ctable"><thead id="c-head"><tr><th data-k="host" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('host')">主机</button></th><th data-k="src" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('src')">来源设备</button></th><th data-k="net" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('net')">网络</button></th><th data-k="rule" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('rule')">规则</button></th><th data-k="chain" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('chain')">链路</button></th><th data-k="down" class="num" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('down')">↓速度</button></th><th data-k="up" class="num" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('up')">↑速度</button></th><th data-k="dl" class="num" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('dl')">下载</button></th><th data-k="dur" class="num" aria-sort="none"><button type="button" class="thb" onclick="connSortBy('dur')">时长</button></th><th><span class="vh">操作</span></th></tr></thead><tbody id="conn-list"></tbody></table></div><div class="mut small" id="c-more"></div></div>
   </section>
   <!-- 统计 -->
   <section data-tab="统计">
-    <div class="grid g4" style="margin-bottom:16px">
-      <div class="card stat" style="margin:0"><div class="k">今日 上传 / 下载</div><div class="v" id="st-today" style="font-size:17px">-</div></div>
-      <div class="card stat" style="margin:0"><div class="k">今日 合计</div><div class="v" id="st-today-sum">-</div></div>
-      <div class="card stat" style="margin:0"><div class="k">本月 上传 / 下载</div><div class="v" id="st-month" style="font-size:17px">-</div></div>
-      <div class="card stat" style="margin:0"><div class="k">本月 合计</div><div class="v" id="st-month-sum">-</div></div>
+    <div class="grid g4 stk" style="margin-bottom:16px">
+      <div class="card stat" style="margin:0"><div class="k">今日 合计</div><div class="v" id="st-today-sum">-</div><div class="stbar" id="st-today-bar" role="img" aria-label="今日上下行占比"></div><div class="sm" id="st-today">-</div></div>
+      <div class="card stat" style="margin:0"><div class="k">本月 合计</div><div class="v" id="st-month-sum">-</div><div class="stbar" id="st-month-bar" role="img" aria-label="本月上下行占比"></div><div class="sm" id="st-month">-</div></div>
+      <div class="card stat" style="margin:0"><div class="k">近 30 天 日均</div><div class="v" id="st-avg">-</div><div class="sm" id="st-avg-n">-</div></div>
+      <div class="card stat" style="margin:0"><div class="k">近 30 天 峰值日</div><div class="v" id="st-peak">-</div><div class="sm" id="st-peak-d">-</div></div>
     </div>
-    <div class="card"><div class="row"><h3 class="sp" style="margin:0">每日流量（近 30 天）</h3><span class="small" style="color:var(--pri)">● 下载</span><span class="small" style="color:var(--ok)">● 上传</span><button class="btn g sm" onclick="loadStats()">刷新</button></div>
-      <canvas id="daychart" height="180" style="width:100%;margin-top:10px;display:block"></canvas></div>
+    <div class="card"><div class="row"><h3 class="sp" style="margin:0">每日流量（近 30 天）</h3><span class="lgd"><i class="d"></i>下载</span><span class="lgd"><i class="u"></i>上传</span><span class="lgd"><i class="a"></i>日均</span><button class="btn g sm" onclick="loadStats()">刷新</button></div>
+      <div class="dayw" onpointermove="dayTip(event)" onpointerdown="dayTip(event)" onpointerleave="dayTipOut()"><canvas id="daychart" height="200" role="img" aria-label="每日流量" style="width:100%;margin-top:10px;display:block"></canvas><div id="daytip" class="daytip hide" aria-hidden="true"></div></div></div>
     <div class="card"><div class="row" style="margin-bottom:10px"><h3 class="sp" style="margin:0">明细</h3>
-      <div class="seg" id="st-period"><button data-p="today" class="on">今日</button><button data-p="month">本月</button></div></div>
-      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr))">
-        <div><div class="mut" style="margin-bottom:4px">按设备（点 ✎ 设置备注）</div><div class="tw"><table><thead><tr><th>设备</th><th>上传</th><th>下载</th><th>合计</th></tr></thead><tbody id="st-dev"></tbody></table></div></div>
-        <div><div class="mut" style="margin-bottom:4px">按节点</div><div class="tw"><table><thead><tr><th>节点</th><th>上传</th><th>下载</th><th>合计</th></tr></thead><tbody id="st-node"></tbody></table></div></div>
+      <div class="seg" id="st-period"><button data-p="today" class="on" aria-pressed="true">今日</button><button data-p="month" aria-pressed="false">本月</button></div></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))">
+        <div><div class="mut" style="margin-bottom:4px">按设备（点 ✎ 设置备注）</div><div class="tw"><table class="sttab"><thead><tr><th>设备</th><th class="num">上传</th><th class="num">下载</th><th class="num">合计</th><th class="num">占比</th></tr></thead><tbody id="st-dev"></tbody></table></div></div>
+        <div><div class="mut" style="margin-bottom:4px">按节点</div><div class="tw"><table class="sttab"><thead><tr><th>节点</th><th class="num">上传</th><th class="num">下载</th><th class="num">合计</th><th class="num">占比</th></tr></thead><tbody id="st-node"></tbody></table></div></div>
       </div>
-      <div class="mut small" style="margin-top:8px">每 5 秒采样一次连接，按设备 / 节点累计；存活不足 5 秒的短连接可能计入总量但不计入明细。数据保留 60 天。</div></div>
+      <div class="mut small" style="margin-top:8px">每 5 秒采样一次连接，按设备 / 节点累计；存活不足 5 秒的短连接可能计入总量但不计入明细。数据保留 60 天；单位按 1024 进制（1 GB = 1024 MB）。</div></div>
   </section>
   <!-- 日志 -->
   <section data-tab="日志">
     <div class="card"><div class="row" style="margin-bottom:10px">
       <div class="seg" id="log-src"><button data-s="live" class="on">实时</button><button data-s="file">日志文件</button></div>
-      <select id="log-level" onchange="startLive()"><option value="debug">debug</option><option value="info" selected>info</option><option value="warning">warning</option><option value="error">error</option></select>
-      <input id="log-kw" placeholder="关键字过滤" class="sp" oninput="renderLive()">
+      <select id="log-level" aria-label="日志级别" onchange="startLive()"><option value="debug">debug</option><option value="info" selected>info</option><option value="warning">warning</option><option value="error">error</option></select>
+      <input id="log-kw" placeholder="关键字过滤" aria-label="日志关键字过滤" class="sp" oninput="renderLive()">
       <label class="mut row" style="gap:4px"><input type="checkbox" id="log-pause"> 暂停</label>
       <button class="btn g" onclick="clearLive()">清空</button><span id="log-st" class="mut small"></span></div>
+      <div class="lcnt" id="log-cnt" aria-live="off"></div>
       <pre id="livelog"></pre>
-      <div id="filelog" class="hide"><div class="row" style="margin-bottom:10px"><span class="sp mut">核心日志文件最近 300 行</span><button class="btn g" onclick="loadLogs()">刷新</button></div><pre id="logs"></pre></div></div>
+      <div id="filelog" class="hide"><div class="row" style="margin-bottom:10px"><span class="sp mut">核心日志文件最近 300 行</span><button class="btn g" onclick="loadLogs()">刷新</button></div><pre id="log-file"></pre></div></div>
   </section>
   <!-- 设置 -->
   <section data-tab="设置">
@@ -1549,11 +1613,11 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
         <div class="row mt"><label class="sp wl"><span class="small mut">私钥</span><input style="width:100%" id="wi-key" type="password" autocomplete="off" placeholder="私钥 PrivateKey（必填）"></label><label class="sp wl"><span class="small mut">对端公钥</span><input style="width:100%" id="wi-peer" placeholder="对端公钥（空 = WARP 默认）"></label></div>
         <div class="row mt"><label class="sp wl"><span class="small mut">本机 IPv4</span><input style="width:100%" id="wi-v4" placeholder="本机 IPv4（默认 172.16.0.2）"></label><label class="sp wl"><span class="small mut">本机 IPv6</span><input style="width:100%" id="wi-v6" placeholder="本机 IPv6（可空）"></label><label class="sp wl"><span class="small mut">reserved</span><input style="width:100%" id="wi-res" placeholder="reserved，如 12,34,56 或 client_id"></label></div>
         <div class="row mt"><label class="wl" style="width:150px"><span class="small mut">MTU</span><input id="wi-mtu" type="number" min="1100" max="1500" placeholder="MTU（默认 1280）" style="width:100%"></label><span class="sp"></span><button class="btn" id="wi-go" style="align-self:flex-end" onclick="warpImport(this)">导入</button></div></div></div>
-    <div class="card"><div class="row"><h3 class="sp" style="margin:0">🎯 本地优选 IP</h3><input id="warp-n" type="number" min="10" max="300" value="80" style="width:80px" title="随机抽测的端点数"><button class="btn" id="warp-scan" onclick="warpScan(this)">开始优选</button></div>
+    <div class="card"><div class="row"><h3 class="sp" style="margin:0">🎯 本地优选 IP</h3><input id="warp-n" type="number" min="10" max="300" value="80" style="width:80px" title="随机抽测的端点数" aria-label="随机抽测的端点数"><button class="btn" id="warp-scan" onclick="warpScan(this)">开始优选</button></div>
       <div class="mut small" style="margin:4px 0 8px">对 WARP 端点（162.159.192–195.x、188.114.96–99.x 及常用端口）发真实 WireGuard 握手，测延迟和丢包。自动识别代理模式：TUN 模式下测速包临时绕过核心直连，测完恢复；TProxy 下本机发出的包本来就直连。也可以在下面填要测的端点（每行一个）。优选期间 WARP 节点可能短暂重连。</div>
       <textarea id="warp-eps" rows="2" placeholder="可选：只测这些端点，每行一个 IP:端口" style="width:100%"></textarea>
       <div id="warp-st" class="small mt"></div>
-      <div class="tw mt"><table><thead><tr><th>端点</th><th>延迟</th><th>丢包</th><th></th></tr></thead><tbody id="warp-res"></tbody></table></div>
+      <div class="tw mt"><table><thead><tr><th>端点</th><th class="num">延迟</th><th class="num">丢包</th><th><span class="vh">操作</span></th></tr></thead><tbody id="warp-res"></tbody></table></div>
       <div class="row mt"><input id="warp-ep" placeholder="手动输入端点 IP:端口" class="sp"><button class="btn" onclick="warpSetEp($('#warp-ep').value,this)">替换端点</button></div></div>
       <div class="card"><div class="row"><h3 class="sp" style="margin:0">🌍 SOCKS5 落地 <span class="tag">预览</span></h3><button class="btn g sm" id="ld-chk" onclick="ldCheck()">检测全部</button><button class="btn g sm" onclick="loadLanding()">刷新</button></div>
       <div class="mut small" style="margin:4px 0 8px">想要指定国家的出口 IP：添加 SOCKS5 落地，流量走「设备 → 前置节点（默认 WARP）→ 落地 → 网站」。落地节点自动加入「🚀 节点选择」「🖐️ 手动选择」和各分流组（不进自动测速组），在里面选中即可使用。</div>
@@ -1573,7 +1637,7 @@ section[data-tab="设置"] .sub-panel{background:var(--b2);border:1px solid var(
       <div class="card spc" id="spd-cn"><div class="row"><h3 class="sp" style="margin:0">🇨🇳 国内测速 <span class="tag">直连</span></h3><button class="btn g sm" onclick="spdStart('cn',this)">测速</button></div><div class="spb"></div></div>
       <div class="card spc" id="spd-intl"><div class="row"><h3 class="sp" style="margin:0">🌏 国外测速 <span class="tag">经代理</span></h3><button class="btn g sm" onclick="spdStart('intl',this)">测速</button></div><div class="spb"></div></div>
     </div>
-    <div class="card"><h3>测速记录</h3><div class="tw"><table><thead><tr><th>时间</th><th>类型</th><th>下载</th><th>峰值</th><th>延迟</th><th>下载源</th></tr></thead><tbody id="spd-hist"></tbody></table></div></div>
+    <div class="card"><h3>测速记录</h3><div class="tw"><table class="sptab"><thead><tr><th>时间</th><th>类型</th><th class="num">下载</th><th class="num">峰值</th><th class="num">延迟</th><th>下载源</th></tr></thead><tbody id="spd-hist"></tbody></table></div></div>
   </section>
 </main>
 </div>
@@ -2065,7 +2129,7 @@ async function loadProxies(){setNView(NVIEW,false);document.querySelectorAll('#n
   try{PROXIES=await loadPX();try{const j=await api('/api/direct_delay');if(j.ms>0)DIRECT_D=j.ms}catch(e){}
   try{const h=await api('/api/health/status');HEALTHR=h.records||{};HEALTHC=h.cfg||{}}catch(e){}
   try{const bw=await api('/api/bwtest');BW=bw;BWRES=bw.results||{}}catch(e){}
-  renderGroups();BWALL=null;fillBwCfg()}catch(e){$('#groups').innerHTML=`<div class="card bad">${esc(e.message)}</div>`;$('#policies').innerHTML=''}}
+  renderGroups();BWALL=null;fillBwCfg()}catch(e){$('#node-groups').innerHTML=`<div class="card bad">${esc(e.message)}</div>`;$('#policies').innerHTML=''}}
 // 健康等级：ok/warn/bad/hidden；返回图标
 function hLevel(n){const r=HEALTHR[n];if(!r)return 'ok';if(r.hidden)return 'hidden';
   const fd=r.fail_days||0,wc=HEALTHC.warn_days||3,hc=HEALTHC.hide_days||7;
@@ -2112,7 +2176,7 @@ function renderGroups(){
  
   const key=n=>{const d=lastDelay(n);return d===undefined?1e9-1:d<=0?1e9:d};
   renderNF();const filt=!!(NF.q||NF.r);
-  $('#groups').innerHTML=GL.map((g,i)=>{const p=PROXIES[g],m=(STATE.group_meta||{})[g]||{};
+  $('#node-groups').innerHTML=GL.map((g,i)=>{const p=PROXIES[g],m=(STATE.group_meta||{})[g]||{};
     const all0=NSORT==='delay'?p.all.slice().sort((a,b)=>key(a)-key(b)):p.all.slice();GALL[i]=all0;
     if(policyOnly(g))return '';
     const vis=filt?all0.filter(nfVisible):all0;if(filt&&!vis.length&&!(NF.q&&g.toLowerCase().includes(NF.q)))return '';
@@ -2190,7 +2254,7 @@ async function snDelete(btn){const items=[...SNSEL].map(i=>SNI[i]).filter(Boolea
 // 节点显示方式：卡片（默认）/ 紧凑列表，按设备保存（localStorage mp_nview）
 let NVIEW=(()=>{try{return localStorage.getItem('mp_nview')==='list'?'list':'card'}catch(e){return 'card'}})();
 function setNView(v,save){NVIEW=v==='list'?'list':'card';if(save!==false)try{localStorage.setItem('mp_nview',NVIEW)}catch(e){}
-  $('#groups')?.classList.toggle('nlist',NVIEW==='list');
+  $('#node-groups')?.classList.toggle('nlist',NVIEW==='list');
   document.querySelectorAll('#nview button').forEach(b=>{const on=b.dataset.v===NVIEW;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on))})}
 // 延迟色条：0–1000 ms 按比例，越短越快；超时满格红色，没测过不画
 // 延迟信号格（v9.1.16）：4 格，<150 ms 满格、<300 三格、<800 两格、更慢一格，超时打叉、未测全灰
@@ -2296,16 +2360,20 @@ async function delCG(i){const n=GI.custom[i].name;const refs=cgRefs(n);
 
 // 订阅
 let EDIT_SUB=null,RMV=null;
+// 到期显示：以前用 Math.ceil 算剩余天数，过期不到 24 小时得到 -0（-0<0 为 false），显示成红色「剩 0 天」而不是「已过期」。
+// 现在先按时间戳判断是否已过期；未过期时「剩 N 天」按向上取整（今天内到期显示「今天到期」）
+function subExpire(exp,now){if(!exp)return null;const ms=exp*1000-now;if(ms<=0)return {days:-1,txt:'已过期',cls:'bad'};
+  const d=Math.ceil(ms/864e5);return {days:d,txt:ms<864e5?'今天到期':'剩 '+d+' 天',cls:d<=3?'bad':d<=7?'warn':'mut'}}
 async function loadSubs(){try{await loadState()}catch(e){return toast(e.message)}let prov={};try{prov=(await core('/providers/proxies')).providers||{}}catch(e){}
   if(!EDIT_SUB&&!$('#sub-exclude').value)$('#sub-exclude').value=STATE.default_exclude||'';
-  $('#subs').innerHTML=STATE.subs.map(s=>{const p=prov[s.name]||{};const si=p.subscriptionInfo||{};
+  $('#sub-list').innerHTML=STATE.subs.map(s=>{const p=prov[s.name]||{};const si=p.subscriptionInfo||{};
     const used=(si.Upload||0)+(si.Download||0);const exp=si.Expire?new Date(si.Expire*1000).toLocaleDateString('zh-CN'):'-';
     const exc=s.exclude===undefined?STATE.default_exclude:s.exclude;
-    const pct=si.Total?Math.min(100,used/si.Total*100):0,days=si.Expire?Math.ceil((si.Expire*1000-Date.now())/864e5):null;
+    const pct=si.Total?Math.min(100,used/si.Total*100):0,ex=subExpire(si.Expire,Date.now()),days=ex?ex.days:null;
     return `<tr><td class="subn" title="${esc(s.url)}"><div class="subu" style="font-size:inherit">${esc(s.name)}</div><div class="mut subu">${esc(s.url)}</div></td><td>${(p.proxies||[]).length}${(s.removed||[]).length?`<div><button class="btn g sm" title="查看 / 恢复从订阅删除的节点" onclick="showRemoved(${jsq(encodeURIComponent(s.name))})">已删 ${s.removed.length}</button></div>`:''}</td>
     <td class="subf" title="${esc((s.filter?'保留：'+s.filter+'\n':'')+(exc?'排除：'+exc:'不过滤'))}">${s.filter?'<div>保留：'+esc(s.filter)+'</div>':''}${exc?'<div class="mut">排除：'+esc(exc)+'</div>':'<div class="mut">不过滤</div>'}</td>
-    <td>${si.Total?`${fmt(used)} / ${fmt(si.Total)}<div class="ubar"><i class="${pct>90?'bad':pct>70?'warn':''}" style="width:${pct.toFixed(1)}%"></i></div>`:'-'}</td>
-    <td>${exp}${days!==null?`<div class="small ${days<=3?'bad':days<=7?'warn':'mut'}">${days<0?'已过期':'剩 '+days+' 天'}</div>`:''}</td><td>${p.updatedAt?new Date(p.updatedAt).toLocaleString('zh-CN',{hour12:false}):'-'}</td>
+    <td class="num0">${si.Total?`${fmt(used)} / ${fmt(si.Total)} <span class="mut small">${pct<0.1&&used>0?'<0.1':pct.toFixed(pct<10?1:0)}%</span><div class="ubar" role="img" aria-label="已用 ${pct.toFixed(1)}%"><i class="${pct>90?'bad':pct>70?'warn':''}" style="width:${pct.toFixed(1)}%"></i></div>`:'-'}</td>
+    <td>${exp}${days!==null?`<div class="small ${ex.cls}">${ex.txt}</div>`:''}</td><td>${p.updatedAt?new Date(p.updatedAt).toLocaleString('zh-CN',{hour12:false}):'-'}</td>
     <td><button class="btn g sm" onclick="updSub(${jsq(encodeURIComponent(s.name))},this)">更新</button> <button class="btn g sm" onclick="editSub(${jsq(encodeURIComponent(s.name))})">编辑</button> <button class="btn r sm" onclick="delSub(${jsq(encodeURIComponent(s.name))})">删除</button></td></tr>`}).join('')||'<tr><td colspan="7"><div class="empty"><div class="et">还没有订阅</div><div class="mut small">粘贴机场给的订阅链接（Clash / Mihomo YAML 或 Base64 节点链接），添加后自动生成地区分组</div><button class="btn" onclick="goAddSub()">添加订阅</button></div></td></tr>';
   renderRemoved();renderNodes(prov)}
 function editSub(n){const s=STATE.subs.find(x=>x.name===decodeURIComponent(n));if(!s)return;EDIT_SUB=s.name;
@@ -2355,9 +2423,13 @@ async function loadRules(){try{await loadState()}catch(e){return toast(e.message
   $('#r-bulk').value=STATE.rules.join('\n');
   renderRS();
   try{ACTIVE_RULES=(await core('/rules')).rules||[]}catch(e){ACTIVE_RULES=[]}renderActiveRules()}
-function renderActiveRules(){const f=$('#r-filter').value.toLowerCase();
-  $('#rules').innerHTML=ACTIVE_RULES.map((r,i)=>[i,r]).filter(([i,r])=>!f||JSON.stringify(r).toLowerCase().includes(f)).slice(0,500)
-    .map(([i,r])=>`<tr><td class="mut">${i+1}</td><td>${esc(r.type)}</td><td class="w">${esc(r.payload)}</td><td>${esc(r.proxy)}</td></tr>`).join('')}
+// 搜索只匹配类型 / 内容 / 策略三列的值：以前匹配整条规则的 JSON，搜「proxy」「payload」「type」「size」会命中全部规则
+const ruleHay=r=>[r.type,r.payload,r.proxy].map(v=>String(v??'')).join('\n').toLowerCase();
+function renderActiveRules(){const f=$('#r-filter').value.trim().toLowerCase(),hit=ACTIVE_RULES.map((r,i)=>[i,r]).filter(([i,r])=>!f||ruleHay(r).includes(f));
+  $('#rule-list').innerHTML=hit.slice(0,500)
+    .map(([i,r])=>`<tr><td class="mut num0">${i+1}</td><td>${esc(r.type)}</td><td class="w">${esc(r.payload)}</td><td>${esc(r.proxy)}</td></tr>`).join('')||
+    `<tr><td colspan="4"><div class="empty"><div class="et">${ACTIVE_RULES.length?'没有匹配的规则':'没有读到生效规则'}</div><div class="mut small">${ACTIVE_RULES.length?`共 ${ACTIVE_RULES.length} 条，没有包含「${esc(f)}」的`:'核心未运行或正在重启时读不到，启动后刷新本页'}</div></div></td></tr>`;
+  const n=$('#r-count');if(n)n.textContent=f?`匹配 ${hit.length} / ${ACTIVE_RULES.length} 条${hit.length>500?'，只显示前 500 条':''}`:`共 ${ACTIVE_RULES.length} 条${ACTIVE_RULES.length>500?'，只显示前 500 条':''}`}
 // 规则 / 规则集都按当前 STATE 拼出整份列表提交：上一次保存（含重载核心）没完成时再提交，拼出的列表还是旧的，会把上一次的修改覆盖掉
 let RULES_BUSY=false;
 function rulesBusy(){if(RULES_BUSY)toast('正在应用上一次修改，请稍候再试');return RULES_BUSY}
@@ -2455,52 +2527,117 @@ async function abCheck(){const d=$('#ab-check').value.trim();if(!d)return toast(
   catch(e){$('#ab-check-r').innerHTML=`<span class="bad">${esc(e.message)}</span>`}})}
 
 // 连接
-let prevConn=new Map(),_prevConnT=0;
+// v9.1.17：速率基线（每次拉取更新）与表格绘制分开：搜索、排序、暂停时也能立即重绘；顶部汇总条（连接 / 设备 / 总速率 / TCP·UDP）；表头可排序
+let prevConn=new Map(),_prevConnT=0,CONN_RATES=new Map(),CONN_SORT={k:'dur',d:1};
 let _lastConnRender=0;
-function renderConns(list){const f=$('#c-filter').value.toLowerCase();const now=Date.now();
-  list.sort((a,b)=>new Date(b.start)-new Date(a.start));
-  // 速率基线每次拉取都更新，按实际时间差折算成 /s（退避跳过几秒也不会偏大）；DOM 全量重绘降频到每 2 秒。
-  // 基线表每次用本轮的连接重建：已关闭连接的记录随之丢弃，连接页开几个小时也不会越积越多
-  const rates=new Map(),next=new Map(),dt=_prevConnT?Math.max(1,(now-_prevConnT)/1000):1;
+// 时长：45s、12m 05s、3h 12m、2d 4h（以前超过 1 小时显示成 1500m）
+function durTxt(sec){sec=Math.max(0,Math.floor(+sec||0));const p=n=>String(n).padStart(2,'0');
+  if(sec<60)return sec+'s';if(sec<3600)return Math.floor(sec/60)+'m '+p(sec%60)+'s';
+  if(sec<86400)return Math.floor(sec/3600)+'h '+p(Math.floor(sec%3600/60))+'m';return Math.floor(sec/86400)+'d '+Math.floor(sec%86400/3600)+'h'}
+// 搜索的匹配文本：只取用户看得到的值（主机、IP、端口、设备名、网络、规则、链路、进程），
+// 以前拿整条连接的 JSON 去匹配，搜「upload」「metadata」「id」之类的字段名会匹配到全部连接
+function connHay(c,dn){const m=c.metadata||{};
+  return [m.host,m.sniffHost,m.destinationIP,m.destinationPort,m.sourceIP,dn?dn(m.sourceIP):'',m.network,m.type,m.process,c.rule,c.rulePayload,...(c.chains||[])]
+    .filter(v=>v!==undefined&&v!==null&&v!=='').join('\n').toLowerCase()}
+// 排序键：host / src / rule / chain 按文字，down / up 按速率，dl 按累计下载，dur 按已持续时长（默认升序 = 最新的连接在前）
+function connKey(c,k,r){const m=c.metadata||{};r=r||[0,0];
+  switch(k){case 'host':return String(m.host||m.sniffHost||m.destinationIP||'').toLowerCase();case 'src':return String(m.sourceIP||'');
+    case 'net':return String(m.network||'');case 'rule':return String(c.rule||'');case 'chain':return (c.chains||[]).slice().reverse().join(' ');
+    case 'down':return r[0];case 'up':return r[1];case 'dl':return +c.download||0;default:return -(new Date(c.start).getTime()||0)}}
+function sortConns(list,k,d,rates){const g=c=>connKey(c,k,rates&&rates.get(c.id));
+  return list.slice().sort((a,b)=>{const x=g(a),y=g(b);return (typeof x==='string'?x.localeCompare(y,'zh-CN'):x-y)*d||String(a.id).localeCompare(String(b.id))})}
+// 每次拉取都更新速率基线，按实际时间差折算成 /s（退避跳过几秒也不会偏大）；基线表每次用本轮的连接重建，已关闭连接的记录随之丢弃
+function connRates(list,now){const rates=new Map(),next=new Map(),dt=_prevConnT?Math.max(1,(now-_prevConnT)/1000):1;
   for(const c of list){const p=prevConn.get(c.id);rates.set(c.id,p?[Math.max(0,c.download-p.d)/dt,Math.max(0,c.upload-p.u)/dt]:[0,0]);next.set(c.id,{d:c.download,u:c.upload})}
-  prevConn=next;_prevConnT=now;
+  prevConn=next;_prevConnT=now;return rates}
+function renderConns(list){const now=Date.now();CONN_RATES=connRates(list,now);
   if(now-_lastConnRender<1500)return;  // 每 2 秒拉一次，阈值留出计时抖动（2000 会因为早到几毫秒隔一次跳过，变成 4 秒一画）
-  _lastConnRender=now;
-  $('#conns').innerHTML=list.filter(c=>!f||(JSON.stringify(c)+dname(c.metadata?.sourceIP)).toLowerCase().includes(f)).slice(0,300).map(c=>{const m=c.metadata||{};
-    const r=rates.get(c.id),ds=r[0],us=r[1];
-    const host=(m.host||m.sniffHost||m.destinationIP)+':'+m.destinationPort;const sec=Math.floor((now-new Date(c.start))/1000);
-    return `<tr><td class="w ch" title="${esc(host)}">${esc(host)}</td><td>${devCell(m.sourceIP)}</td><td>${esc(m.network)}</td><td class="cr" title="${esc(c.rule+(c.rulePayload?' '+c.rulePayload:''))}">${esc(c.rule)}${c.rulePayload?' <span class="mut">'+esc(c.rulePayload.length>40?c.rulePayload.slice(0,40)+'…':c.rulePayload)+'</span>':''}</td>
-    <td class="w cc" title="${esc((c.chains||[]).slice().reverse().join(' → '))}">${esc((c.chains||[]).slice().reverse().join(' → '))}</td><td>${fmt(ds)}/s</td><td>${fmt(us)}/s</td><td>${fmt(c.download)}</td>
-    <td>${sec<60?sec+'s':Math.floor(sec/60)+'m'}</td><td><button class="btn g sm" onclick="closeConn(${jsq(c.id)})">断开</button></td></tr>`}).join('')||'<tr><td class="mut" colspan="10">暂无连接</td></tr>'}
+  drawConns()}
+function connSum(list,rates){let dn=0,up=0,tcp=0,udp=0;const dev=new Set();
+  for(const c of list){const r=rates.get(c.id)||[0,0];dn+=r[0];up+=r[1];const m=c.metadata||{};if(m.sourceIP)dev.add(m.sourceIP);(String(m.network).toLowerCase()==='udp'?udp++:tcp++)}
+  return {n:list.length,dev:dev.size,dn,up,tcp,udp}}
+function drawConns(){const box=$('#conn-list');if(!box)return;_lastConnRender=Date.now();const now=Date.now(),list=CONNS||[],f=$('#c-filter').value.trim().toLowerCase();
+  const shown=f?list.filter(c=>connHay(c,dname).includes(f)):list,rows=sortConns(shown,CONN_SORT.k,CONN_SORT.d,CONN_RATES),s=connSum(list,CONN_RATES);
+  const sb=$('#c-sum');if(sb)sb.innerHTML=`<span class="cs"><small>活动连接</small><b>${s.n}</b></span><span class="cs"><small>设备</small><b>${s.dev}</b></span>`+
+    `<span class="cs dn"><small>↓ 合计</small><b>${esc(fmt(s.dn))}/s</b></span><span class="cs up"><small>↑ 合计</small><b>${esc(fmt(s.up))}/s</b></span>`+
+    `<span class="cs"><small>TCP / UDP</small><b>${s.tcp} / ${s.udp}</b></span>${f?`<span class="cs mt0"><small>匹配</small><b>${shown.length} / ${s.n}</b></span>`:''}`;
+  document.querySelectorAll('#c-head th[data-k]').forEach(th=>{const on=th.dataset.k===CONN_SORT.k;th.setAttribute('aria-sort',on?(CONN_SORT.d>0?'ascending':'descending'):'none');th.classList.toggle('on',on)});
+  box.innerHTML=rows.slice(0,300).map(c=>{const m=c.metadata||{};
+    const r=CONN_RATES.get(c.id)||[0,0],ds=r[0],us=r[1];
+    const host=(m.host||m.sniffHost||m.destinationIP)+':'+m.destinationPort;const sec=Math.floor((now-new Date(c.start))/1000),net=String(m.network||'').toLowerCase();
+    return `<tr><td class="w ch" title="${esc(host)}">${esc(host)}</td><td>${devCell(m.sourceIP)}</td><td><span class="net ${net==='udp'?'udp':'tcp'}">${esc(net||'-')}</span></td><td class="cr" title="${esc(c.rule+(c.rulePayload?' '+c.rulePayload:''))}">${esc(c.rule)}${c.rulePayload?' <span class="mut">'+esc(c.rulePayload.length>40?c.rulePayload.slice(0,40)+'…':c.rulePayload)+'</span>':''}</td>
+    <td class="w cc" title="${esc((c.chains||[]).slice().reverse().join(' → '))}">${esc((c.chains||[]).slice().reverse().join(' → '))}</td><td class="num${ds>=1024?' act':''}">${fmt(ds)}/s</td><td class="num${us>=1024?' act up':''}">${fmt(us)}/s</td><td class="num">${fmt(c.download)}</td>
+    <td class="num" title="${esc(new Date(c.start).toLocaleString('zh-CN',{hour12:false}))}">${durTxt(sec)}</td><td><button class="btn g sm" onclick="closeConn(${jsq(c.id)})">断开</button></td></tr>`}).join('')||
+    `<tr><td class="mut" colspan="10"><div class="empty"><div class="et">${f&&list.length?'没有匹配的连接':'暂无连接'}</div><div class="mut small">${f&&list.length?`共 ${list.length} 条连接，没有包含「${esc(f)}」的`:'设备经过旁路由访问网络时，连接会显示在这里'}</div></div></td></tr>`;
+  const more=$('#c-more');if(more)more.textContent=rows.length>300?`按当前排序只显示前 300 条（共 ${rows.length} 条）`:''}
+// 点表头排序：再点一次反向；文字列和时长默认升序，速率 / 下载默认降序
+function connSortBy(k){CONN_SORT=CONN_SORT.k===k?{k,d:-CONN_SORT.d}:{k,d:['host','src','net','rule','chain','dur'].includes(k)?1:-1};drawConns()}
 async function closeConn(id){try{await core('/connections/'+encodeURIComponent(id),'DELETE')}catch(e){toast(e.message)}}
 async function closeAll(){if(!confirm('断开全部连接？'))return;try{await core('/connections','DELETE');toast('已断开')}catch(e){toast(e.message)}}
-
 // 统计
-let STATS=null,ST_P='today';
-async function loadStats(){try{STATS=await api('/api/stats');await loadDevs()}catch(e){return toast(e.message)}
-  const t=STATS.today||{},m=STATS.month||{};
-  $('#st-today').textContent=fmt(t.up)+' / '+fmt(t.down);$('#st-today-sum').textContent=fmt((t.up||0)+(t.down||0));
-  $('#st-month').textContent=fmt(m.up)+' / '+fmt(m.down);$('#st-month-sum').textContent=fmt((m.up||0)+(m.down||0));
-  document.querySelectorAll('#st-period button').forEach(b=>{b.classList.toggle('on',b.dataset.p===ST_P);b.onclick=()=>{ST_P=b.dataset.p;loadStats()}});
+// v9.1.17：概要卡片（今日 / 本月 / 近 30 天日均 / 峰值日，上下行占比条）、每日流量图按日历对齐的 30 天（坐标刻度、网格、日均线、悬停读数）、
+// 明细表加占比条并右对齐数字
+let STATS=null,ST_P='today',ST_SER=null,ST_HOV=-1;
+const ymd=d=>{const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())};
+// 近 n 天（含今天）逐日序列：没有数据的日子补 0。以前直接取记录里的最后 30 条按序号排开：
+// 路由器关机过几天时会混进 30 天以前的日子，柱子之间也不按日期间隔
+function daySeries(days,today,n){n=n||30;const m=new Map((days||[]).map(d=>[d.date,d])),t=today instanceof Date?today:new Date(String(today)+'T12:00:00'),out=[];
+  for(let i=n-1;i>=0;i--){const d=new Date(t.getFullYear(),t.getMonth(),t.getDate()-i,12),k=ymd(d),r=m.get(k);out.push({date:k,up:r?+r.up||0:0,down:r?+r.down||0:0,has:!!r})}
+  return out}
+// 纵轴刻度：1 / 2 / 5 × 1024 进制单位（与 fmt 同口径），返回 [上限, 刻度间隔]
+function niceAxis(v,steps){steps=steps||4;v=Math.max(1024,+v||0);let u=1;while(v/u>=1024&&u<1024**4)u*=1024;
+  const raw=v/u/steps,p=Math.pow(10,Math.floor(Math.log10(raw))),m=raw/p,st=(m<=1?1:m<=2?2:m<=5?5:10)*p*u;return [Math.ceil(v/st-1e-9)*st,st]}
+// 概要：日均只算有记录的天（新装 / 关机的日子不拉低平均值）
+function statSummary(ser){const has=ser.filter(d=>d.has),tot=has.reduce((a,d)=>a+d.up+d.down,0),pk=has.reduce((a,d)=>!a||d.up+d.down>a.up+a.down?d:a,null);
+  return {avg:has.length?tot/has.length:0,n:has.length,peak:pk,total:tot}}
+const pctTxt=(v,t)=>!(t>0)?'0%':(v/t*100<0.1&&v>0?'<0.1':(v/t*100).toFixed(v/t*100<10?1:0))+'%';
+function stSplit(id,u,d){const e=$(id);if(!e)return;const t=(u||0)+(d||0),pu=t?u/t*100:0;
+  e.innerHTML=`<i class="d" style="width:${(100-pu).toFixed(2)}%"></i><i class="u" style="width:${pu.toFixed(2)}%"></i>`;e.title=`下载 ${pctTxt(d,t)} · 上传 ${pctTxt(u,t)}`}
+async function loadStats(){try{STATS=await api('/api/stats');await loadDevs()}catch(e){$('#st-dev').innerHTML=$('#st-node').innerHTML=`<tr><td colspan="5" class="bad">${esc(e.message)}</td></tr>`;return toast(e.message)}
+  const t=STATS.today||{},m=STATS.month||{};ST_SER=daySeries(STATS.days,new Date(),30);const sm=statSummary(ST_SER);
+  $('#st-today').textContent=`↑ ${fmt(t.up)} · ↓ ${fmt(t.down)}`;setNum($('#st-today-sum'),fmt((t.up||0)+(t.down||0)));stSplit('#st-today-bar',t.up||0,t.down||0);
+  $('#st-month').textContent=`↑ ${fmt(m.up)} · ↓ ${fmt(m.down)}`;setNum($('#st-month-sum'),fmt((m.up||0)+(m.down||0)));stSplit('#st-month-bar',m.up||0,m.down||0);
+  setNum($('#st-avg'),fmt(sm.avg));$('#st-avg-n').textContent=sm.n?`近 30 天有记录 ${sm.n} 天 · 合计 ${fmt(sm.total)}`:'近 30 天暂无记录';
+  setNum($('#st-peak'),sm.peak?fmt(sm.peak.up+sm.peak.down):'-');$('#st-peak-d').textContent=sm.peak?sm.peak.date.slice(5).replace('-','/')+(sm.avg?` · 日均的 ${((sm.peak.up+sm.peak.down)/sm.avg).toFixed(1)} 倍`:''):'-';
+  document.querySelectorAll('#st-period button').forEach(b=>{const on=b.dataset.p===ST_P;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));b.onclick=()=>{ST_P=b.dataset.p;loadStats()}});
   const p=STATS[ST_P]||{},arp=STATS.arp||{};
-  $('#st-dev').innerHTML=(p.dev||[]).map(([n,u,d])=>`<tr><td class="w">${devCell(n)}${!dname(n)&&arp[n]?'<div class="mut" style="font-size:11px">'+esc(arp[n])+'</div>':''}</td><td>${fmt(u)}</td><td>${fmt(d)}</td><td>${fmt(u+d)} <button class="icon" style="font-size:12px;padding:0 6px;margin-left:4px" title="设置备注" onclick="editDev(${jsq(n)})">✎</button></td></tr>`).join('')||'<tr><td class="mut">暂无数据</td></tr>';
-  $('#st-node').innerHTML=(p.node||[]).map(([n,u,d])=>`<tr><td class="w">${esc(n)}</td><td>${fmt(u)}</td><td>${fmt(d)}</td><td>${fmt(u+d)}</td></tr>`).join('')||'<tr><td class="mut">暂无数据</td></tr>';
+  // 占比按本表各行合计算（明细不含存活不足 5 秒的短连接，用总量当分母会对不上；两张表各自加起来是 100%）
+  const share0=tot=>v=>`<td class="num shr"><span>${pctTxt(v,tot)}</span><i style="--w:${tot?Math.min(100,v/tot*100).toFixed(2):0}%"></i></td>`;
+  const rowsTot=a=>(a||[]).reduce((t,[,u,d])=>t+(+u||0)+(+d||0),0);let share=share0(rowsTot(p.dev));
+  const none='<tr><td colspan="5"><div class="empty"><div class="et">暂无数据</div><div class="mut small">有连接经过旁路由后，每 5 秒累计一次</div></div></td></tr>';
+  $('#st-dev').innerHTML=(p.dev||[]).map(([n,u,d])=>`<tr><td class="w">${devCell(n)}${!dname(n)&&arp[n]?'<div class="mut" style="font-size:11px">'+esc(arp[n])+'</div>':''}</td><td class="num">${fmt(u)}</td><td class="num">${fmt(d)}</td><td class="num"><b>${fmt(u+d)}</b> <button class="icon" style="font-size:12px;padding:0 6px;margin-left:4px" title="设置备注" aria-label="设置备注" onclick="editDev(${jsq(n)})">✎</button></td>${share(u+d)}</tr>`).join('')||none;
+  share=share0(rowsTot(p.node));
+  $('#st-node').innerHTML=(p.node||[]).map(([n,u,d])=>`<tr><td class="w">${esc(n)}</td><td class="num">${fmt(u)}</td><td class="num">${fmt(d)}</td><td class="num"><b>${fmt(u+d)}</b></td>${share(u+d)}</tr>`).join('')||none;
   drawDays()}
-function drawDays(){const c=$('#daychart');if(!c||c.offsetParent===null||!STATS)return;const r=devicePixelRatio,w=c.width=c.clientWidth*r,h=c.height=180*r,x=c.getContext('2d');
-  const days=(STATS.days||[]).slice(-30);x.clearRect(0,0,w,h);x.font=(11*r)+'px -apple-system,sans-serif';x.fillStyle=cssv('--sub');
-  if(!days.length){x.fillText('暂无数据',8,20*r);return}
-  const max=Math.max(1,...days.map(d=>d.up+d.down)),top=18*r,bot=18*r,ch=h-top-bot,bw=w/30;
-  x.fillText(fmt(max),4,12*r);x.strokeStyle=cssv('--line');x.beginPath();x.moveTo(0,h-bot);x.lineTo(w,h-bot);x.stroke();
-  days.forEach((d,i)=>{const px=i*bw+bw*.18,bwi=bw*.64,hd=d.down/max*ch,hu=d.up/max*ch;
-    x.fillStyle=cssv('--pri');x.fillRect(px,h-bot-hd,bwi,hd);x.fillStyle=cssv('--ok');x.fillRect(px,h-bot-hd-hu,bwi,hu);
-    if(days.length<=10||i%Math.ceil(days.length/10)===0||i===days.length-1){x.fillStyle=cssv('--sub');x.fillText(d.date.slice(5),px,h-4*r)}})}
-
+// 每日流量：堆叠柱（下载在下、上传在上）、左侧刻度 + 水平网格、虚线日均线、今天的柱高亮；悬停 / 点按显示当天读数
+function drawDays(){const c=$('#daychart');if(!c||c.offsetParent===null||!STATS)return;const ser=ST_SER||daySeries(STATS.days,new Date(),30);
+  const r=devicePixelRatio||1,W=c.clientWidth,H=200,w=c.width=W*r,h=c.height=H*r,x=c.getContext('2d');x.setTransform(r,0,0,r,0,0);x.clearRect(0,0,W,H);
+  const font='11px Inter,-apple-system,"Segoe UI",sans-serif',sub=cssv('--sub'),line=cssv('--line')||'rgba(128,128,128,.2)',cd=cssv('--c2')||cssv('--pri'),cu=cssv('--c-up')||cssv('--ok');
+  x.font=font;x.textBaseline='middle';
+  const max=Math.max(0,...ser.map(d=>d.up+d.down)),[top,st]=niceAxis(max,4),L=Math.max(44,...[0,1,2,3,4].map(i=>x.measureText(fmt(st*i).replace(/\.0+ /,' ')).width+10)),T=10,B=22,R=6,ch=H-T-B,cw=W-L-R,bw=cw/ser.length;
+  const yv=v=>T+ch-v/top*ch;
+  for(let i=0;i<=4;i++){const y=Math.round(yv(st*i))+.5;x.strokeStyle=line;x.lineWidth=1;x.setLineDash(i?[2,3]:[]);x.beginPath();x.moveTo(L,y);x.lineTo(W-R,y);x.stroke();
+    x.setLineDash([]);x.fillStyle=sub;x.textAlign='right';x.fillText(fmt(st*i).replace(/\.0+ /,' '),L-8,y)}
+  if(!max){x.textAlign='center';x.fillStyle=sub;x.fillText('近 30 天暂无数据',L+cw/2,T+ch/2);c.setAttribute('aria-label','每日流量：近 30 天暂无数据');return}
+  ser.forEach((d,i)=>{const px=L+i*bw+bw*.16,bwi=Math.max(1,bw*.68),hd=d.down/top*ch,hu=d.up/top*ch,last=i===ser.length-1,a=ST_HOV<0||ST_HOV===i?1:.45;
+    x.globalAlpha=a*(last?1:.86);x.fillStyle=cd;x.fillRect(px,T+ch-hd,bwi,hd);x.fillStyle=cu;x.fillRect(px,T+ch-hd-hu,bwi,hu);x.globalAlpha=1;
+    if(i%5===4||last||i===0){x.fillStyle=last?cssv('--txt'):sub;x.textAlign='center';x.fillText(last?'今天':d.date.slice(5).replace('-','/'),px+bwi/2,H-9)}});
+  const sm=statSummary(ser);if(sm.avg){const y=Math.round(yv(sm.avg))+.5;x.strokeStyle=cssv('--warn')||'#f59e0b';x.setLineDash([5,4]);x.lineWidth=1.2;x.beginPath();x.moveTo(L,y);x.lineTo(W-R,y);x.stroke();x.setLineDash([]);
+    const t='日均 '+fmt(sm.avg),tw=x.measureText(t).width,lx=W-R-tw-8,ly=Math.max(T+8,y-10);x.fillStyle=cssv('--card')||'#000';x.globalAlpha=.88;x.fillRect(lx-4,ly-8,tw+12,16);x.globalAlpha=1;
+    x.fillStyle=cssv('--warn')||'#f59e0b';x.textAlign='left';x.fillText(t,lx+2,ly)}
+  c.setAttribute('aria-label',`每日流量：近 30 天日均 ${fmt(sm.avg)}，峰值 ${sm.peak?sm.peak.date+' '+fmt(sm.peak.up+sm.peak.down):'-'}`);
+  c._geo={L,bw,n:ser.length}}
+function dayTip(e){const c=$('#daychart'),tip=$('#daytip');if(!c||!c._geo||!ST_SER||!tip)return;const b=c.getBoundingClientRect(),g=c._geo,i=Math.floor((e.clientX-b.left-g.L)/g.bw);
+  if(i<0||i>=g.n){dayTipOut();return}const d=ST_SER[i];if(ST_HOV!==i){ST_HOV=i;drawDays()}
+  tip.innerHTML=`<b>${d.date}</b><span><i class="d"></i>下载 ${fmt(d.down)}</span><span><i class="u"></i>上传 ${fmt(d.up)}</span><span>合计 <b>${fmt(d.up+d.down)}</b>${d.has?'':' <em class="mut">无记录</em>'}</span>`;
+  tip.classList.remove('hide');const tx=Math.max(0,Math.min(b.width-tip.offsetWidth,g.L+(i+.5)*g.bw-tip.offsetWidth/2));tip.style.transform=`translateX(${tx}px)`}
+function dayTipOut(){const tip=$('#daytip');if(tip)tip.classList.add('hide');if(ST_HOV>=0){ST_HOV=-1;drawDays()}}
 // 日志：实时（SSE）+ 文件
 let ES=null,LOGS=[],LOG_SRC='live',FKREC={};
 const LVC={debug:'mut',info:'ok',warning:'warn',error:'bad'};
 function openLogs(){document.querySelectorAll('#log-src button').forEach(b=>{b.classList.toggle('on',b.dataset.s===LOG_SRC);b.onclick=()=>{LOG_SRC=b.dataset.s;openLogs()}});
   const live=LOG_SRC==='live';$('#livelog').classList.toggle('hide',!live);$('#filelog').classList.toggle('hide',live);
-  ['#log-level','#log-kw','#log-pause'].forEach(k=>$(k).closest('label')?$(k).closest('label').classList.toggle('hide',!live):$(k).classList.toggle('hide',!live));
+  ['#log-level','#log-kw','#log-pause','#log-cnt'].forEach(k=>$(k).closest('label')?$(k).closest('label').classList.toggle('hide',!live):$(k).classList.toggle('hide',!live));
   if(live)startLive();else{stopLive();loadLogs()}}
 async function startLive(){stopLive();if(TAB!=='日志'||LOG_SRC!=='live')return;
   let tk;try{tk=(await api('/api/logticket','POST',{})).ticket}catch(e){$('#log-st').innerHTML='<span class="bad">● '+esc(e.message)+'</span>';return}
@@ -2516,14 +2653,20 @@ async function startLive(){stopLive();if(TAB!=='日志'||LOG_SRC!=='live')return
       F.e={t:new Date().toLocaleTimeString('zh-CN',{hour12:false}),l:j.type||'warning',p:'missing fakeip record：客户端还在用核心重启前分配的 Fake-IP，客户端重连或刷新 DNS 缓存后会消失',fk:1};F.ts=now;LOGS.push(F.e);if(LOGS.length>2000)LOGS.splice(0,LOGS.length-2000);if(!$('#log-pause').checked)renderLive();return}
     LOGS.push({t:new Date().toLocaleTimeString('zh-CN',{hour12:false}),l:j.type||'info',p:j.payload||''});if(LOGS.length>2000)LOGS.splice(0,LOGS.length-2000);
     if(!$('#log-pause').checked)renderLive()}}
+// v9.1.17：缓冲区里各级别的行数（合并的重复行按次数计），显示在工具栏；关键字过滤时另显示匹配行数
+function logLevelCounts(logs){const c={debug:0,info:0,warning:0,error:0};for(const x of logs||[]){const k=x.l==='warn'?'warning':x.l;if(k in c)c[k]+=x.n||1}return c}
+function logCounts(shown){const e=$('#log-cnt');if(!e)return;const c=logLevelCounts(LOGS),kw=$('#log-kw').value.trim();
+  e.innerHTML=[['error','bad','错误'],['warning','warn','警告'],['info','ok','信息'],['debug','mut','调试']].filter(([k])=>c[k]||k==='error'||k==='warning')
+    .map(([k,cl,t])=>`<span class="lc ${c[k]?cl:''}" title="${t}"><i></i>${t} <b>${c[k]}</b></span>`).join('')+(kw?`<span class="lc">匹配 <b>${shown}</b> / ${LOGS.length} 行</span>`:'')}
 function stopLive(){if(ES){ES.close();ES=null}const s=$('#log-st');if(s)s.textContent=''}
 function clearLive(){LOGS=[];renderLive()}
 // 高频日志（debug）时合并重绘：最多每 250ms 重建一次（期间到达的行一起显示），最多显示 800 行
 const LIVE_MS=250,LIVE_MAX=800;let _lr=0,_lt=0;function renderLive(){if(_lr)return;_lr=setTimeout(()=>requestAnimationFrame(()=>{_lr=0;_lt=Date.now();const el=$('#livelog');const kw=$('#log-kw').value.toLowerCase();
   const stick=el.scrollTop+el.clientHeight>=el.scrollHeight-30;
-  el.innerHTML=LOGS.filter(x=>!kw||x.p.toLowerCase().includes(kw)).slice(-LIVE_MAX).map(x=>`<div><span class="mut">${x.t}</span> <span class="lv ${LVC[x.l]||''}">${esc(x.l)}</span>${esc(x.p)}${x.n?` <span class="mut">（${x.fk?'共 '+x.n+' 条':'已重试 '+x.n+' 次'}，最近 ${x.t2}）</span>`:''}</div>`).join('')||'<span class="mut">等待日志…</span>';
+  const shown=LOGS.filter(x=>!kw||x.p.toLowerCase().includes(kw));logCounts(shown.length);
+  el.innerHTML=shown.slice(-LIVE_MAX).map(x=>`<div><span class="mut">${x.t}</span> <span class="lv ${LVC[x.l]||''}">${esc(x.l)}</span>${esc(x.p)}${x.n?` <span class="mut">（${x.fk?'共 '+x.n+' 条':'已重试 '+x.n+' 次'}，最近 ${x.t2}）</span>`:''}</div>`).join('')||'<span class="mut">等待日志…</span>';
   if(stick)el.scrollTop=el.scrollHeight}),Math.max(0,_lt+LIVE_MS-Date.now()))}
-async function loadLogs(){try{const j=await api('/api/logs');const el=$('#logs');el.textContent=j.log||'(空)';el.scrollTop=el.scrollHeight}catch(e){toast(e.message)}}
+async function loadLogs(){try{const j=await api('/api/logs');const el=$('#log-file');el.textContent=j.log||'(空)';el.scrollTop=el.scrollHeight}catch(e){toast(e.message)}}
 
 // 设置
 function seg(sel,on,fn){document.querySelectorAll(sel+' button').forEach(b=>{b.classList.toggle('on',(b.dataset.v==='1')===!!on);b.onclick=()=>fn(b.dataset.v==='1')})}
@@ -2939,6 +3082,15 @@ start();  // 不再需要登录
 let SPD=null,SPD_T=null;
 const SPD_K={cn:'国内',intl:'国外'};
 const spdCls=v=>!(v>0)?'bad':v<10?'bad':v<50?'warn':'ok';
+// v9.1.17：每张卡片下方画该项最近 12 次成功结果的趋势线（SVG，最新点高亮）和 最低 / 平均 / 最高；记录表的下载列加比例条、数字右对齐
+// 统计口径：只取成功的记录；返回按时间从旧到新的 Mbps 序列
+function spdTrend(hist,kind,n){return (hist||[]).filter(r=>r&&r.kind===kind&&r.ok&&r.mbps>0).sort((a,b)=>a.t-b.t).slice(-(n||12)).map(r=>+r.mbps)}
+const mbpsTxt=v=>!(v>0)?'--':v>=100?Math.round(v)+'':v>=10?v.toFixed(1):v.toFixed(2);
+function sparkSvg(vs,cls){if(vs.length<2)return '';const W=200,H=36,mx=Math.max(...vs),mn=Math.min(...vs),sp=mx-mn||mx||1,
+  pts=vs.map((v,i)=>[i/(vs.length-1)*W,H-3-(v-(mx===mn?0:mn))/sp*(H-8)]),d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(''),l=pts[pts.length-1];
+  return `<svg class="spark ${cls||''}" viewBox="-2 0 ${W+4} ${H}" preserveAspectRatio="none" aria-hidden="true"><path class="sa" d="${d}L${W} ${H}L0 ${H}Z"/><path class="sl" d="${d}" vector-effect="non-scaling-stroke"/><circle cx="${l[0].toFixed(1)}" cy="${l[1].toFixed(1)}" r="2.6"/></svg>`}
+function spdTrendHtml(k){const vs=spdTrend(SPD&&SPD.hist,k,12);if(vs.length<2)return '';const avg=vs.reduce((a,b)=>a+b,0)/vs.length;
+  return `<div class="sptr" title="最近 ${vs.length} 次成功测速（Mbps）">${sparkSvg(vs,'pri')}<div class="spst"><span>最低 <b>${mbpsTxt(Math.min(...vs))}</b></span><span>平均 <b>${mbpsTxt(avg)}</b></span><span>最高 <b>${mbpsTxt(Math.max(...vs))}</b></span><span class="mut">近 ${vs.length} 次 · Mbps</span></div></div>`}
 const spdTime=t=>{const d=new Date(t*1000),p=n=>String(n).padStart(2,'0');return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`};
 function spdCard(k){const el=$('#spd-'+k+' .spb');if(!el||!SPD)return;const run=SPD.running&&SPD.kind===k,r=SPD.last[k],lv=SPD.live||{};
   if(run){const pg=SPD.phase==='download'?Math.min(100,SPD.elapsed/SPD.duration*100):0;
@@ -2947,15 +3099,15 @@ function spdCard(k){const el=$('#spd-'+k+' .spb');if(!el||!SPD)return;const run=
       <div class="spbar"><i style="width:${pg}%"></i></div><div class="mut small">${st}${lv.ms!=null?` · 延迟 ${dtxt(lv.ms)}`:''}</div>`;return}
   const wait=SPD.running&&!run&&SPD.kind==='cn'&&k==='intl';
   if(!r){el.innerHTML=`<div class="spv mut">--<small>Mbps</small></div><div class="spbar"></div><div class="mut small">${wait?'等待国内测速完成…':'还没有测速'}</div>`;return}
-  el.innerHTML=r.ok?`<div class="spv ${spdCls(r.mbps)}">${r.mbps}<small>Mbps</small></div><div class="spbar"><i style="width:100%"></i></div>
+  el.innerHTML=(r.ok?`<div class="spv ${spdCls(r.mbps)}">${r.mbps}<small>Mbps</small></div><div class="spbar"><i style="width:100%"></i></div>
     <div class="spm"><span><b>${r.peak}</b> 峰值 Mbps</span><span><b>${dtxt(r.ms)}</b> 延迟</span><span><b>${r.mb} MB</b> 已下载</span></div>
     <div class="mut small">${esc(r.src||'')}${r.conns?' · '+r.conns+' 条连接':''} · ${ago(r.t)}${wait?' · 等待国内测速完成…':''}</div>`
-    :`<div class="spv bad">失败</div><div class="spbar"></div><div class="bad small w">${esc(r.error||'')}</div><div class="mut small">${ago(r.t)}</div>`}
+    :`<div class="spv bad">失败</div><div class="spbar"></div><div class="bad small w">${esc(r.error||'')}</div><div class="mut small">${ago(r.t)}</div>`)+spdTrendHtml(k)}
 function renderSpeed(){if(!SPD)return;spdCard('cn');spdCard('intl');
   document.querySelectorAll('section[data-tab="测速"] button').forEach(b=>b.disabled=SPD.running);
-  const h=SPD.hist||[];$('#spd-hist').innerHTML=h.length?h.map(r=>`<tr><td>${spdTime(r.t)}</td><td>${SPD_K[r.kind]||esc(r.kind)}</td>
-    <td class="${r.ok?spdCls(r.mbps):'bad'}">${r.ok?r.mbps+' Mbps':'失败'}</td><td>${r.ok?r.peak+' Mbps':'-'}</td><td>${dtxt(r.ms)}</td><td class="mut">${esc(r.src||r.error||'')}</td></tr>`).join('')
-    :'<tr><td colspan="6" class="mut">暂无记录</td></tr>'}
+  const h=SPD.hist||[],hm=Math.max(1,...h.map(r=>r.ok?+r.peak||+r.mbps||0:0));$('#spd-hist').innerHTML=h.length?h.map(r=>`<tr><td class="num0">${spdTime(r.t)}</td><td><span class="tag">${SPD_K[r.kind]||esc(r.kind)}</span></td>
+    <td class="num spdl ${r.ok?spdCls(r.mbps):'bad'}">${r.ok?`<span>${r.mbps} Mbps</span><i style="--w:${Math.min(100,r.mbps/hm*100).toFixed(1)}%"></i>`:'失败'}</td><td class="num">${r.ok?r.peak+' Mbps':'-'}</td><td class="num ${r.ms>0?dcls(r.ms):''}">${dtxt(r.ms)}</td><td class="mut">${esc(r.src||r.error||'')}</td></tr>`).join('')
+    :'<tr><td colspan="6"><div class="empty"><div class="et">暂无记录</div><div class="mut small">点「全部测速」测一次国内直连和国外代理带宽</div></div></td></tr>'}
 async function loadSpeed(){clearTimeout(SPD_T);try{SPD=await api('/api/speed');renderSpeed()}catch(e){$('#spd-hist').innerHTML=`<tr><td colspan="6" class="bad">${esc(e.message)}</td></tr>`;return}
   try{if(!BW)BW=await api('/api/bwtest');renderBwSpd()}catch(e){}
   if(SPD.running&&TAB==='测速')SPD_T=setTimeout(loadSpeed,600)}
@@ -2970,7 +3122,8 @@ function renderWarp(){const a=WARP.account,s=WARP.scan||{};
   $('#warp-node').disabled=!a;$('#warp-editb').disabled=!a;
   const run=!!s.running;$('#warp-scan').disabled=run;
   $('#warp-st').innerHTML=run?`<span class="mut">● 优选中 ${s.done||0} / ${s.total||0}… ${esc(s.msg||'')}</span>`:(s.msg?`<span class="${(s.results||[]).length?'ok':'warn'}">● ${esc(s.msg)}</span>${s.restored===false?' <span class="bad">直连策略路由未撤销</span>':''}`:'');
-  $('#warp-res').innerHTML=(s.results||[]).map(r=>`<tr><td>${esc(r.endpoint)}${a&&r.endpoint===a.endpoint?' <span class="tag">当前</span>':''}</td><td>${r.delay} ms</td><td>${Math.round(r.loss*100)}%</td><td><button class="btn g sm" onclick="warpSetEp(${jsq(r.endpoint)},this)">使用</button></td></tr>`).join('')}
+  $('#warp-res').innerHTML=(s.results||[]).map(r=>`<tr><td>${esc(r.endpoint)}${a&&r.endpoint===a.endpoint?' <span class="tag">当前</span>':''}</td><td class="num ${dcls(r.delay)}">${r.delay} ms</td><td class="num ${r.loss>=.2?'bad':r.loss>0?'warn':'ok'}">${Math.round(r.loss*100)}%</td><td style="text-align:right"><button class="btn g sm" onclick="warpSetEp(${jsq(r.endpoint)},this)">使用</button></td></tr>`).join('')||
+    `<tr><td colspan="4"><div class="empty"><div class="et">${run?'正在优选…':'还没有优选结果'}</div><div class="mut small">点「开始优选」对 WARP 端点做真实握手测试，结果按延迟和丢包排序</div></div></td></tr>`}
 async function warpAct(body,btn,conf){if(conf&&!confirm(conf))return false;if(btn)btn.disabled=true;let ok=false;try{const j=await api('/api/warp','POST',body);toast(j.message);ok=true}catch(e){toast(e.message)}if(btn)btn.disabled=false;loadWarp();return ok}
 function warpReg(b){warpAct({action:'register'},b,WARP.account?'重新注册会替换当前 WARP 账号，继续？':'')}
 function warpDel(b){warpAct({action:'delete'},b,'删除 WARP 账号和节点？引用它的策略组会改用其他节点。')}
