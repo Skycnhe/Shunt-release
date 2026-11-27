@@ -1524,6 +1524,7 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
       <div class="row" style="margin-top:8px"><span class="sp"></span><button class="btn" onclick="saveDevNames()">保存</button></div></div>
     <div data-sg="net" class="card"><h3>订阅与分组</h3><div class="row">
       <span>订阅自动更新间隔</span><select id="sub-int"><option value="3600">1 小时</option><option value="21600">6 小时</option><option value="43200">12 小时</option><option value="86400">24 小时</option><option value="259200">3 天</option></select></div>
+      <div class="mut small mt" id="sub-int-st"></div>
       <div class="row mt"><span class="sp mut small">地区分组、负载均衡、自定义策略组在「策略组」页设置</span><button class="btn g" onclick="go('策略组')">策略组</button><button class="btn" onclick="saveGroupOpts()">保存并应用</button></div></div>
     <div data-sg="net" class="card"><div class="row"><h3 class="sp" style="margin:0">网络诊断</h3><button class="btn g" id="diag-btn" onclick="runDiag()">一键诊断</button></div>
           <div class="mut small" style="margin-top:4px">检查核心、透明代理 / TUN、IP 转发、DNS 解析与出站连通性，并给出修复建议</div>
@@ -1551,7 +1552,7 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
         <button class="btn g sm" id="cfg-btn" onclick="viewConfig()">查看</button><button class="btn g sm" onclick="downloadConfig()">下载</button></div>
       <div id="cfg-box" class="hide mt"><input id="cfg-q" placeholder="搜索配置内容" style="width:100%;margin-bottom:8px" oninput="findCfg()"><pre id="cfg-view"></pre></div></div>
     <div data-sg="core" class="card"><h3>定时任务</h3>
-      <div class="opt"><div class="sp"><div class="t">每天更新订阅</div><div class="dsc">留空不执行</div></div><input type="time" id="sc-sub"><button class="btn g sm" onclick="runTask('sub_update')">立即执行</button></div>
+      <div class="opt"><div class="sp"><div class="t">每天更新订阅</div><div class="dsc">留空不执行。与「订阅自动更新间隔」共用一个任务：同一时间只更新一次、只重载一次核心，30 分钟内刚更新过的订阅不重复拉取</div><div class="dsc" id="sc-sub-st"></div></div><input type="time" id="sc-sub"><button class="btn g sm" onclick="runTask('sub_update')">立即执行</button></div>
       <div class="opt"><div class="sp"><div class="t">每天重启核心</div><div class="dsc">释放内存、刷新连接</div></div><input type="time" id="sc-restart"><button class="btn g sm" onclick="runTask('core_restart')">立即执行</button></div>
       <div class="opt"><div class="sp"><div class="t">每天更新 GEO 数据库</div></div><input type="time" id="sc-geo"><button class="btn g sm" onclick="runTask('geo_update')">立即执行</button></div>
       <div class="opt"><div class="sp"><div class="t">节点自动测速</div><div class="dsc">定时测试全部节点，节点页可按延迟排序</div></div>
@@ -2828,7 +2829,14 @@ async function dnsQuery(){const n=$('#dq-name').value.trim();if(!n)return toast(
     $('#dq-r').innerHTML=`<div class="row small mb"><span class="${r.status===0?'ok':'bad'}">● ${esc(RC[r.status]||('Status '+r.status))}</span><span class="mut">${r.ms} ms</span></div><div class="mut small mb">上游：${esc(r.policy)}</div>`+
       (r.answer.length?`<div class="tw"><table><thead><tr><th>名称</th><th>类型</th><th>TTL</th><th>结果</th></tr></thead><tbody>${r.answer.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(TY[a.type]||a.type)}</td><td>${esc(a.TTL)}</td><td class="w">${esc(a.data)}</td></tr>`).join('')}</tbody></table></div>`:'<span class="mut small">无记录</span>')}
   catch(e){$('#dq-r').innerHTML=`<span class="bad">${esc(e.message)}</span>`}b.disabled=false}
-function fillSchedule(){const s=STATE.schedule||{};$('#sc-sub').value=s.sub_update||'';$('#sc-restart').value=s.core_restart||'';$('#sc-geo').value=s.geo_update||'';$('#sc-lat').value=String(s.latency||0);
+// 订阅任务状态：「定时更新订阅」与「订阅自动更新」的上次运行时间、结果、被推迟的原因
+function subSchedText(k){const ss=STATE.sub_sched||{},r=ss[k]||{},fmt=t=>new Date(t*1000).toLocaleString('zh-CN',{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  let h=r.t?`上次 ${fmt(r.t)}：<span class="${r.ok?'ok':'bad'}">${r.ok?'✓':'✗'}</span> ${esc(r.msg||'')}`+((r.merged||[]).length?`（与「${esc(r.merged.join('、'))}」合并执行）`:''):'还没有运行记录';
+  if(r.deferred)h+=`<br><span style="color:var(--warn)">已推迟（${fmt(r.deferred_t)}）：${esc(r.deferred)}</span>`;
+  if(ss.busy)h+=`<br>正在进行：${esc(ss.busy)}`;if(ss.retry_at)h+=`<br>失败的订阅将于 ${fmt(ss.retry_at)} 重试`;return h}
+function fillSubSched(){const ss=STATE.sub_sched||{},a=$('#sc-sub-st'),b=$('#sub-int-st');if(a)a.innerHTML=subSchedText('daily');
+  if(b)b.innerHTML=ss.auto_by==='core'?'mihomo：订阅按这个间隔由内核自动更新（面板记录不到每次结果）；「每天更新订阅」到点时内核 30 分钟内刚更新过的订阅不再重复拉取':'sing-box：订阅按这个间隔由面板更新，与「每天更新订阅」共用一个任务。'+subSchedText('auto')}
+function fillSchedule(){fillSubSched();const s=STATE.schedule||{};$('#sc-sub').value=s.sub_update||'';$('#sc-restart').value=s.core_restart||'';$('#sc-geo').value=s.geo_update||'';$('#sc-lat').value=String(s.latency||0);
   $('#sc-events').innerHTML=(STATE.sched_events||[]).slice(0,6).map(e=>`<div class="ev"><span class="mut">${new Date(e.t*1000).toLocaleString('zh-CN',{hour12:false})}</span> ${esc(e.msg)}</div>`).join('')}
 async function saveSchedule(btn){return busyBtn(btn,async()=>{try{const j=await api('/api/schedule','PUT',{sub_update:$('#sc-sub').value,core_restart:$('#sc-restart').value,geo_update:$('#sc-geo').value,latency:+$('#sc-lat').value});toast(j.message);await loadState();fillSchedule()}catch(e){toast(e.message)}})}
 async function runTask(k){if(k==='core_restart'&&!confirm('立即重启核心？'))return;try{toast('执行中…');const j=await api('/api/schedule/run','POST',{task:k});toast(j.message)}catch(e){toast(e.message)}await loadState();fillSchedule()}
@@ -3102,7 +3110,7 @@ async function updRS(n){try{await core('/providers/rules/'+n,'PUT');toast('已�
 
 // 设置扩展
 function fillSettings(){$('#bypass').value=(STATE.bypass||[]).join('\n');$('#tests').value=(STATE.tests||[]).map(t=>t.name+'|'+t.url).join('\n');
-  $('#sub-int').value=String(STATE.sub_interval||86400);
+  $('#sub-int').value=String(STATE.sub_interval||86400);if(typeof fillSubSched==='function')fillSubSched();
   $('#tg-token').value=STATE.tg_token||'';$('#tg-chat').value=STATE.tg_chat||''}
 async function saveSettings(o,msg){try{toast('保存中…');const j=await api('/api/settings','PUT',o);toast(msg||j.message);await loadState();fillSettings()}catch(e){toast(e.message);throw e}}
 function saveBypass(){saveSettings({bypass:$('#bypass').value.split('\n').map(s=>s.trim()).filter(Boolean)},'绕过设备已生效').catch(()=>{})}

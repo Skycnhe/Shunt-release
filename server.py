@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.2.4"
+PANEL_VERSION = "9.2.5"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -378,7 +378,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.2.4"
+PANEL_VERSION = "9.2.5"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -4472,7 +4472,7 @@ import json, os, re, threading, time, urllib.request, urllib.error
 
 from .errlog import log_err
 from .base import CONF_DIR, DEFAULT_EXCLUDE, PANEL_DIR, dl_check, read_full
-from .data import load, safe, write_json
+from .data import load, read_json, safe, write_json
 from .links import b64d, parse_link
 from .groups import PROV, rx, sub_cache_path
 from .sb_common import SB_UA
@@ -4778,13 +4778,20 @@ def _cached_names(name):
         return None
 
 
+_SUBDL = {}  # 订阅名 → 正在下载它的线程（上一次 sb_update_subs 超时返回后线程可能还在跑）
+_SUBDL_LOCK = threading.Lock()
+
+
 def sb_update_subs(names=None, d=None):
-    """并发更新订阅：每个订阅一个线程（单个订阅仍串行走 UA/代理/直连回退），整体耗时取决于最慢的一个"""
+    """并发更新订阅：每个订阅一个线程（单个订阅仍串行走 UA/代理/直连回退），整体耗时取决于最慢的一个。
+    同一个订阅正在被另一次更新下载（定时 / 自动 / 手动 / 编辑订阅同时触发，或上次超时的线程还没结束）时
+    不再起第二个下载线程：等那一次的结果（以前两个线程同时拉同一个订阅、先后覆盖同一个缓存文件）"""
     d = d or load()
     gh = d.get("gh_proxy") or ""
     subs = [s for s in d["subs"] if not names or s["name"] in names]
     ok, bad = [], []
     res_lock = threading.Lock()
+    t0 = int(time.time())
 
     def one(s):
         try:
@@ -4797,16 +4804,40 @@ def sb_update_subs(names=None, d=None):
         except Exception as e:
             with res_lock:
                 bad.append(f"{s['name']}：{e}")
+        finally:
+            with _SUBDL_LOCK:
+                if _SUBDL.get(s["name"]) is threading.current_thread():
+                    _SUBDL.pop(s["name"], None)
 
-    ths = [threading.Thread(target=one, args=(s,)) for s in subs]
-    for t in ths:
-        t.start()
+    ths = []
+    with _SUBDL_LOCK:
+        for s in subs:
+            t = _SUBDL.get(s["name"])
+            if t is not None and t.is_alive():
+                ths.append((s, t, True))
+                continue
+            t = threading.Thread(target=one, args=(s,))
+            _SUBDL[s["name"]] = t
+            ths.append((s, t, False))
+    for s, t, shared in ths:
+        if not shared:
+            t.start()
     end = time.time() + SUBS_WAIT  # 整体最多等 SUBS_WAIT 秒（以前逐个 join(180)，几个订阅都卡住时要等 N×180 秒）
-    for t in ths:
+    for _, t, _ in ths:
         t.join(max(0.1, end - time.time()))
     with res_lock:  # 超时还没结束的线程之后再写结果也不影响这里返回的快照
         ok_out = list(ok)
-        bad_out = list(bad) + [f"{s['name']}：下载超时" for s, t in zip(subs, ths) if t.is_alive()]
+        bad_out = list(bad) + [f"{s['name']}：下载超时" for s, t, shared in ths if t.is_alive() and not shared]
+    for s, t, shared in ths:  # 等的是另一次更新的下载：按缓存是否刷新判断成败
+        if not shared:
+            continue
+        c = read_json(sub_cache_path(s["name"]), {}) or {}
+        if t.is_alive():
+            bad_out.append(f"{s['name']}：另一次更新正在下载这个订阅，还没结束")
+        elif int(c.get("updated") or 0) >= t0 - 1 and c.get("nodes"):
+            ok_out.append(f"{s['name']}：{len(c['nodes'])} 个节点（与同时进行的另一次更新合并）")
+        else:
+            bad_out.append(f"{s['name']}：同时进行的另一次更新没有成功")
     # 只让缓存过期、保留旧名单：下次 provider_nodes 拿新名单与它比较，有变化才能推进 provider_rev()。
     # 以前把 data 清成 None，比较时没有旧名单，rev 永远不变：sing-box 下订阅更新出新地区后，/api/state 的策略组名单
     # （策略下拉框、按设备分流目标）一直按旧缓存返回，直到下次改设置
@@ -14447,7 +14478,7 @@ def log_loop():
         time.sleep(60)
 '''
 _SRC['shunt.schedule'] = '''"""定时任务"""
-import json, os, re, threading, time
+import datetime, json, os, re, threading, time
 from collections import deque
 from urllib.parse import quote
 
@@ -14467,7 +14498,7 @@ from .notify import WD
 from .latency import bg_fetch, bg_meta, bg_meta_save
 from .adblock import AB_PARSER, AB_STATE, ab_meta, adblock_update
 from .health import HEALTH_STATE, health_cfg, run_check as health_run_check
-SCHED = {"events": deque(maxlen=30), "done": {}}
+SCHED = {"events": deque(maxlen=30), "done": {}, "sub_pending": {}}
 # 每天定点任务的最近执行记录 {任务: {"date": 日期, "at": 当时的设定时刻}}，落盘到 sched_done.json：
 # 面板重启后不会把今天已跑过的任务再跑一遍
 DAILY_FILE = os.path.join(PANEL_DIR, "sched_done.json")
@@ -14581,6 +14612,174 @@ def mh_update_subs(names):
     return okl, bad
 
 
+# ---------- 订阅更新：「定时更新订阅」（每天定点）与「订阅自动更新」（按间隔）共用一个任务 ----------
+# v9.2.4 及以前两套调度各管各的：sing-box 下同一轮里自动更新先下载 + 重载一次，紧接着定时任务再下载 + 重载一次；
+# 自动更新不加锁，与手动「立即执行」/ 订阅页「更新」能同时拉同一个订阅、同时重载；自动更新失败不重试、不恢复选择组。
+# 现在：一把锁（SUB_LOCK）串行，同一轮的来源合并成一次下载、一次 refresh_regions（最多一次重载），
+# 30 分钟内刚成功更新过的订阅定时任务不再重复拉取；锁被占时定时 / 自动更新留在待办里下一轮再试，不丢弃
+SUB_LOCK = threading.RLock()
+SUB_DEDUP = 1800  # 定时 / 自动更新：这么多秒内刚成功更新过的订阅不重复拉取（手动「立即执行」不受影响）
+SUB_MANUAL_WAIT = 240  # 手动更新遇到另一次订阅更新正在进行：最多等这么久（不并发拉取同一批订阅）
+SUB_CORE_WAIT = 150  # 核心正在重启 / 重载时，下载前最多等这么久（否则走代理的下载会失败、退回直连）
+SUB_BUSY = {"what": ""}
+SUB_SRC = {"daily": "定时更新订阅", "auto": "订阅自动更新", "retry": "失败重试", "manual": "手动更新"}
+SUB_FILE = os.path.join(PANEL_DIR, "sub_sched.json")  # 两类订阅任务的上次结果 / 推迟原因（面板重启后仍显示）
+SUB_STATUS = {"data": None}
+_SUB_STATUS_LOCK = threading.Lock()
+_SUB_REQ = threading.local()  # 定时循环交给 run_task("sub_update") 的参数（手动调用时为空：按手动处理）
+_TS_RE = re.compile(r"(\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d)(?:\\.\\d+)?(Z|[+-]\\d\\d:?\\d\\d)?$")
+
+
+def parse_ts(v):
+    """mihomo 的 updatedAt（RFC 3339，纳秒小数、Z 或 +08:00）→ Unix 时间戳；零值 / 无法解析返回 0"""
+    m = _TS_RE.match(str(v or "").strip())
+    if not m:
+        return 0
+    try:
+        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+        z = m.group(2)
+        if z and z != "Z":
+            sign = -1 if z[0] == "-" else 1
+            hh, mm = int(z[1:3]), int(z[-2:])
+            t -= sign * datetime.timedelta(hours=hh, minutes=mm)
+        ts = int(t.replace(tzinfo=datetime.timezone.utc).timestamp())
+    except (ValueError, OverflowError):
+        return 0
+    return ts if ts > 0 else 0
+
+
+def sub_last_ok(name, d=None):
+    """订阅最近一次成功拉取的时间：sing-box 看面板缓存（有节点才算）、mihomo 看内核的 updatedAt；拿不到返回 0"""
+    if active_core(d) == "singbox":
+        c = sb_sub_cache(name)
+        return int(c.get("updated") or 0) if isinstance(c, dict) and c.get("nodes") else 0
+    j = core_json("/providers/proxies/" + quote(name, safe=""), timeout=5)
+    return parse_ts(j.get("updatedAt")) if isinstance(j, dict) else 0
+
+
+def _sub_names(srcs):
+    """合并各来源要更新的订阅：任一来源是「全部」就更新全部"""
+    if not srcs or any(v is None for v in srcs.values()):
+        return None
+    return sorted({n for v in srcs.values() for n in (v or ())})
+
+
+def _sub_label(srcs):
+    names = [SUB_SRC.get(k, k) for k in ("daily", "auto", "retry", "manual") if k in (srcs or {})] or [SUB_SRC["daily"]]
+    return names[0] if len(names) == 1 else " + ".join(names) + "（合并为一次）"
+
+
+def _sub_origin(srcs):
+    """失败重试的结果记在哪个来源上：重试继承上一次的来源"""
+    out = [k for k in srcs if k in ("daily", "auto")]
+    if "retry" in srcs:
+        out += [k for k in SCHED.get("sub_retry_src") or () if k not in out]
+    return tuple(out)
+
+
+def sub_status():
+    with _SUB_STATUS_LOCK:
+        if SUB_STATUS["data"] is None:
+            v = read_json(SUB_FILE, {})
+            SUB_STATUS["data"] = v if isinstance(v, dict) else {}
+        return {k: dict(v) for k, v in SUB_STATUS["data"].items() if isinstance(v, dict)}
+
+
+def _sub_mark(srcs, ok, msg):
+    """记下定时 / 自动更新的结果。ok 为 None 表示被推迟（保留上次结果，只记推迟原因）"""
+    keys = _sub_origin(srcs)
+    if not keys:
+        return
+    sub_status()
+    now = int(time.time())
+    with _SUB_STATUS_LOCK:
+        data = SUB_STATUS["data"]
+        for k in keys:
+            rec = data.get(k) if isinstance(data.get(k), dict) else {}
+            if ok is None:
+                rec.update(deferred=str(msg)[:200], deferred_t=now)
+            else:
+                rec = {"t": now, "ok": bool(ok), "msg": str(msg)[:300], "deferred": "", "deferred_t": 0,
+                       "merged": [SUB_SRC[x] for x in ("daily", "auto") if x in srcs and x != k]}
+            data[k] = rec
+        try:
+            write_json(SUB_FILE, data)
+        except OSError as e:
+            log_err("保存订阅任务记录", e)
+
+
+def sub_sched_view(d=None):
+    """/api/state 的 sub_sched：两类订阅任务的上次结果、推迟原因、当前是否有订阅更新在进行"""
+    st = sub_status()
+    return {"daily": st.get("daily") or {}, "auto": st.get("auto") or {}, "busy": SUB_BUSY["what"],
+            "pending": [SUB_SRC.get(k, k) for k in SCHED["sub_pending"]], "dedup_min": SUB_DEDUP // 60,
+            "auto_by": "panel" if active_core(d) == "singbox" else "core",
+            "retry_at": int(SCHED.get("sub_retry") or 0)}
+
+
+def _wait_core_ready(limit=SUB_CORE_WAIT):
+    """核心正在重启（SVC_OP）或重载（RELOAD_LOCK）时先等它完成，再等控制接口应答：
+    以前重启 / 重载期间开始的订阅下载判断「核心不在」只走直连，被墙的机场订阅就失败了。返回是否等过"""
+    from .sysopt import SVC_OP
+    from .core import RELOAD_LOCK
+    waited = False
+    for lk in (SVC_OP, RELOAD_LOCK):
+        if lk.acquire(blocking=False):
+            lk.release()
+            continue
+        waited = True
+        if lk.acquire(timeout=limit):
+            lk.release()
+    if waited and not WD["manual_stop"]:
+        end = time.time() + 30
+        while time.time() < end and not core_alive():
+            time.sleep(2)
+    return waited
+
+
+def sub_job(sources=("manual",), names=None, dedup=False, wait=0):
+    """更新订阅（全部或 names）：持 SUB_LOCK 串行，一次下载、一次 refresh_regions（有变化才重载）、恢复选择组。
+    返回 (ok, 消息, 失败的订阅名)；锁被占且 wait 内没等到时返回 (None, 推迟原因, [])"""
+    got = SUB_LOCK.acquire(timeout=wait) if wait else SUB_LOCK.acquire(blocking=False)
+    if not got:
+        return None, f"另一次订阅更新（{SUB_BUSY['what'] or '进行中'}）还没结束，等它完成后再执行", []
+    prev_what = SUB_BUSY["what"]
+    try:
+        SUB_BUSY.update(what=_sub_label({k: None for k in sources}))
+        d = load()
+        allsubs = [s["name"] for s in d.get("subs") or [] if isinstance(s, dict) and s.get("name")]
+        todo = [n for n in (allsubs if names is None else names) if n in allsubs]
+        if not todo:
+            return True, "没有需要更新的订阅", []
+        skipped = []
+        if dedup:
+            now = time.time()
+            keep = []
+            for n in todo:
+                t = sub_last_ok(n, d)
+                (skipped if t and 0 <= now - t < SUB_DEDUP else keep).append(n)
+            todo = keep
+        note = f"；{'、'.join(skipped)[:80]} {SUB_DEDUP // 60} 分钟内刚更新过，不重复拉取" if skipped else ""
+        if not todo:
+            return True, f"全部订阅 {SUB_DEDUP // 60} 分钟内刚更新过，不重复拉取", []
+        _wait_core_ready()
+        sel = _selections()
+        sb = active_core(d) == "singbox"
+        okl, bad = sb_update_subs(todo, d=d) if sb else mh_update_subs(todo)
+        try:  # 一次下载只核对一次配置：有变化才重载（以前两套调度各重载一次）
+            refresh_regions()
+        except Exception as e:
+            log_err("订阅更新：刷新地区分组", e)
+        _restore_selections(sel)  # 更新订阅后重新生成配置：保留各选择组的选择
+        failed = [e.split("：", 1)[0] for e in bad]
+        if not bad:
+            return True, "订阅已更新" + note, []
+        return False, "以下订阅更新失败：" + ("；".join(bad) if sb else "、".join(failed)) + note, failed
+    finally:
+        SUB_BUSY.update(what=prev_what)
+        SUB_LOCK.release()
+
+
 LATENCY_PROBE_BUDGET = 60  # sing-box 定时测速逐个补测的时间上限（定时任务在 sched_loop 里同步执行，不能拖太久）
 
 
@@ -14609,13 +14808,13 @@ def _restore_selections(sel):
 
 def run_task(name):
     d = load()
-    if name == "sub_update" and active_core(d) == "singbox":
-        ok, bad = sb_update_subs(d=d)
-        try:
-            refresh_regions()
-        except Exception as e:
-            log_err("定时任务：刷新地区分组", e)
-        return not bad, "订阅已更新" if not bad else "以下订阅更新失败：" + "；".join(bad)
+    if name == "sub_update":
+        # 「定时更新订阅」「订阅自动更新」「失败重试」「手动立即执行」统一走 sub_job：同一把锁、合并成一次下载和一次重载
+        req = getattr(_SUB_REQ, "v", None) or {"sources": ("manual",), "wait": SUB_MANUAL_WAIT}
+        _SUB_REQ.v = None
+        ok, msg, failed = sub_job(**req)
+        _SUB_REQ.failed = failed
+        return ok, msg
     if name == "geo_update" and active_core(d) == "singbox":
         bad = sb_sync_assets(d, force=True)
         ok, msg = reload_core()
@@ -14623,14 +14822,6 @@ def run_task(name):
             return False, "部分规则集更新失败：" + "；".join(bad)[:200]
         # 重载失败时以前仍报「GEO / 规则集已更新」（事件里显示「✗ GEO / 规则集已更新」），看不出是重载出了问题
         return ok, "GEO / 规则集已更新" if ok else "规则集已下载，但重载核心失败：" + str(msg)[:200]
-    if name == "sub_update":
-        _, errs = mh_update_subs([s["name"] for s in d["subs"]])
-        bad = [e.split("：", 1)[0] for e in errs]
-        try:
-            refresh_regions()
-        except Exception as e:
-            log_err("定时任务：刷新地区分组", e)
-        return not bad, "订阅已更新" if not bad else "以下订阅更新失败：" + "、".join(bad)
     if name == "core_restart":
         if WD["manual_stop"]:  # 用户手动停止了核心：定时重启不能替用户把它拉起来
             return True, "核心已手动停止，跳过定时重启"
@@ -14682,9 +14873,12 @@ def sched_loop():
             now = time.strftime("%H:%M")
             today = time.strftime("%Y-%m-%d")
             due = [k for k in ("sub_update", "core_restart", "geo_update") if daily_due(k, str(sc.get(k) or ""), now, today)]
-            if SCHED.get("sub_retry") and time.time() >= SCHED["sub_retry"] and "sub_update" not in due:
+            pend = SCHED["sub_pending"]  # 订阅更新的待办来源 {来源: 订阅名列表或 None（全部）}；被推迟的留到下一轮
+            if "sub_update" in due:
+                pend["daily"] = None
+            if SCHED.get("sub_retry") and time.time() >= SCHED["sub_retry"]:
                 SCHED["sub_retry"] = 0
-                due.append("sub_update")  # 定时更新订阅失败后的重试
+                pend["retry"] = SCHED.get("sub_retry_names")  # 上次失败的订阅：10 分钟后重试（定时、自动更新都有）
             # 节点健康检查：每天到点且启用时执行（已过点、今天还没跑也补跑）
             hcfg = health_cfg(d)
             if hcfg.get("enabled") and daily_due("health", str(hcfg.get("time") or ""), now, today):
@@ -14697,18 +14891,16 @@ def sched_loop():
             mins = int(sc.get("latency") or 0)
             if mins and time.time() - SCHED["done"].get("latency", 0) >= mins * 60:
                 due.append("latency")
-            if active_core(d) == "singbox" and d["subs"]:  # mihomo 的订阅由核心按间隔自动更新；sing-box 由面板代劳
+            if active_core(d) == "singbox" and d["subs"] and "auto" not in pend:  # mihomo 的订阅由核心按间隔自动更新；sing-box 由面板代劳
                 iv = max(int(d.get("sub_interval") or 86400), 600)
                 last = min([sb_sub_cache(s["name"]).get("updated", 0) for s in d["subs"]] or [0])
                 if time.time() - max(last, SCHED["done"].get("sb_subs", 0)) >= iv:
+                    # 以前在这里直接下载 + 重载：与同一轮到点的「定时更新订阅」各拉一遍、各重载一次核心，
+                    # 且不受锁保护（与手动更新并发）、失败不重试、不恢复选择组。现在并入同一个订阅任务
                     SCHED["done"]["sb_subs"] = time.time()
-                    ok_, bad_ = sb_update_subs(d=d)
-                    try:  # 出错不能打断这一轮：上面 daily_due 已把到点的定点任务记成今天执行过，跳过就漏一天
-                        refresh_regions()
-                    except Exception as e:
-                        log_err("订阅自动更新：刷新地区分组", e)
-                    if bad_:
-                        sched_event("订阅自动更新：✗ " + "；".join(bad_)[:200])
+                    pend["auto"] = None
+            if pend and "sub_update" not in due:
+                due.insert(0, "sub_update")
             try:
                 _bg_tick()
             except Exception as e:
@@ -14734,19 +14926,36 @@ def sched_loop():
                     if not core_alive():  # 刚开机 / 核心重启中：先等核心起来，否则国外列表只能直连（常被污染）
                         AB_STATE["retry"] = time.time() + 60
                         continue
+                srcs = dict(pend) if k == "sub_update" else {}
+                if k == "sub_update":
+                    _SUB_REQ.failed = None
+                    _SUB_REQ.v = {"sources": tuple(srcs) or ("daily",), "names": _sub_names(srcs), "dedup": True}
                 try:  # 一个任务抛异常不能连累同一轮的其他任务（它们已被 daily_due 记成今天执行过，跳过就漏一天）
-                    sel = _selections() if k == "sub_update" else None
-                    ok, msg = run_task(k)
-                    _restore_selections(sel)  # 更新订阅后重新生成配置：保留各选择组的选择
+                    ok, msg = run_task(k)  # 订阅更新：选择组的保存 / 恢复在 sub_job 里
                 except Exception as e:
                     log_err("定时任务：" + TASK_NAMES[k], e)
                     ok, msg = False, f"执行出错：{str(e)[:150]}"
-                if k == "sub_update":  # 失败（旧订阅保留不动）：10 分钟后重试，最多 3 次
-                    tries = SCHED.get("sub_retries", 0)
+                finally:
+                    _SUB_REQ.v = None
+                if k == "sub_update":
+                    if ok is None:  # 另一次订阅更新（手动 / 换内核等）正在进行：保留待办，下一轮（20 秒后）再试，不丢弃
+                        if not SCHED.get("sub_deferred"):
+                            sched_event(f"{_sub_label(srcs)}：推迟，{msg}")
+                        SCHED["sub_deferred"] = msg
+                        _sub_mark(srcs, None, msg)
+                        continue
+                    SCHED["sub_deferred"] = ""
+                    pend.clear()
+                    _sub_mark(srcs, ok, msg)
+                    tries = SCHED.get("sub_retries", 0)  # 失败（旧订阅保留不动）：10 分钟后只重试失败的订阅，最多 3 次
                     if not ok and tries < 3:
-                        SCHED.update(sub_retry=time.time() + 600, sub_retries=tries + 1)
+                        failed = getattr(_SUB_REQ, "failed", None)
+                        SCHED.update(sub_retry=time.time() + 600, sub_retries=tries + 1, sub_retry_names=list(failed) if failed else None,
+                                     sub_retry_src=_sub_origin(srcs))
                     else:
-                        SCHED.update(sub_retry=0, sub_retries=0)
+                        SCHED.update(sub_retry=0, sub_retries=0, sub_retry_names=None, sub_retry_src=())
+                    sched_event(f"{_sub_label(srcs)}：{'✓' if ok else '✗'} {msg}")
+                    continue
                 if k == "adblock":
                     tries = AB_STATE.get("retries", 0)  # 自己的计数：以前复用了循环计数 n，广告规则一更新就把它改成重试次数
                     if not ok and tries < AB_RETRY_MAX:
@@ -17901,9 +18110,24 @@ from .mihomo import drop_provider_cache
 from .core import refresh_after_sub, refresh_later, refresh_regions, reload_core
 from .sb_common import active_core
 from .sb_subs import sb_update_subs
+from . import schedule as SCH
 from .schedule import mh_update_subs
 from .validate import sub_name_clash
 from .webapi_base import api_route, mask_url, unmask, parse_node_items, sub_nodes_view, removed_only_left
+
+
+def _subs_update(self, names):
+    """更新订阅并核对地区分组（持 schedule.SUB_LOCK 调用）"""
+    if active_core() == "singbox":
+        okl, bad = sb_update_subs(names)
+        ok2, msg2 = refresh_regions()
+        msg = ("已更新：" + "；".join(okl) if not bad else "更新失败：" + "；".join(bad)) + ("；" + msg2 if msg2 and "无变化" not in msg2 else "")
+        return self.reply(not bad, msg)
+    okl, bad = mh_update_subs(names)
+    ok2, msg2 = refresh_regions()
+    msg = (("已更新：" + "；".join(okl) if okl else "已更新") if not bad else "更新失败：" + "；".join(bad)) \\
+        + ("；" + msg2 if msg2 and "无变化" not in msg2 else "")
+    return self.reply(not bad, msg)
 
 
 class SubsAPI:
@@ -17918,16 +18142,16 @@ class SubsAPI:
         if name and name not in allsubs:  # 订阅已被删除（另一个页面 / 定时任务）：以前照样去更新，报一串看不懂的核心错误
             return self.send(404, {"message": f"订阅不存在：{name}"})
         names = allsubs if not name else [name]
-        if active_core() == "singbox":
-            okl, bad = sb_update_subs(names)
-            ok2, msg2 = refresh_regions()
-            msg = ("已更新：" + "；".join(okl) if not bad else "更新失败：" + "；".join(bad)) + ("；" + msg2 if msg2 and "无变化" not in msg2 else "")
-            return self.reply(not bad, msg)
-        okl, bad = mh_update_subs(names)
-        ok2, msg2 = refresh_regions()
-        msg = (("已更新：" + "；".join(okl) if okl else "已更新") if not bad else "更新失败：" + "；".join(bad)) \\
-            + ("；" + msg2 if msg2 and "无变化" not in msg2 else "")
-        return self.reply(not bad, msg)
+        # 与「定时更新订阅」「订阅自动更新」共用一把锁：正在定时 / 自动更新时先等它完成，不并发拉取同一批订阅、各重载一次核心
+        if not SCH.SUB_LOCK.acquire(timeout=SCH.SUB_MANUAL_WAIT):
+            return self.send(409, {"message": f"订阅正在{SCH.SUB_BUSY['what'] or '更新'}，请稍后再试"})
+        prev_what = SCH.SUB_BUSY["what"]
+        try:
+            SCH.SUB_BUSY["what"] = "手动更新"
+            return _subs_update(self, names)
+        finally:
+            SCH.SUB_BUSY["what"] = prev_what
+            SCH.SUB_LOCK.release()
 
     @api_route("/api/subs", "POST")
     def api_subs_post(self, m, p, b, q):
@@ -18393,7 +18617,7 @@ from .latency import BG_FILE, bg_fetch, bg_meta, bg_meta_save, bg_save
 from .logstream import ticket_new
 from .adblock import ab_compose, fmt_size
 from .logclean import LOG_STATE, log_clean, log_sizes
-from .schedule import SCHED, TASK_NAMES, run_task, sched_event
+from .schedule import SCHED, TASK_NAMES, run_task, sched_event, sub_sched_view
 from .devices import tun_runtime_error
 from .diag import diagnose
 from .https import gen_cert, restart_self
@@ -18472,7 +18696,7 @@ class SysAPI:
         st, code, version = _svc_status()
         groups, gmeta = state_groups(d)
         out = {"running": "started" in st or code == 200, "version": version, "groups": groups, "group_meta": gmeta,
-               "nodes": state_nodes(d), "default_exclude": DEFAULT_EXCLUDE, "sched_events": list(SCHED["events"])[:20],
+               "nodes": state_nodes(d), "default_exclude": DEFAULT_EXCLUDE, "sched_events": list(SCHED["events"])[:20], "sub_sched": sub_sched_view(d),
                "panel_version": PANEL_VERSION, "update_channel": "preview" if d.get("update_channel") == "preview" else "stable", "core": active_core(d), "sb_fork": sb_is_fork(),
                "tun_gvisor": sb_has_gvisor() if active_core(d) == "singbox" else mh_has_gvisor(mh_bin(active_core(d))),
                "tun_native": active_core(d) == "singbox" and sb_tun_native(),
@@ -18823,6 +19047,8 @@ class SysAPI:
         if k not in TASK_NAMES:
             return self.send(400, {"message": "未知任务"})
         ok, msg = run_task(k)
+        if ok is None:  # 订阅：另一次订阅更新等了 4 分钟还没结束
+            return self.send(409, {"message": msg})
         sched_event(f"手动执行 {TASK_NAMES[k]}：{'✓' if ok else '✗'} {msg}")
         return self.reply(ok, msg)
 
