@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Shunt 代理核心（Debian / Ubuntu 的 systemd 版，与 Alpine 的 init.d/shunt-core 对应；v9.2.0）
+# 按 /etc/mihomo-panel/core 选择 mihomo、mihomo Smart 或 sing-box；启动前生成配置，起来后挂透明代理规则，停止前先撤规则
+[Unit]
+Description=Shunt proxy core (mihomo / sing-box)
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/opt/mihomo-panel/systemd/shunt-core.sh pre
+ExecStart=/opt/mihomo-panel/systemd/shunt-core.sh run
+ExecStartPost=/opt/mihomo-panel/systemd/shunt-core.sh post
+ExecStop=/opt/mihomo-panel/systemd/shunt-core.sh stop $MAINPID
+ExecStopPost=/opt/mihomo-panel/systemd/shunt-core.sh stoppost
+# sing-box 正常退出时才把 Fake-IP 映射写进 cache.db：先给 15 秒
+TimeoutStopSec=25
+KillMode=mixed
+LimitNOFILE=1048576
+# 不让 systemd 自动拉起：核心故障由面板的看门狗处理（重启、修不好切直连），与 Alpine 一致
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

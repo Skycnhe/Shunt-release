@@ -8,3 +8,9 @@ init.d/shunt-core
 icon.svg
 icon-180.png
 icon-512.png
+# v9.2.0：Debian / Ubuntu（systemd）的服务单元、核心辅助脚本与 rc-service 兼容层（Alpine 上下载了也不用）
+systemd/shunt.service
+systemd/shunt-core.service
+systemd/shunt-core.sh
+systemd/rc-service
+systemd/rc-update

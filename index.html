@@ -534,6 +534,12 @@ html[data-layout=classic] .hstats .chip b{font-size:16px;white-space:nowrap;over
 @media (min-width:721px){#ov .g4 .stat{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:12px;align-items:baseline;padding:12px 16px}
   #ov .g4 .stat .k,#ov .g4 .stat .seg{grid-column:1/-1}#ov .g4 .stat .s{text-align:right;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#ov .g4 .stat .v{font-size:22px}}
 @media (max-width:720px){.ovcol{display:contents}#ov .o6{order:6}.otp{gap:28px}.otp-hub{width:84px;height:84px}}
+/* v9.2.0：规则集切换（原目标 / 直连 / 拒绝）、订阅分享、语言选择 */
+.seg.sm button,.hs-seg button{padding:3px 9px;font-size:12px}
+.share-qr{display:inline-block;background:#fff;padding:8px;border-radius:10px;line-height:0}
+.share-qr svg{width:180px;height:180px;display:block}
+.share-row td{vertical-align:top}
+.share-pick{max-height:260px;overflow:auto;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:10px;padding:8px}
 /* Inter（拉丁字母 / 数字子集，字重 400–700 可变，woff2 内嵌，约 17 KB）只用于默认外观的英文和数字，中文仍用系统字体。
    Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)，SIL Open Font License 1.1：https://openfontlicense.org */
 @font-face{font-family:"Inter Shunt";font-style:normal;font-weight:400 700;font-display:swap;src:url(data:font/woff2;base64,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) format("woff2");unicode-range:U+0020-007E,U+00B7,U+00D7,U+2022,U+2026,U+2190-2193}
@@ -1272,7 +1278,8 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
       <div class="lbl">类型</div>
       <div class="seg" id="cg-type"><button data-v="select">手动选择</button><button data-v="url-test">自动测速</button><button data-v="fallback">故障转移</button><button data-v="load-balance">负载均衡</button></div>
       <div class="row mt" id="cg-adv"><select id="cg-st" class="hide" title="一致性哈希：同一域名固定走一个节点；轮询：每条新连接换下一个节点"><option value="consistent-hashing">一致性哈希</option><option value="round-robin">轮询</option></select>
-        <input id="cg-int" type="number" min="30" placeholder="测速间隔（秒，默认同地区组）" style="width:200px"><input id="cg-tol" type="number" min="0" placeholder="容差 ms（默认同全局）" style="width:160px"></div>
+        <input id="cg-int" type="number" min="30" placeholder="测速间隔（秒，默认同地区组）" style="width:200px"><input id="cg-tol" type="number" min="0" placeholder="容差 ms（默认同全局）" style="width:160px">
+        <label class="row mut small hide" id="cg-prio-l" style="gap:4px" title="主用不通才切到备用，主用恢复再切回。mihomo 由内核按顺序切换；sing-box 没有故障转移出站，改为手动选择组 + 面板按顺序探活切换（不重启内核）"><input type="checkbox" id="cg-prio" onchange="CGF.priority=this.checked"> 主备优先（按成员顺序，sing-box 也生效）</label></div>
       <div class="lbl">成员（按顺序，故障转移按此顺序优先）</div>
       <div id="cg-chosen" class="mchips"><span class="mut small">还没有成员</span></div>
       <input id="cg-search" placeholder="搜索节点 / 分组，点击加入" style="width:100%;margin-top:8px" oninput="renderCGPick()">
@@ -1313,6 +1320,13 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
       <textarea id="node-links" rows="4" placeholder="vless://uuid@host:443?security=reality&...#香港 01"></textarea>
       <div class="row" style="margin-top:8px"><span class="sp"></span><button class="btn" onclick="importNodes()">导入并应用</button></div>
       <div class="tw" style="margin-top:10px"><table><thead><tr><th>名称</th><th>类型</th><th>服务器</th><th>延迟</th><th></th></tr></thead><tbody id="mynodes"></tbody></table></div></div>
+    <div class="card" id="share-card"><div class="row"><h3 class="sp" style="margin:0">🔗 订阅分享</h3><button class="btn g sm" id="share-tog" onclick="shareToggle()" aria-expanded="false">展开</button><button class="btn sm" onclick="shareNew()">＋ 新建分享</button></div>
+      <div class="mut small" style="margin-top:4px">选几个节点生成一个订阅链接，手机 / 电脑上的客户端直接订阅（base64 分享链接；Clash / mihomo 客户端自动拿到 Clash 配置，也可在链接后加 <code>?format=clash</code>）。链接带随机令牌，停用、删除或换新链接后旧链接立即失效；和面板一样默认只允许局域网访问。二维码在浏览器里生成，不经过任何外部服务。</div>
+      <div id="share-form" class="hide mt"><div class="row"><input id="sh-title" placeholder="标题，如 家里的节点" class="sp" maxlength="60"><select id="sh-scheme" title="协议前缀"><option value="http">http://</option><option value="https">https://</option></select><input id="sh-host" placeholder="域名 / IP（留空 = 当前地址）" style="width:220px"></div>
+        <input id="sh-search" placeholder="搜索节点，点击勾选 / 取消" style="width:100%;margin-top:8px" oninput="shareRenderPick()">
+        <div class="share-pick mt" id="sh-pick"></div>
+        <div class="row mt"><span class="sp mut small" id="sh-count"></span><button class="btn g" onclick="shareClose()">取消</button><button class="btn" id="sh-save" onclick="shareSave(this)">保存并生成</button></div></div>
+      <div id="share-body" class="hide"><div class="tw mt"><table><thead><tr><th>分享</th><th>节点</th><th>链接</th><th>启用</th><th></th></tr></thead><tbody id="share-list"></tbody></table></div></div></div>
   </section>
   <!-- 规则 -->
   <section data-tab="规则">
@@ -1339,7 +1353,8 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
         <select id="rs-beh"><option value="domain">domain</option><option value="ipcidr">ipcidr</option><option value="classical">classical</option></select>
         <select id="rs-fmt"><option value="yaml">yaml</option><option value="text">text</option><option value="mrs">mrs</option></select>
         <select id="rs-target"></select><button class="btn" onclick="addRS()">添加</button></div>
-      <div class="tw"><table><thead><tr><th>名称</th><th>类型</th><th>策略</th><th>规则数</th><th>更新</th><th></th></tr></thead><tbody id="rulesets"></tbody></table></div></div>
+      <div class="opt" id="hs-opt"><div class="sp"><div class="t">切换不断连</div><div class="dsc">打开后，规则集在「原目标 / 直连 / 拒绝」之间切换只改写一份小小的开关规则集，内核不重启：下载、视频、SSH 等已建立的连接不断，新连接 1 秒内按新线路走（mihomo / sing-box 都支持）。关着时切换会重新生成配置：mihomo 热重载，sing-box 重启（连接会断）。</div><div class="small mt" id="hs-st"></div></div><label class="sw sm"><input type="checkbox" id="hs-on" onchange="hsEnable(this)"><span></span></label></div>
+      <div class="tw"><table><thead><tr><th>名称</th><th>类型</th><th>策略</th><th>切换</th><th>规则数</th><th>更新</th><th></th></tr></thead><tbody id="rulesets"></tbody></table></div></div>
     <div class="card"><div class="row"><h3 class="sp" style="margin:0">当前生效规则 <span class="mut small" id="r-count" style="font-weight:400"></span></h3><input id="r-filter" placeholder="搜索 类型 / 内容 / 策略" aria-label="搜索生效规则" oninput="renderActiveRules()"></div>
       <div class="tw"><table style="margin-top:10px"><thead><tr><th class="num0">#</th><th>类型</th><th>内容</th><th>策略</th></tr></thead><tbody id="rule-list"></tbody></table></div></div>
   </section>
@@ -1495,6 +1510,14 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
     <div data-sg="net" class="card colbrk"><h3>绕过设备（不走代理）</h3>
       <div class="mut small" style="margin-bottom:6px">每行一个 IP、网段或 MAC（如 192.168.1.50、2408:xxxx::/64、AA:BB:CC:DD:EE:FF）。TUN 模式下按 IP / 网段生成直连规则（MAC 仅 TProxy 有效）。被绕过的设备请把 DNS 设为主路由。</div>
       <textarea id="bypass" rows="3"></textarea><div class="row" style="margin-top:8px"><span class="sp"></span><button class="btn" onclick="saveBypass()">保存</button></div></div>
+    <div data-sg="net" class="card" id="eb-card"><div class="row"><h3 class="sp" style="margin:0">直连不进内核（入口旁路）</h3><span class="tag" id="eb-tag"></span></div>
+      <div class="mut small" style="margin:4px 0 8px">TProxy 模式下，目标是直连地址的连接在 nftables 入口直接放行，不再经过内核转发：直连更快、更省 CPU。默认关闭（所有流量照旧进内核）。放行的连接在「连接」页和流量统计里看不到。TUN 模式下不生效。</div>
+      <div class="opt"><div class="sp"><div class="t">启用入口旁路</div><div class="dsc" id="eb-desc">打开后按下面勾选的集合在入口放行</div></div><label class="sw"><input type="checkbox" id="eb-on" onchange="ebSave()"><span></span></label></div>
+      <div class="opt"><div class="sp"><div class="t">中国大陆 IP</div><div class="dsc">只在 DNS 用 Fake-IP 时放行：走代理的域名拿到的是占位地址、一定进内核，能拿到大陆真实 IP 的连接内核本来也直连，DNS 与连接不会分家</div></div><label class="sw sm"><input type="checkbox" id="eb-cn" onchange="ebSave()"><span></span></label></div>
+      <div class="opt"><div class="sp"><div class="t">节点服务器地址</div><div class="dsc">订阅和手动节点的服务器 IP：局域网设备直接连节点服务器时不绕一圈内核</div></div><label class="sw sm"><input type="checkbox" id="eb-nodes" onchange="ebSave()"><span></span></label></div>
+      <div class="opt"><div class="sp"><div class="t">自定义直连 IP 规则</div><div class="dsc">自定义规则里 IP-CIDR → DIRECT 的网段；指向代理 / 拒绝的 IP-CIDR 会从集合里扣掉</div></div><label class="sw sm"><input type="checkbox" id="eb-rules" onchange="ebSave()"><span></span></label></div>
+      <div class="opt"><div class="sp"><div class="t">关闭连接时清理连接跟踪</div><div class="dsc">在「连接」页关掉连接时顺带删除系统 conntrack 记录，卡住的 UDP 长连接重新按当前规则判定；需要 conntrack 命令</div><div class="dsc warn" id="eb-ct"></div></div><label class="sw sm"><input type="checkbox" id="eb-ctf" onchange="ebSave()"><span></span></label></div>
+      <div class="row mt"><span class="sp small" id="eb-st"></span><button class="btn g sm" onclick="ebRefresh(this)">重新生成集合</button></div></div>
     <div data-sg="net" class="card"><h3>设备备注</h3>
       <div class="mut small" style="margin-bottom:6px">每行一个：<code>IP 或 MAC = 名称</code>。未备注的设备会依次尝试 DHCP 租约、/etc/hosts、反向解析获取名称</div>
       <textarea id="dev-names" rows="4" placeholder="192.168.1.23 = 客厅电视&#10;AA:BB:CC:DD:EE:FF = 书房 NAS"></textarea>
@@ -1567,6 +1590,8 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
       <div class="mut small" style="margin-bottom:6px">看门狗事件、节点全部超时、订阅 3 天内到期或流量超 90% 时推送（同一状态只提醒一次）。先找 @BotFather 创建机器人，再给机器人发一条消息，用 @userinfobot 查 chat id。</div>
       <div class="row"><input id="tg-token" placeholder="Bot Token，如 123456:ABC-..." class="sp"><input id="tg-chat" placeholder="Chat ID" style="width:150px"></div>
       <div class="row mt"><span class="sp"></span><button class="btn g" onclick="tgTest(this)">发送测试</button><button class="btn" onclick="saveTg()">保存</button></div></div>
+    <div data-sg="look" class="card" id="lang-card"><h3>界面语言 · Language</h3><div class="mut small" style="margin:-4px 0 12px">只保存在当前浏览器。没有翻译到的文字显示简体中文。</div>
+      <div class="seg" id="lang-opts"><button data-l="zh-CN" onclick="setLang('zh-CN')">简体中文</button><button data-l="zh-TW" onclick="setLang('zh-TW')">繁體中文</button><button data-l="en" onclick="setLang('en')">English</button></div></div>
     <div data-sg="look" class="card" id="ly-card"><h3>界面布局</h3><div class="mut small" style="margin:-4px 0 12px">只保存在当前浏览器，手机和电脑可以分别选择；选择后立即生效</div>
       <div class="lyopts" id="ly-opts" role="radiogroup" aria-label="界面布局">
         <button type="button" role="radio" aria-checked="false" data-ly="classic" onclick="setLayout('classic')"><b>经典（横向标签栏）</b><span>顶栏下横排页面标签（含「概览」），手机上也在顶部，放不下自动换行</span></button>
@@ -1619,11 +1644,13 @@ td.spdl span{display:block}td.spdl{min-width:110px}td.spdl i::before{background:
       <div id="warp-st" class="small mt"></div>
       <div class="tw mt"><table><thead><tr><th>端点</th><th class="num">延迟</th><th class="num">丢包</th><th><span class="vh">操作</span></th></tr></thead><tbody id="warp-res"></tbody></table></div>
       <div class="row mt"><input id="warp-ep" placeholder="手动输入端点 IP:端口" class="sp"><button class="btn" onclick="warpSetEp($('#warp-ep').value,this)">替换端点</button></div></div>
-      <div class="card"><div class="row"><h3 class="sp" style="margin:0">🌍 SOCKS5 落地 <span class="tag">预览</span></h3><button class="btn g sm" id="ld-chk" onclick="ldCheck()">检测全部</button><button class="btn g sm" onclick="loadLanding()">刷新</button></div>
-      <div class="mut small" style="margin:4px 0 8px">想要指定国家的出口 IP：添加 SOCKS5 落地，流量走「设备 → 前置节点（默认 WARP）→ 落地 → 网站」。落地节点自动加入「🚀 节点选择」「🖐️ 手动选择」和各分流组（不进自动测速组），在里面选中即可使用。</div>
-      <textarea id="ld-text" rows="3" style="width:100%" placeholder="每行一个，可批量粘贴：&#10;socks5://用户名:密码@地址:端口#名称&#10;地址:端口:用户名:密码（无账号写 地址:端口）"></textarea>
-      <div class="row mt" style="gap:6px;flex-wrap:wrap"><span class="small mut">前置节点</span><select id="ld-via" style="max-width:220px"></select><span class="sp"></span><button class="btn" onclick="ldAdd(this)">添加</button></div>
-      <div class="tw mt"><table><thead><tr><th>落地</th><th>前置</th><th>出口 IP</th><th>延迟</th><th></th></tr></thead><tbody id="ld-list"></tbody></table></div></div>
+      <div class="card"><div class="row"><h3 class="sp" style="margin:0">🔗 链式代理 / 落地（SOCKS5 · HTTP · HTTPS）</h3><button class="btn g sm" id="ld-chk" onclick="ldCheck()">检测全部</button><button class="btn g sm" onclick="loadLanding()">刷新</button></div>
+      <div class="mut small" style="margin:4px 0 8px">住宅 / 静态 IP 这类出口：添加 SOCKS5、HTTP 或 HTTPS 出口并指定一个前置节点或节点组，流量走「设备 → 前置 → 出口 → 网站」（mihomo 用 dialer-proxy，sing-box 用 detour）。建好后是一个普通节点：自动加入「🚀 节点选择」「🖐️ 手动选择」和各分流组（不进自动测速组），也能加进自定义策略组；「检测」看出口 IP、归属和延迟。</div>
+      <textarea id="ld-text" rows="3" style="width:100%" placeholder="每行一个，可批量粘贴：&#10;socks5://用户名:密码@地址:端口#名称 / http://… / https://…&#10;地址:端口:用户名:密码（无账号写 地址:端口；不带协议头的按右边选的出口类型）"></textarea>
+      <div class="row mt" style="gap:6px;flex-wrap:wrap"><span class="small mut">出口类型</span><select id="ld-type" onchange="$('#ld-tls').classList.toggle('hide',this.value!=='https')"><option value="socks5">SOCKS5</option><option value="http">HTTP</option><option value="https">HTTPS</option></select>
+        <span id="ld-tls" class="row hide" style="gap:6px"><input id="ld-sni" placeholder="SNI（可空）" style="width:140px"><label class="row small mut" style="gap:4px"><input type="checkbox" id="ld-insecure"> 跳过证书校验</label></span>
+        <span class="small mut">前置节点</span><select id="ld-via" style="max-width:220px"></select><span class="sp"></span><button class="btn" onclick="ldAdd(this)">添加</button></div>
+      <div class="tw mt"><table><thead><tr><th>出口</th><th>前置</th><th>出口 IP</th><th>延迟</th><th></th></tr></thead><tbody id="ld-list"></tbody></table></div></div>
   </section>
   <section data-tab="拓扑">
     <div class="card"><div class="row"><h3 class="sp" style="margin:0">🕸️ 负载均衡拓扑</h3><button class="btn g sm" onclick="loadTopo()">刷新</button></div>
@@ -2306,11 +2333,11 @@ function cgRefs(n){let c=0;(STATE.rules||[]).forEach(r=>{if(r.startsWith('#'))re
 function renderCGList(){const ix=snIndex();$('#cg-list').innerHTML=(GI.custom||[]).map((g,i)=>{const sn=g.sub_nodes||[],bad=sn.filter(x=>snStale(x,ix)).length;
     const mem=[g.proxies.slice(0,3).map(esc).join('、')+(g.proxies.length>3?` 等 ${g.proxies.length} 项`:''),sn.length?`订阅节点 ${sn.length} 个`+(bad?` <span class="bad">（${bad} 个已失效）</span>`:''):''].filter(Boolean).join('<br>');
     const ex=GI.meta[g.name];return `<tr><td class="w" style="min-width:120px"><b style="font-weight:600">${g.icon?`<img class="gico" style="width:18px;height:18px;vertical-align:-4px;margin-right:4px" src="${esc(g.icon)}" onerror="this.remove()">`:''}${esc(g.name)}</b>${g.expose?'':'<div class="mut small">不加入分流组候选</div>'}</td>
-    <td><span class="tag ${TYC[g.type]}">${TYN[g.type]}</span>${g.type==='load-balance'?`<div class="mut small">${LBS[g.strategy]||''}</div>`:''}${ex&&ex.sb_from?`<div class="warn small">${ex.sb_from==='load-balance'?'官方 sing-box 下按自动测速（换魔改版内核可聚合）':'sing-box 下按自动测速'}</div>`:''}</td>
+    <td><span class="tag ${TYC[g.type]}">${TYN[g.type]}</span>${g.type==='load-balance'?`<div class="mut small">${LBS[g.strategy]||''}</div>`:''}${ex&&ex.sb_from?`<div class="warn small">${ex.sb_from==='load-balance'?'官方 sing-box 下按自动测速（换魔改版内核可聚合）':'sing-box 下按自动测速（编辑勾选「主备优先」可按顺序主备切换）'}</div>`:''}${g.type==='fallback'&&g.priority?`<div class="mut small">主备优先：按成员顺序${ex&&ex.sb_failover?'（sing-box：面板探活切换）':''}</div>`:''}</td>
     <td class="w small" style="max-width:260px">${mem||''}${g.filter?`${mem?'<br>':''}<span class="mut">正则：</span><code>${esc(g.filter)}</code>${g.subs?'':' <span class="mut">（仅手动节点）</span>'}`:''}${ex?'':'<div class="warn small">未生效</div>'}</td>
     <td>${cgRefs(g.name)}</td><td style="text-align:right;white-space:nowrap"><button class="btn g sm" onclick="editCG(${i})">编辑</button> <button class="btn r sm" onclick="delCG(${i})">删除</button></td></tr>`}).join('')
     ||'<tr><td colspan="5" class="mut">还没有自定义策略组。例如：把美国和日本节点合成一个「🎯 美日均衡」负载均衡组，或建一个「🎮 游戏」组给规则引用</td></tr>'}
-function newCG(){CGF={orig:'',name:'',icon:'',type:'select',proxies:[],sub_nodes:[],filter:'',subs:true,expose:true,strategy:'consistent-hashing',interval:'',tolerance:''};openCG('新建策略组')}
+function newCG(){CGF={orig:'',name:'',icon:'',type:'select',proxies:[],sub_nodes:[],filter:'',subs:true,expose:true,strategy:'consistent-hashing',interval:'',tolerance:'',priority:true};openCG('新建策略组')}
 function editCG(i){const g=GI.custom[i];CGF=JSON.parse(JSON.stringify(Object.assign({strategy:'consistent-hashing',interval:'',tolerance:''},g,{orig:g.name})));
   if(!Array.isArray(CGF.sub_nodes))CGF.sub_nodes=[];if(!CGF.interval)CGF.interval='';if(CGF.tolerance==null)CGF.tolerance='';openCG('编辑策略组：'+g.name)}
 function openCG(t){$('#cg-title').textContent=t;$('#cg-form').classList.remove('hide');$('#cg-name').value=CGF.name;$('#cg-icon').value=CGF.icon||'';
@@ -2318,7 +2345,8 @@ function openCG(t){$('#cg-title').textContent=t;$('#cg-form').classList.remove('
   $('#cg-st').value=CGF.strategy==='round-robin'?'round-robin':'consistent-hashing';$('#cg-int').value=CGF.interval||'';$('#cg-tol').value=CGF.tolerance==null?'':CGF.tolerance;
   cgType();renderCGChosen();renderCGSChosen();previewCG();$('#cg-form').scrollIntoView({behavior:'smooth',block:'start'})}
 function cgType(){segv('#cg-type',CGF.type,v=>{CGF.type=v;cgType()});const t=CGF.type;$('#cg-adv').classList.toggle('hide',t==='select');
-  $('#cg-tol').classList.toggle('hide',t!=='url-test');$('#cg-st').classList.toggle('hide',t!=='load-balance')}
+  $('#cg-tol').classList.toggle('hide',t!=='url-test');$('#cg-st').classList.toggle('hide',t!=='load-balance');
+  $('#cg-prio-l').classList.toggle('hide',t!=='fallback');$('#cg-prio').checked=CGF.priority!==false&&(CGF.priority||!CGF.orig)}
 function closeCG(){$('#cg-form').classList.add('hide');CGF=null}
 function cgCands(){return GI.groups.filter(g=>g!==CGF.orig).concat(['DIRECT','REJECT']).concat(GI.manual)}
 function renderCGChosen(){$('#cg-chosen').innerHTML=CGF.proxies.map((m,i)=>`<span class="mchip ${GI.groups.includes(m)?'grp':''}" title="${esc(m)}"><span>${GI.groups.includes(m)?'📁 ':''}${esc(m)}</span>${i?`<button title="上移" onclick="cgMove(${i})">↑</button>`:''}<button title="移除" onclick="cgDel(${i})">✕</button></span>`).join('')||'<span class="mut small">还没有成员（也可以只用下方正则筛选）</span>';renderCGPick()}
@@ -2348,7 +2376,7 @@ function previewCG(){clearTimeout(_pv);_pv=setTimeout(async()=>{const f=$('#cg-f
     $('#cg-prev').innerHTML=`匹配 <b>${r.total}</b> / ${r.of} 个节点`+(r.matched.length?'：'+r.matched.slice(0,12).map(esc).join('、')+(r.total>12?' …':''):'')}
   catch(e){$('#cg-prev').innerHTML=`<span class="bad">${esc(e.message)}</span>`}},300)}
 async function saveCG(){const b=Object.assign({},CGF,{name:$('#cg-name').value.trim(),icon:$('#cg-icon').value.trim(),filter:$('#cg-filter').value.trim(),
-    subs:$('#cg-subs').checked,expose:$('#cg-expose').checked,strategy:$('#cg-st').value,interval:+$('#cg-int').value||0,tolerance:$('#cg-tol').value===''?null:+$('#cg-tol').value});
+    subs:$('#cg-subs').checked,expose:$('#cg-expose').checked,strategy:$('#cg-st').value,interval:+$('#cg-int').value||0,tolerance:$('#cg-tol').value===''?null:+$('#cg-tol').value,priority:CGF.type==='fallback'&&$('#cg-prio').checked});
   if(!b.name)return toast('请填写名称');const btn=$('#cg-save');btn.disabled=true;
   try{toast('正在校验并应用…');const j=await api('/api/groups','POST',b);toast(j.message);closeCG();await loadGroupsPage()}catch(e){toast(e.message)}btn.disabled=false}
 async function delCG(i){const n=GI.custom[i].name;const refs=cgRefs(n);
@@ -2896,25 +2924,33 @@ async function downloadConfig(){try{const r=await fetch('/api/config?download=1'
 async function saveGhProxy(){const v=$('#gh-proxy').value.trim(),t=$('#gh-token')?$('#gh-token').value.trim():(STATE.gh_token||''),b={};
   if(v!==(STATE.gh_proxy||''))b.gh_proxy=v;if(t!==(STATE.gh_token||''))b.gh_token=t;if(Object.keys(b).length){await api('/api/settings','PUT',b);await loadState()}}
 // 更新通道：正式版 / 预览版（保存到 data.json，切换后立即检查一次；从预览切回正式版时「立即更新」装回正式版）
-async function setUpdChannel(v){try{const j=await api('/api/selfupdate','POST',{action:'channel',channel:v});toast(j.message);await loadState();
+async function setUpdChannel(v){try{const j=await api('/api/selfupdate','POST',{action:'channel',channel:v});toast(j.message);localStorage.removeItem('ver-panel');await loadState();
   $('#pv').textContent='当前 v'+(STATE.panel_version||'-')+(v==='preview'?' · 预览通道':'');checkUpdate()}catch(e){toast(e.message);$('#upd-ch').value=STATE.update_channel||'stable'}}
+// 校验说明：GitHub API 不可用改用 SHA256SUMS 校验（note），或连校验清单也拿不到、未校验下载（warning，写明原因）
+function updNote(j){const t=j.warning||j.note;if(t)$('#upd-r').insertAdjacentHTML('beforeend',`<div class="${j.warning?'warn':'mut'}" style="margin-top:4px">${esc(t)}</div>`)}
 async function checkUpdate(){const b=$('#upd-chk');b.disabled=true;$('#upd-r').innerHTML='<span class="mut">正在检查…</span>';
   try{await saveGhProxy();const j=await api('/api/selfupdate');verSave('panel','v'+j.current,j.remote||'',!!(j.changed&&j.changed.length));
-    const ch=j.changed||[];$('#upd-r').innerHTML=ch.length?`<span class="warn">● 有更新</span> ${j.channel==='preview'?'预览版':'正式版'} v${esc(j.remote)}${j.commit?' ('+esc(j.commit.slice(0,7))+')':''}（当前 v${esc(j.current)}），变更文件：${ch.map(esc).join('、')}`:`<span class="ok">● 已是最新</span> v${esc(j.current)}`}
+    const ch=j.changed||[];$('#upd-r').innerHTML=ch.length?`<span class="warn">● 有更新</span> ${j.channel==='preview'?'预览版':'正式版'} v${esc(j.remote)}${j.commit?' ('+esc(j.commit.slice(0,7))+')':''}（当前 v${esc(j.current)}），变更文件：${ch.map(esc).join('、')}`:`<span class="ok">● 已是最新</span> v${esc(j.current)}`;updNote(j)}
   catch(e){$('#upd-r').innerHTML=`<span class="bad">${esc(e.message)}</span>`}b.disabled=false}
 async function doUpdate(){if(!confirm('从 GitHub 下载并更新面板文件？更新后面板自动重启（核心不受影响）。'))return;const b=$('#upd-btn');b.disabled=true;
   $('#upd-r').innerHTML='<span class="mut">正在下载并校验…</span>';
-  try{await saveGhProxy();const j=await api('/api/selfupdate','POST',{});$('#upd-r').innerHTML=`<span class="ok">● ${esc(j.message)}</span>`;
+  try{await saveGhProxy();const j=await api('/api/selfupdate','POST',{});$('#upd-r').innerHTML=`<span class="ok">● ${esc(j.message)}</span>`;updNote(j);
     if(j.changed&&j.changed.length)setTimeout(()=>location.reload(),5000)}catch(e){$('#upd-r').innerHTML=`<span class="bad">${esc(e.message)}</span>`}b.disabled=false}
 // 系统优化
 let SO=null;
 async function loadSysopt(){try{SO=await api('/api/sysopt');renderSysopt()}catch(e){$('#so-list').innerHTML=`<span class="bad small">${esc(e.message)}</span>`}}
-function renderSysopt(){if(!SO)return;$('#so-hw').textContent=`${SO.cpu} 核 · ${SO.mem} MB · ${SO.kernel}`+(SO.container?` · ${SO.container==='lxc'?'LXC':SO.container}  容器`:'');
-  $('#so-list').innerHTML=SO.items.map(it=>{const st=!it.ok?`<span class="mut">不支持：${esc(it.why||'')}</span>`:it.active?'<span class="ok">● 已生效</span>':it.enabled?'<span class="warn">● 已开启，未完全生效</span>':'<span class="mut">○ 未开启</span>';
+function renderSysopt(){if(!SO)return;$('#so-hw').textContent=`${SO.cpu} 核 · ${SO.mem} MB · ${SO.kernel}`+(SO.container?` · ${SO.container==='lxc'?'LXC':SO.container}${SO.unprivileged?'（非特权）':''} 容器`:'');
+  // v9.2.1：容器里改不了的项不再一律「不支持」：host=true 表示由宿主机控制（不是错误），附可复制到宿主机执行的命令
+  $('#so-list').innerHTML=SO.items.map((it,i)=>{const st=!it.ok?(it.host?`<span class="warn">◐ 由宿主机控制</span> <span class="mut">${esc(it.why||'')}</span>`:`<span class="mut">不支持：${esc(it.why||'')}</span>`):it.active?'<span class="ok">● 已生效</span>':it.enabled?'<span class="warn">● 已开启，未完全生效</span>':'<span class="mut">○ 未开启</span>';
     const sh=Object.entries(it.show||{}).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(' · ');
+    const hc=it.host_cmd?`<details class="so-host small" style="margin-top:4px"><summary class="mut">${it.ok?'只读的参数可在宿主机上补齐':'在宿主机上执行（'+(SO.container==='lxc'?'PVE 宿主机 Shell':'宿主机')+'）'}</summary>
+      <pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:4px 0">${esc(it.host_cmd)}</pre><button class="btn g sm" onclick="soCopy(${i})">复制命令</button></details>`:'';
     return `<div class="opt"><div class="sp"><div class="t">${esc(it.name)}${it.rec?' <span class="tag">推荐</span>':''}</div><div class="dsc">${esc(it.desc)}</div>
-      <div class="small" style="margin-top:3px">${st}${sh?' · <span class="mut">'+sh+'</span>':''}${it.part?'<br><span class="mut">'+esc(it.part)+'</span>':''}</div></div>
-      <label class="sw"><input type="checkbox" data-so="${esc(it.id)}" ${it.enabled?'checked':''} ${it.ok?'':'disabled'}><span></span></label></div>`}).join('')}
+      <div class="small" style="margin-top:3px">${st}${sh?' · <span class="mut">'+sh+'</span>':''}${it.part?'<br><span class="mut">'+esc(it.part)+'</span>':''}</div>${hc}</div>
+      <label class="sw"><input type="checkbox" data-so="${esc(it.id)}" ${it.enabled?'checked':''} ${it.ok?'':'disabled'}><span></span></label></div>`}).join('');
+  if(SO.measuring&&!SO._re){SO._re=1;setTimeout(()=>{if($('#so-list'))loadSysopt()},3000)}}
+async function soCopy(i){const t=(SO&&SO.items[i]&&SO.items[i].host_cmd)||'';try{await navigator.clipboard.writeText(t);toast('已复制')}
+  catch(e){const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();try{document.execCommand('copy');toast('已复制')}catch(_){}a.remove()}}
 function soPick(rec){document.querySelectorAll('[data-so]').forEach(x=>{if(!x.disabled){const it=SO.items.find(i=>i.id===x.dataset.so);x.checked=rec?it.rec:false}})}
 async function soApply(ids){if(!ids)ids=[...document.querySelectorAll('[data-so]')].filter(x=>x.checked).map(x=>x.dataset.so);
   const b=$('#so-btn');b.disabled=true;$('#so-r').innerHTML='<span class="mut">正在应用…（首次开启时间同步需安装 chrony，约 10–30 秒）</span>';
@@ -3048,9 +3084,20 @@ async function saveRS(rs){if(rulesBusy())return false;RULES_BUSY=true;let ok=fal
   try{toast('正在应用…');await api('/api/settings','PUT',{rulesets:rs});toast('规则集已生效');ok=true}catch(e){toast(e.message)}RULES_BUSY=false;loadRules();return ok}
 // 按名称删除（不按序号）：同 delRule，STATE 后台刷新后序号可能指向别的规则集
 function delRS(n){const r=STATE.rulesets.filter(x=>x.name!==n);if(r.length===STATE.rulesets.length){toast('该规则集已不存在，列表已刷新');return loadRules()}if(!confirm('删除规则集 '+n+'？引用它的规则也要一并删掉，否则配置校验不过。'))return;saveRS(r)}
+let HS={on:false,rulesets:[]};
+async function loadHS(){try{HS=await api('/api/switch')}catch(e){}const c=$('#hs-on');if(c)c.checked=!!HS.on}
+// 切换不断连（v9.2.0）：规则集在 原目标 / 直连 / 拒绝 之间切换；结果提示里写明是「热切换」还是「重载 / 重启」
+function hsSeg(r){const st=(HS.rulesets.find(x=>x.name===r.name)||{}).state||'target';
+  return `<div class="seg sm hs-seg" role="group" aria-label="切换 ${esc(r.name)}">${[['target','原目标'],['direct','直连'],['reject','拒绝']].map(([v,t])=>`<button class="${st===v?'on':''}" aria-pressed="${st===v}" data-n="${esc(r.name)}" onclick="hsSet(this.dataset.n,'${v}',this)">${t}</button>`).join('')}</div>`}
+async function hsSet(n,to,b){if(rulesBusy())return;RULES_BUSY=true;b&&b.parentNode.querySelectorAll('button').forEach(x=>x.disabled=true);
+  try{const j=await api('/api/switch','POST',{action:'set',name:n,to});toast(j.message);$('#hs-st').innerHTML=`<span class="${j.mode==='hot'?'ok':'warn'}">● ${j.mode==='hot'?'热切换（内核未重启）':j.mode==='restart'?'已重启内核':'已重载配置'}：${esc(n)}</span>`}
+  catch(e){toast(e.message)}RULES_BUSY=false;await loadHS();renderRS()}
+async function hsEnable(c){if(rulesBusy()){c.checked=!c.checked;return}RULES_BUSY=true;c.disabled=true;
+  try{const j=await api('/api/switch','POST',{action:'enable',on:c.checked});toast(j.message)}catch(e){toast(e.message);c.checked=!c.checked}c.disabled=false;RULES_BUSY=false;loadHS()}
 async function renderRS(){$('#rs-target').innerHTML=$('#r-target').innerHTML;let prov={};try{prov=(await core('/providers/rules')).providers||{}}catch(e){}
+  await loadHS();
   $('#rulesets').innerHTML=STATE.rulesets.map(r=>{const p=prov[r.name]||{};return `<tr><td>${esc(r.name)}<div class="mut w" style="font-size:11px;max-width:360px">${esc(r.url)}</div></td><td>${esc(r.behavior)}/${esc(r.format)}</td><td>${esc(r.target)}</td>
-    <td>${p.ruleCount??'-'}</td><td><button class="btn g sm" onclick="updRS(${jsq(encodeURIComponent(r.name))})">更新</button></td><td><button class="btn r sm" onclick="delRS(${jsq(r.name)})">删除</button></td></tr>`}).join('')||'<tr><td class="mut">暂无规则集</td></tr>'}
+    <td>${hsSeg(r)}</td><td>${p.ruleCount??'-'}</td><td><button class="btn g sm" onclick="updRS(${jsq(encodeURIComponent(r.name))})">更新</button></td><td><button class="btn r sm" onclick="delRS(${jsq(r.name)})">删除</button></td></tr>`}).join('')||'<tr><td class="mut">暂无规则集</td></tr>'}
 async function updRS(n){try{await core('/providers/rules/'+n,'PUT');toast('已更新');renderRS()}catch(e){toast(e.message)}}
 
 // 设置扩展
@@ -3140,7 +3187,7 @@ async function warpImport(b){const v=id=>$(id).value.trim(),body={action:WF_MODE
   if(await warpAct(body,b,body.action==='import'&&WARP.account?'导入会替换当前 WARP 账号，继续？':''))$('#warp-imp').classList.add('hide')}
 function warpSetEp(ep,b){ep=String(ep||'').trim();if(!ep)return toast('先填端点');warpAct({action:'endpoint',endpoint:ep},b)}
 async function warpScan(b){b.disabled=true;try{const j=await api('/api/warp','POST',{action:'scan',count:+$('#warp-n').value||80,endpoints:$('#warp-eps').value});toast(j.message)}catch(e){toast(e.message)}loadWarp()}
-// SOCKS5 落地（预览版）：指定国家的出口 IP，经前置节点（默认 WARP）链式代理
+// 链式代理 / 落地：SOCKS5 / HTTP / HTTPS 出口（v9.2.0 起支持 HTTP / HTTPS），经前置节点或节点组链式代理
 let LD={landings:[],via_options:[]},LDR={};
 async function loadLanding(){try{LD=await api('/api/landing')}catch(e){return toast(e.message)}renderLanding()}
 function ldVia(cur){return LD.via_options.map(v=>`<option value="${esc(v)}" ${v===cur?'selected':''}>${v==='DIRECT'?'直连（不经前置）':esc(v)}</option>`).join('')}
@@ -3149,11 +3196,11 @@ function renderLanding(){const ls=LD.landings||[];
   $('#ld-chk').disabled=!ls.length;
   $('#ld-list').innerHTML=ls.length?ls.map(x=>{const r=LDR[x.name];
     const out=!r?'<span class="mut">未检测</span>':r.busy?'<span class="mut">检测中…</span>':r.ok?`${esc(r.ip)} <span class="tag">${esc(r.cc||'')}</span> ${esc(r.country||'')}${r.city?' · '+esc(r.city):''}`:`<span class="bad">${esc(r.error)}</span>`;
-    return `<tr><td><b>${esc(x.name)}</b><div class="small mut">${esc(x.server)}:${x.port}${x.username?' · '+esc(x.username):''}</div></td>
+    return `<tr><td><b>${esc(x.name)}</b> <span class="tag">${esc((x.type||'socks5').toUpperCase())}</span><div class="small mut">${esc(x.server)}:${x.port}${x.username?' · '+esc(x.username):''}${x.sni?' · SNI '+esc(x.sni):''}</div></td>
     <td><select onchange="ldEdit(${jsq(x.name)},{via:this.value})">${ldVia(x.via)}</select></td><td>${out}</td><td>${r&&r.ok?r.delay+' ms':'-'}</td>
-    <td style="white-space:nowrap"><button class="btn g sm" onclick="ldCheck([${jsq(x.name)}])">检测</button> <button class="btn g sm" onclick="ldDel(${jsq(x.name)})">删除</button></td></tr>`}).join(''):'<tr><td colspan="5" class="mut small">还没有落地</td></tr>'}
+    <td style="white-space:nowrap"><button class="btn g sm" onclick="ldCheck([${jsq(x.name)}])">检测</button> <button class="btn g sm" onclick="ldDel(${jsq(x.name)})">删除</button></td></tr>`}).join(''):'<tr><td colspan="5" class="mut small">还没有链式代理出口</td></tr>'}
 async function ldPost(body,btn){if(btn)btn.disabled=true;let j=null;try{j=await api('/api/landing','POST',body);if(j.message)toast(j.message)}catch(e){toast(e.message)}if(btn)btn.disabled=false;return j}
-async function ldAdd(b){const t=$('#ld-text').value.trim();if(!t)return toast('先粘贴落地');if(await ldPost({action:'add',text:t,via:$('#ld-via').value},b)){$('#ld-text').value='';await loadLanding();if(TAB==='WARP')loadWarp()}}
+async function ldAdd(b){const t=$('#ld-text').value.trim();if(!t)return toast('先粘贴落地');if(await ldPost({action:'add',text:t,via:$('#ld-via').value,type:$('#ld-type').value,sni:$('#ld-sni').value.trim(),insecure:$('#ld-insecure').checked},b)){$('#ld-text').value='';await loadLanding();if(TAB==='WARP')loadWarp()}}
 async function ldEdit(n,f){await ldPost(Object.assign({action:'edit',old_name:n},f));loadLanding()}
 async function ldDel(n){if(!confirm(`删除落地「${n}」？引用它的策略组会改用其他节点。`))return;await ldPost({action:'delete',name:n});delete LDR[n];loadLanding()}
 async function ldCheck(names){const ls=names||(LD.landings||[]).map(x=>x.name);ls.forEach(n=>LDR[n]={busy:1});renderLanding();
@@ -3407,7 +3454,7 @@ const SET_ICO=[[/代理方式|TUN/,'<path d="M4 12h4l3-7 4 14 3-7h2"/>'],[/解�
   [/主题/,'<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>'],[/背景/,'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 17 5-5 4 4 3-3 6 6"/><circle cx="15.5" cy="8.5" r="1.5"/>'],
   [/备份|恢复/,'<path d="M4 7h16v13H4zM9 3h6v4H9z"/><path d="M9 13h6"/>'],[/更新/,'<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>']];
 function setIcons(){document.querySelectorAll('section[data-tab="设置"] .sgrid>.card').forEach(c=>{const h=c.querySelector('h3');if(!h||h.querySelector('.sic'))return;
-  const t=h.textContent.trim(),m=SET_ICO.find(([re])=>re.test(t));
+  const t=(h.dataset.zh||h.textContent).trim(),m=SET_ICO.find(([re])=>re.test(t));
   h.insertAdjacentHTML('afterbegin',`<span class="sic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${m?m[1]:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'}</svg></span>`)})}
 // 手机 Chrome 开了「桌面版网站」：浏览器忽略 viewport，按 980px 排版后整页缩小，字很小。检测到时在顶部给一次可关闭的提示
 function deskModeHint(){try{if(localStorage.getItem('mp_dmh')==='1')return}catch(e){}
@@ -3418,6 +3465,250 @@ function deskModeHint(){try{if(localStorage.getItem('mp_dmh')==='1')return}catch
   d.querySelector('button').onclick=()=>{d.remove();try{localStorage.setItem('mp_dmh','1')}catch(e){}};
   const m=document.querySelector('main');if(m)m.prepend(d)}
 setIcons();deskModeHint();
+// 二维码（v9.2.0 订阅分享用）：在浏览器里生成，不连任何外部服务 / CDN。
+// 字节模式（UTF-8）+ 纠错等级 M，按内容长度自动选版本 1–40；掩码按简化罚分（连续同色、2×2 色块、黑白比例）挑最小的。
+// QR.svg(text) → SVG 字符串（带 4 格静区）；QR.matrix(text) → 布尔二维数组（测试用）
+const QR=(()=>{
+  const ECC=[-1,10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28];
+  const BLK=[-1,1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,17,17,18,20,21,23,25,26,28,29,31,33,35,37,38,40,43,45,47,49];
+  const raw=v=>{let r=(16*v+128)*v+64;if(v>=2){const n=Math.floor(v/7)+2;r-=(25*n-10)*n-55;if(v>=7)r-=36}return r};
+  const dataCw=v=>Math.floor(raw(v)/8)-ECC[v]*BLK[v];
+  const bit=(x,i)=>((x>>>i)&1)!==0;
+  function gmul(x,y){let z=0;for(let i=7;i>=0;i--){z=(z<<1)^((z>>>7)*0x11d);z^=((y>>>i)&1)*x}return z&255}
+  function divisor(deg){const r=new Array(deg).fill(0);r[deg-1]=1;let root=1;
+    for(let i=0;i<deg;i++){for(let j=0;j<r.length;j++){r[j]=gmul(r[j],root);if(j+1<r.length)r[j]^=r[j+1]}root=gmul(root,2)}return r}
+  function rem(data,div){const r=div.map(()=>0);for(const b of data){const f=b^r.shift();r.push(0);div.forEach((c,i)=>{r[i]^=gmul(c,f)})}return r}
+  function utf8(s){return Array.from(new TextEncoder().encode(String(s)))}
+  function codewords(bytes){
+    let v=1;for(;v<=40;v++){const cap=dataCw(v)*8,need=4+(v<10?8:16)+bytes.length*8;if(need<=cap)break}
+    if(v>40)throw new Error('内容太长，生成不了二维码');
+    const bits=[];const put=(val,n)=>{for(let i=n-1;i>=0;i--)bits.push((val>>>i)&1)};
+    put(4,4);put(bytes.length,v<10?8:16);bytes.forEach(b=>put(b,8));
+    const cap=dataCw(v)*8;put(0,Math.min(4,cap-bits.length));while(bits.length%8)bits.push(0);
+    const data=[];for(let i=0;i<bits.length;i+=8)data.push(bits.slice(i,i+8).reduce((a,b)=>a*2+b,0));
+    for(let p=0xec;data.length<dataCw(v);p^=0xec^0x11)data.push(p);
+    const nb=BLK[v],ec=ECC[v],total=Math.floor(raw(v)/8),nShort=nb-total%nb,shortLen=Math.floor(total/nb),div=divisor(ec),blocks=[];
+    for(let i=0,k=0;i<nb;i++){const len=shortLen-ec+(i<nShort?0:1),d=data.slice(k,k+len);k+=len;const e=rem(d,div);if(i<nShort)d.push(0);blocks.push(d.concat(e))}
+    const out=[];for(let i=0;i<blocks[0].length;i++)blocks.forEach((b,j)=>{if(i!==shortLen-ec||j>=nShort)out.push(b[i])});
+    return {v,cw:out}}
+  function matrix(text){
+    const {v,cw}=codewords(utf8(text)),n=v*4+17;
+    const m=[...Array(n)].map(()=>Array(n).fill(false)),fn=[...Array(n)].map(()=>Array(n).fill(false));
+    const set=(x,y,d)=>{m[y][x]=d;fn[y][x]=true};
+    for(let i=0;i<n;i++){set(6,i,i%2===0);set(i,6,i%2===0)}
+    const finder=(cx,cy)=>{for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++){const x=cx+dx,y=cy+dy,dd=Math.max(Math.abs(dx),Math.abs(dy));if(x>=0&&x<n&&y>=0&&y<n)set(x,y,dd!==2&&dd!==4)}};
+    finder(3,3);finder(n-4,3);finder(3,n-4);
+    const al=[];if(v>1){const na=Math.floor(v/7)+2,step=v===32?26:Math.ceil((v*4+4)/(na*2-2))*2;al.push(6);for(let p=n-7;al.length<na;p-=step)al.splice(1,0,p)}
+    al.forEach((x,i)=>al.forEach((y,j)=>{if((i===0&&j===0)||(i===0&&j===al.length-1)||(i===al.length-1&&j===0))return;
+      for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)set(x+dx,y+dy,Math.max(Math.abs(dx),Math.abs(dy))!==1)}));
+    const fmt=mask=>{const d=mask;let r=d;for(let i=0;i<10;i++)r=(r<<1)^((r>>>9)*0x537);const b=((d<<10)|r)^0x5412;  // 纠错等级 M 的格式位是 00
+      for(let i=0;i<=5;i++)set(8,i,bit(b,i));set(8,7,bit(b,6));set(8,8,bit(b,7));set(7,8,bit(b,8));
+      for(let i=9;i<15;i++)set(14-i,8,bit(b,i));for(let i=0;i<8;i++)set(n-1-i,8,bit(b,i));for(let i=8;i<15;i++)set(8,n-15+i,bit(b,i));set(8,n-8,true)};
+    fmt(0);
+    if(v>=7){let r=v;for(let i=0;i<12;i++)r=(r<<1)^((r>>>11)*0x1f25);const b=(v<<12)|r;
+      for(let i=0;i<18;i++){const t=bit(b,i),a=n-11+i%3,c=Math.floor(i/3);set(a,c,t);set(c,a,t)}}
+    let k=0;for(let right=n-1;right>=1;right-=2){if(right===6)right=5;
+      for(let vert=0;vert<n;vert++)for(let j=0;j<2;j++){const x=right-j,up=((right+1)&2)===0,y=up?n-1-vert:vert;
+        if(!fn[y][x]&&k<cw.length*8){m[y][x]=bit(cw[k>>>3],7-(k&7));k++}}}
+    const MASKS=[(x,y)=>(x+y)%2===0,(x,y)=>y%2===0,(x,y)=>x%3===0,(x,y)=>(x+y)%3===0,(x,y)=>(Math.floor(x/3)+Math.floor(y/2))%2===0,
+      (x,y)=>x*y%2+x*y%3===0,(x,y)=>(x*y%2+x*y%3)%2===0,(x,y)=>((x+y)%2+x*y%3)%2===0];
+    const apply=f=>{for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(!fn[y][x]&&f(x,y))m[y][x]=!m[y][x]};
+    const score=()=>{let s=0,dark=0;for(let y=0;y<n;y++){let rx=1,ry=1;for(let x=0;x<n;x++){if(m[y][x])dark++;
+        if(x){if(m[y][x]===m[y][x-1]){rx++;if(rx===5)s+=3;else if(rx>5)s++}else rx=1;if(m[x][y]===m[x-1][y]){ry++;if(ry===5)s+=3;else if(ry>5)s++}else ry=1}
+        if(x&&y&&m[y][x]===m[y][x-1]&&m[y][x]===m[y-1][x]&&m[y][x]===m[y-1][x-1])s+=3}}
+      return s+Math.floor(Math.abs(dark*20-n*n*10)/(n*n))*10};
+    let best=0,bs=Infinity;for(let i=0;i<8;i++){apply(MASKS[i]);fmt(i);const s=score();if(s<bs){bs=s;best=i}apply(MASKS[i])}
+    apply(MASKS[best]);fmt(best);return m}
+  function svg(text){const m=matrix(text),n=m.length,q=4;let d='';
+    for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(m[y][x])d+=`M${x+q} ${y+q}h1v1h-1z`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n+q*2} ${n+q*2}" shape-rendering="crispEdges" role="img" aria-label="二维码"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`}
+  return {matrix,svg}})();
+// v9.2.0：直连不进内核（入口旁路）设置 + 订阅分享（二维码本地生成，见 33-qr.js）
+// ---- 入口旁路
+let EB={};
+async function ebLoad(){try{EB=await api('/api/entry')}catch(e){return}ebRender()}
+function ebRender(){if(!$('#eb-on'))return;['on','cn','nodes','rules'].forEach(k=>{$('#eb-'+k).checked=!!EB[k]});$('#eb-ctf').checked=!!EB.ct_flush;
+  ['cn','nodes','rules'].forEach(k=>{$('#eb-'+k).disabled=!EB.on});
+  // v9.2.1：状态按 nftables 里真实挂着的规则和集合元素数显示（state 由后端给出），没生效时写明原因和办法
+  const on=EB.active,st=EB.state||(EB.active?'active':EB.on?'mode':'off');
+  $('#eb-tag').textContent=on?'生效中':EB.on?'未生效':'关闭';$('#eb-tag').className='tag '+(on?'ok':EB.on?'warn':'');
+  $('#eb-desc').textContent=st==='mode'?'入口旁路只在 TProxy 模式下生效（TUN 模式由内核 auto-route 接管全部流量，入口没有分流的位置）':'打开后按下面勾选的集合在入口放行';
+  $('#eb-ct').textContent=EB.conntrack?'':'本机没有 conntrack 命令：Alpine 执行 apk add conntrack-tools（Debian / Ubuntu：apt install conntrack）';
+  const S=EB.sets||{},parts=[];
+  if(EB.on){if(EB.cn)parts.push(S.cn==null?`大陆 IP <span class="warn">未加入</span>${S.cn_skip?'（'+esc(S.cn_skip)+'）':''}`:`大陆 IP ${S.cn} 段`);
+    if(EB.nodes)parts.push(`节点 ${S.nodes??0} 个 IP`+(S.hosts?`（共 ${S.hosts} 个地址${S.hosts>(S.nodes||0)?'，部分未解析':''}）`:''));
+    if(EB.rules)parts.push(`自定义 ${S.rules??0} 段`)}
+  const nft=EB.nft&&EB.nft.ok&&EB.nft.hooked?`nft 已加载 IPv4 ${EB.nft.n4} / IPv6 ${EB.nft.n6}`:'';
+  $('#eb-st').innerHTML=!EB.on?'':(on?`<span class="ok">● ${EB.n4||0} 个 IPv4 段${EB.n6?`、${EB.n6} 个 IPv6 段`:''} 在入口直连</span>`:`<span class="warn">● ${esc(EB.reason||'未生效')}</span>${EB.fix?`<br><span class="mut">办法：${esc(EB.fix)}</span>`:''}`)
+    +(parts.length?`<br><span class="mut">${parts.join(' · ')}${nft?' · '+nft:''}</span>`:'')+(EB.note&&on?` <span class="mut">${esc(EB.note)}</span>`:'')}
+async function ebSave(){const b={action:'save',on:$('#eb-on').checked,cn:$('#eb-cn').checked,nodes:$('#eb-nodes').checked,rules:$('#eb-rules').checked,ct_flush:$('#eb-ctf').checked};
+  $('#eb-st').innerHTML='<span class="mut">正在生成集合并重载透明代理规则…</span>';
+  try{EB=await api('/api/entry','POST',b);toast(EB.message)}catch(e){toast(e.message);return ebLoad()}ebRender()}
+async function ebRefresh(btn){btn.disabled=true;try{EB=await api('/api/entry','POST',{action:'refresh'});toast(EB.message)}catch(e){toast(e.message)}btn.disabled=false;ebRender()}
+if(typeof renderSettings==='function'){const _rs920=renderSettings;renderSettings=async function(){const r=await _rs920.apply(this,arguments);ebLoad();return r}}
+// ---- 订阅分享
+let SH={shares:[],candidates:[]},SHF=null,SH_OPEN=false;
+async function shareLoad(){try{SH=await api('/api/share')}catch(e){return}shareRender()}
+function shareToggle(force){SH_OPEN=force===undefined?!SH_OPEN:!!force;$('#share-body').classList.toggle('hide',!SH_OPEN);
+  const b=$('#share-tog');b.textContent=SH_OPEN?'收起':'展开';b.setAttribute('aria-expanded',String(SH_OPEN));if(SH_OPEN)shareRender()}
+function shareUrl(s){const host=s.host||location.host;return `${s.scheme||location.protocol.replace(':','')}://${host}${s.path}`}
+function shareRender(){const el=$('#share-list');if(!el)return;$('#share-tog').textContent=(SH_OPEN?'收起':'展开')+(SH.shares.length?`（${SH.shares.length}）`:'');
+  el.innerHTML=SH.shares.map(s=>{const u=shareUrl(s);return `<tr class="share-row"><td><b>${esc(s.title)}</b><div class="small mut">${s.t?new Date(s.t*1000).toLocaleDateString():''}</div></td>
+    <td>${s.n} / ${s.nodes.length}${s.n<s.nodes.length?' <span class="warn small">部分节点已不存在</span>':''}</td>
+    <td class="w small" style="max-width:340px"><code style="word-break:break-all">${esc(u)}</code><div class="row mt" style="gap:6px;flex-wrap:wrap">
+      <button class="btn g sm" data-u="${esc(u)}" onclick="shareCopy(this.dataset.u)">复制</button><button class="btn g sm" data-u="${esc(u)}" onclick="shareCopy(this.dataset.u+'?format=clash')">复制 Clash 链接</button>
+      <button class="btn g sm" data-i="${esc(s.id)}" onclick="shareQR(this.dataset.i)">二维码</button></div><div id="sq-${esc(s.id)}" class="mt hide"></div></td>
+    <td><label class="sw sm"><input type="checkbox" ${s.enabled?'checked':''} data-i="${esc(s.id)}" onchange="sharePost({action:'toggle',id:this.dataset.i,enabled:this.checked})"><span></span></label></td>
+    <td style="white-space:nowrap;text-align:right"><button class="btn g sm" data-i="${esc(s.id)}" onclick="shareEdit(this.dataset.i)">编辑</button> <button class="btn g sm" data-i="${esc(s.id)}" onclick="shareRotate(this.dataset.i)">换新链接</button> <button class="btn r sm" data-i="${esc(s.id)}" onclick="shareDel(this.dataset.i)">删除</button></td></tr>`}).join('')
+    ||'<tr><td colspan="5" class="mut small">还没有分享。点「＋ 新建分享」选择节点生成订阅链接</td></tr>'}
+function shareQR(id){const s=SH.shares.find(x=>x.id===id),box=$('#sq-'+id);if(!s||!box)return;if(!box.classList.contains('hide')){box.classList.add('hide');return}
+  try{box.innerHTML=`<div class="share-qr">${QR.svg(shareUrl(s))}</div>`}catch(e){box.innerHTML=`<span class="bad">${esc(e.message)}</span>`}box.classList.remove('hide')}
+async function shareCopy(t){try{await navigator.clipboard.writeText(t);toast('已复制')}catch(e){const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();
+  try{document.execCommand('copy');toast('已复制')}catch(_){toast('复制失败，请手动复制')}a.remove()}}
+async function sharePost(b){try{const j=await api('/api/share','POST',b);toast(j.message);SH.shares=j.shares||SH.shares;shareRender();return true}catch(e){toast(e.message);shareLoad();return false}}
+function shareRotate(id){if(confirm('换新链接后，旧链接立即失效，已经订阅的客户端要改用新链接。继续？'))sharePost({action:'rotate',id})}
+function shareDel(id){const s=SH.shares.find(x=>x.id===id);if(s&&confirm(`删除分享「${s.title}」？旧链接立即失效。`))sharePost({action:'delete',id})}
+const shKey=x=>x.sub+'\u0001'+x.name;
+function shareNew(){SHF={id:'',title:'',nodes:[],host:'',scheme:location.protocol==='https:'?'https':'http'};shareOpen()}
+function shareEdit(id){const s=SH.shares.find(x=>x.id===id);if(!s)return;SHF={id,title:s.title,nodes:s.nodes.map(x=>({sub:x.sub,name:x.name})),host:s.host,scheme:s.scheme};shareOpen()}
+function shareOpen(){$('#share-form').classList.remove('hide');$('#sh-title').value=SHF.title;$('#sh-host').value=SHF.host||'';$('#sh-scheme').value=SHF.scheme||'http';$('#sh-search').value='';
+  $('#sh-save').textContent=SHF.id?'保存':'保存并生成';shareRenderPick();$('#share-form').scrollIntoView({behavior:'smooth',block:'nearest'})}
+function shareClose(){$('#share-form').classList.add('hide');SHF=null}
+function shareRenderPick(){if(!SHF)return;const q=$('#sh-search').value.trim().toLowerCase(),sel=new Set(SHF.nodes.map(shKey)),grp={};
+  SH.candidates.forEach(c=>{if(q&&!c.name.toLowerCase().includes(q)&&!c.sub.toLowerCase().includes(q))return;(grp[c.sub]=grp[c.sub]||[]).push(c)});
+  $('#sh-pick').innerHTML=Object.keys(grp).map(sub=>`<div style="margin-bottom:8px"><div class="row" style="gap:6px;margin:2px 0 6px"><b class="sp small">${sub?esc(sub):'手动节点'}</b>
+    <button class="btn g sm" data-s="${esc(sub)}" onclick="shareAll(this.dataset.s,1)">全选</button><button class="btn g sm" data-s="${esc(sub)}" onclick="shareAll(this.dataset.s,0)">取消</button></div>
+    <div class="mchips">${grp[sub].slice(0,400).map(c=>{const on=sel.has(shKey(c));return `<span class="mchip add ${on?'grp':''}" data-s="${esc(c.sub)}" data-n="${esc(c.name)}" onclick="shareTog(this.dataset.s,this.dataset.n)" title="${esc(c.type||'')}"><span>${on?'✓ ':''}${esc(c.name)}</span></span>`}).join('')}</div></div>`).join('')
+    ||'<span class="mut small">没有可分享的节点（先添加订阅或手动节点）</span>';
+  $('#sh-count').textContent=`已选 ${SHF.nodes.length} 个节点`}
+function shareTog(sub,name){const i=SHF.nodes.findIndex(x=>x.sub===sub&&x.name===name);if(i>=0)SHF.nodes.splice(i,1);else SHF.nodes.push({sub,name});shareRenderPick()}
+function shareAll(sub,on){const q=$('#sh-search').value.trim().toLowerCase(),ns=SH.candidates.filter(c=>c.sub===sub&&(!q||c.name.toLowerCase().includes(q)));
+  if(on)ns.forEach(c=>{if(!SHF.nodes.some(x=>x.sub===c.sub&&x.name===c.name))SHF.nodes.push({sub:c.sub,name:c.name})});
+  else{const rm=new Set(ns.map(shKey));SHF.nodes=SHF.nodes.filter(x=>!rm.has(shKey(x)))}shareRenderPick()}
+async function shareSave(btn){const b={action:SHF.id?'edit':'add',id:SHF.id,title:$('#sh-title').value.trim(),nodes:SHF.nodes,host:$('#sh-host').value.trim(),scheme:$('#sh-scheme').value};
+  if(!b.title)return toast('请填写标题');if(!b.nodes.length)return toast('请至少选择一个节点');btn.disabled=true;
+  if(await sharePost(b)){shareClose();shareToggle(true)}btn.disabled=false}
+if(typeof loadSubs==='function'){const _ls920=loadSubs;loadSubs=async function(){const r=await _ls920.apply(this,arguments);shareLoad();return r}}
+// 界面多语言（v9.2.0）：简体中文（默认、源语言）/ 繁體中文 / English，按浏览器保存（localStorage mp_lang）。
+// 做法：页面文字仍按简体写；切到其他语言时把可见文字（文本节点、placeholder / title / aria-label）就地替换：
+//   English：整句精确匹配 I18N_EN（再试几条带数字的句式），没有翻译的保持简体（按要求回退到简体）；
+//   繁體：先换 TW_PHRASE 里的常用词（設定、網路、預設…），其余逐字简→繁（I18N_S2T，由 OpenCC s2tw 生成，只含面板用到的字）。
+// 动态渲染的内容由 MutationObserver 跟着翻；切换语言后刷新页面（回到简体不必保留原文）。
+// 不翻：<script> / <style> / <code> / <pre> / <textarea> / 输入框的值、带 data-noi18n 的元素。页面切换用的 data-tab 等属性值不动。
+const I18N_LANGS=['zh-CN','zh-TW','en'];
+let LANG=(()=>{try{const l=localStorage.getItem('mp_lang');return I18N_LANGS.includes(l)?l:'zh-CN'}catch(e){return 'zh-CN'}})();
+const I18N_EN={
+  // 导航 / 页面
+  '概览':'Overview','节点':'Nodes','策略组':'Groups','订阅':'Subscriptions','规则':'Rules','DNS':'DNS','广告拦截':'Ad block','连接':'Connections','统计':'Stats',
+  '日志':'Logs','测速':'Speed','WARP':'WARP','拓扑':'Topology','设置':'Settings','更多':'More','分流':'Routing','监控':'Monitor','系统':'System',
+  '页面':'Pages','常用页面':'Main pages','导航菜单':'Navigation','回到主页':'Home','打开菜单':'Open menu','回到概览':'Back to overview','更多页面':'More pages','页面导航':'Page navigation',
+  'Shunt 主页':'Shunt home','命令面板':'Command palette','搜索':'Search','有更新':'Update available','切换深色 / 浅色':'Toggle dark / light',
+  // 顶栏 / 核心
+  '重启':'Restart','启动':'Start','停止':'Stop','重启核心':'Restart core','启动核心':'Start core','停止核心':'Stop core','运行中':'Running','已停止':'Stopped',
+  '核心':'Core','内核':'Core','面板':'Panel','全局':'Global','直连':'Direct','规则模式':'Rule mode','全局代理':'Global proxy','代理模式':'Proxy mode','代理方式':'Proxy method',
+  '面板版本，点击去设置检查更新':'Panel version — click to check for updates','内核版本，点击去设置检查更新':'Core version — click to check for updates',
+  // 通用按钮
+  '保存':'Save','取消':'Cancel','删除':'Delete','编辑':'Edit','刷新':'Refresh','检测':'Check','添加':'Add','更新':'Update','应用':'Apply','关闭':'Close','打开':'Open',
+  '确定':'OK','查看':'View','移除':'Remove','清空':'Clear','导入':'Import','导出':'Export','复制':'Copy','展开':'Expand','收起':'Collapse','全部':'All','全选':'Select all',
+  '执行':'Run','测试':'Test','切换':'Switch','启用':'Enabled','停用':'Disabled','预览':'Preview','默认':'Default','登录':'Sign in','退出登录':'Sign out','管理':'Manage',
+  '保存并应用':'Save & apply','添加并应用':'Add & apply','导入并应用':'Import & apply','保存并生成':'Save & generate','立即执行':'Run now','立即检查':'Check now',
+  '立即更新':'Update now','立即测试':'Test now','立即清理':'Clean now','立即备份':'Back up now','全部测速':'Test all','全部更新':'Update all','检查更新':'Check for updates',
+  '全部展开':'Expand all','全部收起':'Collapse all','全部恢复':'Restore all','恢复默认':'Restore defaults','开始检测':'Start check','一键诊断':'Diagnose','检测全部':'Check all',
+  '＋ 添加':'+ Add','＋ 新建策略组':'+ New group','＋ 新建分享':'+ New share','加载中…':'Loading…','检测中…':'Checking…','未检测':'Not checked','超时':'Timeout',
+  '二维码':'QR code','复制 Clash 链接':'Copy Clash link','换新链接':'New link','已复制':'Copied',
+  // 常用词
+  '名称':'Name','类型':'Type','成员':'Members','引用':'References','地区':'Region','过滤':'Filter','流量':'Traffic','到期':'Expires','延迟':'Latency','链接':'Link',
+  '策略':'Policy','内容':'Content','范围':'Range','域名':'Domain','查询':'Query','暂停':'Pause','主机':'Host','网络':'Network','链路':'Chain','时长':'Duration','操作':'Actions',
+  '时间':'Time','设备':'Device','合计':'Total','占比':'Share','实时':'Live','外观':'Appearance','主题':'Theme','端点':'Endpoint','私钥':'Private key','丢包':'Loss',
+  '出口':'Exit','前置':'Front','峰值':'Peak','选择':'Select','服务器':'Server','规则数':'Rules','节点数':'Nodes','今日':'Today','本月':'This month','日均':'Daily avg',
+  '明细':'Details','下载':'Download','上传':'Upload','内存':'Memory','次数':'Count','每天':'Daily','每周':'Weekly','每小时':'Hourly','密码':'Password','邮箱':'Email',
+  '新密码':'New password','当前密码':'Current password','再输一次':'Repeat','未设置':'Not set','正式版':'Stable','预览版':'Preview','下载源':'Download source',
+  '协议栈':'Stack','经代理':'Via proxy','按延迟':'By latency','按节点':'By node','分享':'Share','出口类型':'Exit type','前置节点':'Front node','出口 IP':'Exit IP',
+  // 概览
+  '实时流量':'Live traffic','当前出口':'Current exit','代理出口':'Proxy exit','本地公网':'Local public IP','活动连接':'Active connections','系统信息':'System info',
+  '累计上传':'Total upload','累计下载':'Total download','地区延迟':'Region latency','域名过滤':'Domain filter','今日拦截':'Blocked today','今日拦截广告':'Ads blocked today',
+  '当前上传速率':'Upload rate','当前下载速率':'Download rate','出口节点延迟':'Exit node latency','DNS 查询结果':'DNS queries','最近 100 条查询':'Last 100 queries',
+  '隐藏 IP':'Hide IP','核心启动以来累计上传':'Uploaded since core start','核心启动以来累计下载':'Downloaded since core start','mihomo 内存占用':'mihomo memory',
+  '🕸️ 当前负载均衡':'🕸️ Load balancing now','近 5 分钟':'Last 5 min',
+  // 节点 / 策略组
+  '默认顺序':'Default order','只看正常':'Healthy only','只看失效':'Failed only','含已隐藏':'Include hidden','隐藏超时':'Hide timeouts','紧凑列表':'Compact list',
+  '卡片':'Cards','列表':'List','策略选择':'Policy','清空选择':'Clear selection','地区分组':'Region groups','管理策略组':'Manage groups','从订阅删除':'Remove from subscription',
+  '手动选择':'Select','自动测速':'URL test','故障转移':'Fallback','负载均衡':'Load balance','一致性哈希':'Consistent hashing','轮询':'Round robin','测速地址':'Test URL',
+  '新建策略组':'New group','自定义策略组':'Custom groups','还没有成员':'No members yet','生成的分组':'Generated groups','已识别的地区':'Detected regions',
+  '按订阅重新识别':'Re-detect from subscriptions','加入分流组候选':'Offer to routing groups','容差 ms':'Tolerance (ms)','测速间隔 / 容差':'Interval / tolerance',
+  '节点显示方式':'Node display','带宽择优':'Best bandwidth','更新模型':'Update model','懒惰测速（lazy）':'Lazy testing','没有勾选订阅节点':'No subscription nodes picked',
+  '主备优先（按成员顺序，sing-box 也生效）':'Primary / backup order (members in order; works on sing-box too)',
+  // 订阅
+  '订阅列表':'Subscriptions','更新时间':'Updated','手动导入单个节点':'Import single nodes','面板账号登录（Xboard / V2Board）':'Panel account login (Xboard / V2Board)',
+  '登录并添加订阅':'Sign in & add subscription','名称，如 机场A':'Name, e.g. Provider A','订阅名称，如 机场A':'Subscription name, e.g. Provider A',
+  '排除节点（正则）':'Exclude nodes (regex)','订阅自动更新间隔':'Auto-update interval','🔗 订阅分享':'🔗 Subscription sharing','标题，如 家里的节点':'Title, e.g. Home nodes',
+  '协议前缀':'Scheme','分享':'Share','手动节点':'Manual nodes',
+  // 规则
+  '规则测试':'Rule test','自定义规则':'Custom rules','自定义规则（优先于内置规则）':'Custom rules (before built-in rules)','规则集订阅（rule-providers）':'Rule sets (rule-providers)',
+  '快速添加：':'Quick add:','规则集链接':'Rule set URL','切换不断连':'Switch without disconnect','原目标':'Original','拒绝':'Reject','已加载规则':'Loaded rules',
+  '微软 直连':'Microsoft direct','Apple 直连':'Apple direct','生成的配置文件':'Generated config','搜索配置内容':'Search config',
+  // 广告拦截 / DNS
+  '上次更新':'Last update','过滤列表':'Filter lists','自动更新':'Auto update','检测域名':'Test domain','DNS 层拦截':'DNS-level blocking',
+  '白名单（总是放行，优先）':'Allowlist (always allowed, first)','黑名单（全部流量）':'Blocklist (all traffic)','黑名单（只拦国内直连）':'Blocklist (domestic direct only)',
+  '黑名单（只拦国外代理）':'Blocklist (proxied only)','增强模式':'Enhanced mode','缓存算法':'Cache algorithm','保存 DNS 设置':'Save DNS settings',
+  '一键应用防泄露设置':'Apply leak-proof settings','清空 DNS 缓存':'Flush DNS cache','清空 Fake-IP 缓存':'Flush Fake-IP cache','DNS 泄露检测':'DNS leak test',
+  '国内域名走直连 DNS':'Domestic domains use direct DNS','阻止客户端绕过 DNS':'Block clients bypassing DNS','Hosts 静态解析':'Hosts','域名嗅探（sniffer）':'Domain sniffing',
+  // 连接 / 统计 / 日志 / 测速
+  '搜索连接':'Search connections','断开全部':'Close all','来源设备':'Source device','每日流量':'Daily traffic','每日流量（近 30 天）':'Daily traffic (30 days)',
+  '今日上下行占比':'Today up/down','本月上下行占比':'This month up/down','近 30 天 日均':'30-day daily avg','近 30 天 峰值日':'30-day peak day',
+  '日志文件':'Log files','日志级别':'Log level','日志关键字过滤':'Log keyword filter','关键字过滤':'Keyword filter','核心日志文件最近 300 行':'Last 300 lines of core log',
+  '↓速度':'↓Speed','↑速度':'↑Speed','测速记录':'Speed history','🇨🇳 国内测速':'🇨🇳 Domestic test','🌏 国外测速':'🌏 International test',
+  // 设置
+  '网络':'Network','通知与安全':'Notifications & security','备份与更新':'Backup & update','订阅与分组':'Subscriptions & groups',
+  '网卡名称':'Interface name','系统优化':'System tuning','选推荐项':'Pick recommended','下载测速':'Download test','设备备注':'Device names',
+  '绕过设备（不走代理）':'Bypassed devices (no proxy)','IPv6 透明代理':'IPv6 transparent proxy','故障自动直连（看门狗）':'Auto direct on failure (watchdog)',
+  '应用 TUN 设置':'Apply TUN settings','QUIC 屏蔽':'Block QUIC','流媒体 / AI 解锁检测':'Streaming / AI unlock test','网络诊断':'Network diagnostics',
+  '切换内核':'Switch core','核心服务':'Core service','重载配置':'Reload config','定时任务':'Scheduled tasks','检查时间':'Check time','日志清理':'Log cleanup','日志上限':'Log limit',
+  '面板安全':'Panel security','面板密码':'Panel password','关闭密码':'Remove password','保存密码':'Save password','发送测试':'Send test','Telegram 通知':'Telegram notifications',
+  '界面布局':'Layout','背景图':'Background','上传图片':'Upload image','使用图片链接':'Use image URL','模糊':'Blur','遮罩':'Dim','面板更新':'Panel update','更新通道':'Update channel',
+  '配置快照':'Config snapshots','下载备份':'Download backup','版本备份':'Version backups','备份 / 恢复':'Backup / restore','从文件恢复…':'Restore from file…',
+  '回滚上一版本':'Roll back','清理旧内核':'Remove old cores','每天更新订阅':'Update subscriptions daily','每天重启核心':'Restart core daily','节点自动测速':'Auto node test',
+  '节点健康检查':'Node health check','延迟检测站点':'Latency test sites','每天自动更新':'Daily auto update','更新 GEO 数据库':'Update GEO data','每天更新 GEO 数据库':'Update GEO data daily',
+  '按旁路由本机时区执行':'Uses this router\'s time zone','留空不执行':'Empty = off','HTTPS（自签名证书）':'HTTPS (self-signed)','抽屉菜单（新）':'Drawer menu (new)',
+  '经典（横向标签栏）':'Classic (tab bar)','界面语言 · Language':'Language · 界面语言','简体中文':'简体中文','繁體中文':'繁體中文','English':'English',
+  '直连不进内核（入口旁路）':'Direct bypasses the core (entry bypass)','启用入口旁路':'Enable entry bypass','中国大陆 IP':'Mainland China IPs','节点服务器地址':'Node server IPs',
+  '自定义直连 IP 规则':'Custom direct IP rules','关闭连接时清理连接跟踪':'Clear conntrack when closing connections','重新生成集合':'Rebuild sets',
+  '生效中':'Active','未生效':'Inactive',
+  // WARP / 链式代理
+  '注册新账号':'Register','导入配置':'Import config','修改配置':'Edit config','重新加入节点':'Re-add node','节点名称':'Node name','对端公钥':'Peer public key',
+  '本机 IPv4':'Local IPv4','本机 IPv6':'Local IPv6','开始优选':'Scan','替换端点':'Replace endpoint','🎯 本地优选 IP':'🎯 Endpoint scan','跳过证书校验':'Skip cert verification',
+  '🔗 链式代理 / 落地（SOCKS5 · HTTP · HTTPS）':'🔗 Chain proxy / exits (SOCKS5 · HTTP · HTTPS)','SNI（可空）':'SNI (optional)','🕸️ 负载均衡拓扑':'🕸️ Load-balance topology',
+  // 时间
+  '1 分钟':'1 min','3 分钟':'3 min','5 分钟':'5 min','10 分钟':'10 min','30 分钟':'30 min','1 小时':'1 hour','6 小时':'6 hours','12 小时':'12 hours','24 小时':'24 hours',
+  '每 2 小时':'Every 2 h','每 3 小时':'Every 3 h','每 4 小时':'Every 4 h','每 12 小时':'Every 12 h','每 10 分钟':'Every 10 min','每 30 分钟':'Every 30 min','每 3 天':'Every 3 days','不自动更新':'Never',
+  '面板已设置密码，请登录':'The panel has a password — please sign in',
+};
+const I18N_EN_RX=[[/^(\d+) 个节点$/,'$1 nodes'],[/^(\d+) 个$/,'$1'],[/^(\d+) 条$/,'$1'],[/^(\d+) 秒$/,'$1 s'],[/^(\d+) 分钟前$/,'$1 min ago'],[/^(\d+) 小时前$/,'$1 h ago'],
+  [/^(\d+) 天前$/,'$1 days ago'],[/^已选 (\d+) 个节点$/,'$1 nodes selected'],[/^展开（(\d+)）$/,'Expand ($1)'],[/^收起（(\d+)）$/,'Collapse ($1)']];
+// 台湾常用词（先于逐字转换）
+const TW_PHRASE=[['设置','設定'],['默认','預設'],['网络','網路'],['软件','軟體'],['信息','資訊'],['视频','影片'],['文件','檔案'],['服务器','伺服器'],['内存','記憶體'],
+  ['程序','程式'],['复制','複製'],['链接','連結'],['连接','連線'],['数据','資料'],['用户','使用者'],['登录','登入'],['界面','介面'],['加载','載入'],['刷新','重新整理'],
+  ['搜索','搜尋'],['后台','背景'],['支持','支援'],['质量','品質'],['设备','裝置'],['菜单','選單'],['二维码','QR 碼'],['卸载','解除安裝'],['重启','重新啟動']];
+const I18N_S2T=["万与专东丢两严个临为么义书买乱争于云亚产亲仅从仓们价优会传伤伦伪体余侧储儿兰关内册写冲决况准减凑几凤凭击划则刚创删别剧办务动劳势区华协单占却厂厅历压厦参双发变叠台叶号后吗听启员响哔围国图圆圣场坏块墙壮声处备复够头夹宁宝实宽宾对导将尔尝尸尽层屉属岛带干并广庆库应废开异弃张弹强归当录征径态总恒恶悬懒戏户扑执扩扫扰抛抢护报拟拥拦择挂挤损换据摊攒数断无旧时显暂机杀权条来极构标栈栏树样档检横樱残汇汉污没泄浅测浏涨渐温游湾溃滚满滤点热状独狮环现电画监盖盗盘着矶码砖础确碍离种积称稳竞筛签简类紧纠红约级纯纳纵纸纽线组细终经绑结绕绘给络绝统继绪续维综绿缀缓编缩网罗罚联脉脑脚脱腾节苏范荐获营蓝虚补装见观规视览触计订认让议讯记许论设访证评识诉诊词译试话询该详语误说请读谁调贝负责败账质贴费资赖赛赶趋跃踪转轮软轴轻载较辑输边达迁过运还这进远连迟适选递逻邮邻采释里针钟钥钮钳银铺链销锁错锚键镜长门闭问闲间阅阈队阶际陆陕险随隐静韩页顶项顺须预领频题颜额风饰馈马驻验鱼鲜齐","萬與專東丟兩嚴個臨為麼義書買亂爭於雲亞產親僅從倉們價優會傳傷倫偽體餘側儲兒蘭關內冊寫衝決況準減湊幾鳳憑擊劃則剛創刪別劇辦務動勞勢區華協單佔卻廠廳歷壓廈參雙發變疊臺葉號後嗎聽啟員響嗶圍國圖圓聖場壞塊牆壯聲處備復夠頭夾寧寶實寬賓對導將爾嘗屍盡層屜屬島帶幹並廣慶庫應廢開異棄張彈強歸當錄徵徑態總恆惡懸懶戲戶撲執擴掃擾拋搶護報擬擁攔擇掛擠損換據攤攢數斷無舊時顯暫機殺權條來極構標棧欄樹樣檔檢橫櫻殘匯漢汙沒洩淺測瀏漲漸溫遊灣潰滾滿濾點熱狀獨獅環現電畫監蓋盜盤著磯碼磚礎確礙離種積稱穩競篩籤簡類緊糾紅約級純納縱紙紐線組細終經綁結繞繪給絡絕統繼緒續維綜綠綴緩編縮網羅罰聯脈腦腳脫騰節蘇範薦獲營藍虛補裝見觀規視覽觸計訂認讓議訊記許論設訪證評識訴診詞譯試話詢該詳語誤說請讀誰調貝負責敗賬質貼費資賴賽趕趨躍蹤轉輪軟軸輕載較輯輸邊達遷過運還這進遠連遲適選遞邏郵鄰採釋裡針鍾鑰鈕鉗銀鋪鏈銷鎖錯錨鍵鏡長門閉問閒間閱閾隊階際陸陝險隨隱靜韓頁頂項順須預領頻題顏額風飾饋馬駐驗魚鮮齊"];  // 简→繁逐字对照（OpenCC s2tw 生成，只含面板和后端提示里用到的字）
+const I18N_S2T_MAP=(()=>{const m=new Map(),[a,b]=I18N_S2T;for(let i=0;i<a.length;i++)m.set(a[i],b[i]);return m})();
+function i18nTW(s){let t=s;for(const [a,b] of TW_PHRASE)if(t.includes(a))t=t.split(a).join(b);let o='';for(const ch of t)o+=I18N_S2T_MAP.get(ch)||ch;return o}
+function i18nEN(s){const k=s.trim();if(!k)return s;const hit=I18N_EN[k];if(hit!==undefined)return s.replace(k,hit);
+  for(const [re,rep] of I18N_EN_RX)if(re.test(k))return s.replace(k,k.replace(re,rep));return s}
+function i18n(s){if(LANG==='zh-CN'||!s||!/[\u4e00-\u9fff]/.test(s))return s;return LANG==='en'?i18nEN(s):i18nTW(s)}
+const I18N_SKIP=new Set(['SCRIPT','STYLE','CODE','PRE','TEXTAREA','KBD']);
+function i18nAttrs(n){for(const a of ['placeholder','title','aria-label']){const v=n.getAttribute(a);if(v){const t=i18n(v);if(t!==v)n.setAttribute(a,t)}}}
+function i18nNode(n){if(n.nodeType===3){const p=n.parentNode;if(!p||I18N_SKIP.has(p.nodeName)||(p.closest&&p.closest('[data-noi18n]')))return;
+    const v=n.nodeValue,t=i18n(v);if(t!==v){if(p.nodeName==='H3'&&p.dataset&&p.dataset.zh===undefined)p.dataset.zh=p.textContent;n.nodeValue=t}return}
+  if(n.nodeType!==1||I18N_SKIP.has(n.nodeName)||n.hasAttribute('data-noi18n'))return;
+  i18nAttrs(n);for(const c of n.childNodes)i18nNode(c)}
+function setLang(l,save){l=I18N_LANGS.includes(l)?l:'zh-CN';if(save!==false)try{localStorage.setItem('mp_lang',l)}catch(e){}
+  if(l!==LANG){LANG=l;location.reload();return}renderLangOpt()}
+function renderLangOpt(){document.querySelectorAll('#lang-opts [data-l]').forEach(b=>{const on=b.dataset.l===LANG;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on))})}
+(function(){renderLangOpt();if(LANG==='zh-CN')return;
+  document.documentElement.lang=LANG==='en'?'en':'zh-Hant';document.title=i18n(document.title);i18nNode(document.body);
+  new MutationObserver(ms=>{for(const m of ms){if(m.type==='characterData')i18nNode(m.target);else if(m.type==='attributes'){if(!I18N_SKIP.has(m.target.nodeName))i18nAttrs(m.target)}else m.addedNodes.forEach(i18nNode)}})
+    .observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['placeholder','title','aria-label']});
+  if(typeof toast==='function'){const _t=toast;toast=function(m,...r){return _t.call(this,typeof m==='string'?i18n(m):m,...r)}}})();
 </script>
 </body>
 </html>

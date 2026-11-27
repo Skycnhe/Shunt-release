@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Shunt 面板（Debian / Ubuntu 的 systemd 版，与 Alpine 的 init.d/shunt 对应；v9.2.0）
+# 面板端口：在 /etc/conf.d/shunt 写一行 PANEL_PORT=8081，默认 8080
+[Unit]
+Description=Shunt side-router panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/conf.d/shunt
+ExecStart=/usr/bin/python3 /opt/mihomo-panel/server.py
+ExecStartPost=/bin/sh -c 'echo $MAINPID > /run/shunt.pid'
+StandardOutput=append:/var/log/mihomo-panel.log
+StandardError=append:/var/log/mihomo-panel.log
+Restart=on-failure
+RestartSec=3
+# 面板重启时不连带杀掉它拉起的子进程（在线更新脚本、内核切换任务等自己会结束）
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Debian / Ubuntu（systemd）上的 rc-service 兼容层（v9.2.0）：面板、安装脚本和文档里的 rc-service 命令照常可用，
+# 实际交给 systemctl。只在系统没有 OpenRC 时由 install.sh 装到 /usr/local/sbin/rc-service。
+#   rc-service <服务> start|stop|restart|status|zap
+SVC=${1:-}; ACT=${2:-}
+[ -n "$SVC" ] && [ -n "$ACT" ] || { echo "usage: rc-service <service> start|stop|restart|status|zap"; exit 1; }
+case "$ACT" in
+  start|stop|restart) exec systemctl "$ACT" "$SVC.service" ;;
+  status)
+    if systemctl is-active --quiet "$SVC.service"; then echo " * status: started"; exit 0; fi
+    if systemctl is-failed --quiet "$SVC.service"; then echo " * status: crashed"; exit 32; fi
+    echo " * status: stopped"; exit 3 ;;
+  zap) systemctl reset-failed "$SVC.service" 2>/dev/null; exit 0 ;;
+  *) exec systemctl "$ACT" "$SVC.service" ;;
+esac

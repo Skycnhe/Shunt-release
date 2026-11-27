@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Debian / Ubuntu（systemd）上的 rc-update 兼容层（v9.2.0）：rc-update add|del <服务> [运行级别] → systemctl enable|disable
+ACT=${1:-}; SVC=${2:-}
+case "$ACT" in
+  add) systemctl enable "$SVC.service" >/dev/null 2>&1 ;;
+  del|delete) systemctl disable "$SVC.service" >/dev/null 2>&1 ;;
+  *) echo "usage: rc-update add|del <service>"; exit 1 ;;
+esac
+exit 0

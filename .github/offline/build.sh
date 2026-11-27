@@ -21,6 +21,7 @@ cd "$SRC"
 cp server.py index.html tproxy.sh selftest.sh install.sh "$W/"
 for f in README.md CHANGELOG.md LICENSE icon.svg icon-180.png icon-512.png offline.sh; do [ -f "$f" ] && cp "$f" "$W/"; done
 cp -r init.d "$W/"
+[ -d systemd ] && cp -r systemd "$W/"  # v9.2.0：Debian / Ubuntu（systemd）安装用
 
 PKGS="curl wget ca-certificates python3 nftables iptables ip6tables iproute2 gzip tar tzdata kmod coreutils openssl py3-yaml chrony"
 if [ -n "${NO_APK:-}" ]; then  # Docker 镜像构建（Dockerfile）复用本脚本：依赖由镜像自己 apk add，不需要离线源

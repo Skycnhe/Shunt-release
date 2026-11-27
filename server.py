@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.1.17"
+PANEL_VERSION = "9.2.4"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -25,6 +25,7 @@ MODULES = [
     "data",
     "links",
     "ruleutil",
+    "hotswitch",
     "groups",
     "mihomo",
     "validate",
@@ -49,6 +50,7 @@ MODULES = [
     "notify",
     "warp",
     "landing",
+    "failover",
     "gguard",
     "latency",
     "stats",
@@ -73,6 +75,8 @@ MODULES = [
     "update_guard",
     "svcmigrate",
     "static",
+    "share",
+    "entry",
     "webapi_base",
     "webapi_nodes",
     "webapi_subs",
@@ -237,9 +241,11 @@ WD_INTERVAL = int(os.environ.get("PANEL_WD_INTERVAL", "30"))  # 看门狗检查�
 LOCK = threading.RLock()  # 可重入：load() 内迁移写盘时可能已在 update() 的锁内
 
 # v7.7.6 起服务名为 shunt（面板）/ shunt-core（核心）；还没迁移的旧设备仍是 mihomo-panel / mihomo（svcmigrate.py 负责迁移）
-SVC_NEW = os.path.isfile("/etc/init.d/shunt-core")
+# v9.2.0 起也支持 Debian / Ubuntu（systemd）：服务是 /etc/systemd/system/shunt(-core).service，rc-service 命令由 install.sh 装的兼容层转给 systemctl
+SYSTEMD = os.path.isfile("/etc/systemd/system/shunt-core.service") and not os.path.isfile("/etc/init.d/shunt-core")
+SVC_NEW = os.path.isfile("/etc/init.d/shunt-core") or SYSTEMD
 CORE_SVC = "shunt-core" if SVC_NEW else "mihomo"
-PANEL_SVC = "shunt" if os.path.isfile("/etc/init.d/shunt") else "mihomo-panel"
+PANEL_SVC = "shunt" if os.path.isfile("/etc/init.d/shunt") or os.path.isfile("/etc/systemd/system/shunt.service") else "mihomo-panel"
 SVC = os.environ.get("PANEL_SVC", "rc-service " + CORE_SVC)  # 核心服务控制命令（测试环境可覆盖）
 # 启动 / 重启核心前面板（或 --gen）写下的透明代理参数（tp_env 输出）。init.d 的 start_pre 见到 2 分钟内的这个文件就跳过 --gen、
 # start_post 交给 tproxy.sh 直接读，一次启动少起两次 Python。只在正式部署目录启用（路径与 init.d 里写死的一致）
@@ -372,7 +378,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.1.17"
+PANEL_VERSION = "9.2.4"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -1506,6 +1512,216 @@ def adblock_scopes(d):
             out["ad-" + l["id"]] = l["scope"]
     return out
 '''
+_SRC['shunt.hotswitch'] = '''"""切换不断连（v9.2.0）：规则集在「原目标 / 直连 / 拒绝」之间切换时不重启内核，已建立的连接（下载、视频、SSH）不断。
+
+做法：设置里打开「切换不断连」后，每个规则集 R 在它原来那条 RULE-SET,R,目标 前面多两条规则
+    AND,((RULE-SET,R),(RULE-SET,switch-…-reject)),REJECT
+    AND,((RULE-SET,R),(RULE-SET,switch-…-direct)),DIRECT
+两个「开关规则集」是本地小文件：关着时里面只有一条永远不命中的条目，打开时是「TCP 或 UDP」（命中一切）。
+切换只改写这两个文件——
+  - mihomo：文件型 rule-provider，改完调 PUT /providers/rules/<名> 让内核重新读（不重载配置）；
+  - sing-box：type local 的 source 规则集，sing-box 1.10+ 监视文件变化自动重新加载（面板保存时同样依赖这一点）。
+配置文件本身一个字节都不变，所以也不会触发 sing-box 的 SIGHUP。新连接 1 秒内按新线路走，旧连接保持原线路直到自然结束。
+
+没打开「切换不断连」时，切换写进 data.json 后按老办法重新生成配置：mihomo 热重载（PUT /configs），sing-box 重启（连接会断）。
+内核没在运行、或者正在运行的配置里还没有开关规则集（刚打开开关还没重载成功）时，同样退回重新生成。
+DNS：规则集的目标本来就不决定用哪个 DNS（由 DNS 策略 / Fake-IP 决定），切换前后 DNS 行为不变。
+"""
+import os
+
+from .base import CONF_DIR
+from .data import rs_file
+from .errlog import log_err
+
+STATES = ("target", "direct", "reject")
+MAX_RS = 128  # 规则集太多时只给前 128 个生成开关（每个两条规则）
+OFF_MH = ["DOMAIN,switch-off.invalid"]
+ON_MH = ["NETWORK,TCP", "NETWORK,UDP"]
+OFF_SB = [{"domain": ["switch-off.invalid"]}]
+ON_SB = [{"network": ["tcp", "udp"]}]
+
+
+def hs_enabled(d):
+    return bool((d or {}).get("hot_switch"))
+
+
+def overrides(d):
+    """{规则集名: "direct" | "reject"}，只保留还存在的规则集"""
+    names = {r.get("name") for r in (d or {}).get("rulesets") or [] if isinstance(r, dict)}
+    sw = (d or {}).get("switch")
+    return {k: v for k, v in (sw.items() if isinstance(sw, dict) else ()) if k in names and v in ("direct", "reject")}
+
+
+def flag_name(rs, kind):
+    return f"switch-{rs_file(rs)}-{kind}"
+
+
+def mh_dir():
+    return os.path.join(CONF_DIR, "rules", "switch")
+
+
+def mh_path(flag):
+    return os.path.join(mh_dir(), flag + ".yaml")
+
+
+def sb_path(flag):
+    from .sb_common import SB_RULE_DIR
+    return os.path.join(SB_RULE_DIR, flag + ".json")
+
+
+def hot_rulesets(d):
+    """生成开关的规则集名（打开了「切换不断连」时）"""
+    if not hs_enabled(d):
+        return []
+    return [r["name"] for r in (d.get("rulesets") or [])[:MAX_RS] if isinstance(r, dict) and isinstance(r.get("name"), str)]
+
+
+def providers(d):
+    """mihomo rule-providers 里追加的开关规则集"""
+    out = {}
+    for name in hot_rulesets(d):
+        for kind in ("reject", "direct"):
+            f = flag_name(name, kind)
+            out[f] = {"type": "file", "behavior": "classical", "format": "yaml", "path": f"./rules/switch/{f}.yaml"}
+    return out
+
+
+def rules_for(d, name, tgt, no_resolve):
+    """规则集 name 的规则（含开关），tgt 是原目标。没打开时：有覆盖就直接把目标换成 DIRECT / REJECT"""
+    nr = ",no-resolve" if no_resolve else ""
+    ov = overrides(d).get(name)
+    if name not in hot_rulesets(d):
+        if ov:
+            tgt = "DIRECT" if ov == "direct" else "REJECT"
+        return [f"RULE-SET,{name},{tgt}{nr}"]
+    return [f"AND,((RULE-SET,{name}{nr}),(RULE-SET,{flag_name(name, 'reject')})),REJECT",
+            f"AND,((RULE-SET,{name}{nr}),(RULE-SET,{flag_name(name, 'direct')})),DIRECT",
+            f"RULE-SET,{name},{tgt}{nr}"]
+
+
+def _write(path, text):
+    from .data import _atomic_write
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == text:
+                return False  # 内容没变：不碰文件（sing-box 不必重新加载）
+    except OSError:
+        pass
+    _atomic_write(path, text.encode(), 0o644)
+    return True
+
+
+def write_flags(d, only=None):
+    """按当前覆盖写两套开关文件（mihomo 的 yaml、sing-box 的 source json）。返回内容有变化的开关名"""
+    import json
+    if not hs_enabled(d):
+        return []
+    ov = overrides(d)
+    changed = []
+    for name in hot_rulesets(d):
+        if only is not None and name != only:
+            continue
+        for kind in ("reject", "direct"):
+            f = flag_name(name, kind)
+            on = ov.get(name) == kind
+            try:
+                os.makedirs(mh_dir(), exist_ok=True)
+                a = _write(mh_path(f), "payload:\\n" + "".join(f"  - {x}\\n" for x in (ON_MH if on else OFF_MH)))
+                os.makedirs(os.path.dirname(sb_path(f)), exist_ok=True)
+                b = _write(sb_path(f), json.dumps({"version": 3, "rules": ON_SB if on else OFF_SB}))
+                if a or b:
+                    changed.append(f)
+            except OSError as e:
+                log_err("写切换开关文件", e)
+    return changed
+
+
+def running_has(flag):
+    """正在运行的配置里有没有这个开关（打开开关后要重载成功一次才有）"""
+    from .data import read_json
+    from .sb_common import SB_CONF, active_core
+    if active_core() == "singbox":
+        cfg = read_json(SB_CONF, None) or {}
+        return any(isinstance(x, dict) and x.get("tag") == flag for x in (cfg.get("route") or {}).get("rule_set") or [])
+    cfg = read_json(os.path.join(CONF_DIR, "config.yaml"), None) or {}
+    return flag in (cfg.get("rule-providers") or {})
+
+
+def hs_view(d):
+    ov = overrides(d)
+    hot = set(hot_rulesets(d))
+    return {"on": hs_enabled(d), "max": MAX_RS,
+            "rulesets": [{"name": r["name"], "target": r.get("target"), "state": ov.get(r["name"], "target"), "hot": r["name"] in hot}
+                         for r in d.get("rulesets") or [] if isinstance(r, dict) and r.get("name")]}
+
+
+def hs_api_get():
+    from .data import load
+    return 200, hs_view(load())
+
+
+def _set_state(d, name, to):
+    sw = d.get("switch") if isinstance(d.get("switch"), dict) else {}
+    if to == "target":
+        sw.pop(name, None)
+    else:
+        sw[name] = to
+    if sw:
+        d["switch"] = sw
+    else:
+        d.pop("switch", None)
+
+
+def hs_api_post(b):
+    """action: enable（on）| set（name, to = target / direct / reject）"""
+    from .data import load, update
+    from .core import reload_core
+    from .corehttp import core
+    from .notify import core_alive
+    from .sb_common import active_core
+    act = b.get("action")
+    if act == "enable":
+        on = bool(b.get("on"))
+        prev = update(lambda d: d.__setitem__("hot_switch", True) if on else d.pop("hot_switch", None))
+        write_flags(load())
+        ok, m = reload_core(prev)
+        if not ok:
+            return 500, {"message": m}
+        return 200, {"message": ("已打开「切换不断连」：之后切换规则集不再重启内核" if on else "已关闭「切换不断连」") + "（本次重新生成了配置）",
+                     "mode": "reload"}
+    if act != "set":
+        return 400, {"message": "未知操作"}
+    name, to = str(b.get("name") or ""), str(b.get("to") or "")
+    if to not in STATES:
+        return 400, {"message": "只能切换到原目标 / 直连 / 拒绝"}
+    d = load()
+    if not any(isinstance(r, dict) and r.get("name") == name for r in d.get("rulesets") or []):
+        return 404, {"message": "找不到这个规则集"}
+    label = {"target": "原目标", "direct": "直连", "reject": "拒绝"}[to]
+    hot = name in hot_rulesets(d) and core_alive(timeout=3) and running_has(flag_name(name, "direct"))
+    if hot:
+        update(lambda x: _set_state(x, name, to))
+        changed = write_flags(load(), only=name)
+        if active_core() != "singbox":
+            for f in changed:
+                code, _ = core("PUT", "/providers/rules/" + f, timeout=10)
+                if code >= 300:
+                    hot = False
+        if hot:
+            return 200, {"mode": "hot", "message": f"「{name}」已切到{label}：内核未重启，已有连接不中断，新连接 1 秒内按新线路走"}
+    prev = update(lambda x: _set_state(x, name, to))
+    if hs_enabled(load()):
+        write_flags(load())
+    ok, m = reload_core(prev)
+    if not ok:
+        return 500, {"message": m}
+    sb = active_core() == "singbox"
+    how = "已重启 sing-box（已有连接会断开）" if sb else "mihomo 已热重载配置"
+    if "无变化" in m:
+        how = "内核未重启"
+    return 200, {"mode": "restart" if sb and "无变化" not in m else "reload",
+                 "message": f"「{name}」已切到{label}：{how}" + ("；打开「切换不断连」后切换不再重启" if not hs_enabled(load()) else "")}
+'''
 _SRC['shunt.groups'] = '''"""策略组"""
 import json, os, re, time
 
@@ -1518,16 +1734,23 @@ from .sb_common import SB_SUB_DIR, active_core
 PROV_FILE = os.path.join(PANEL_DIR, "provider_nodes.json")
 PROV = {"t": 0, "data": None, "rev": 0, "pending": set()}  # pending：mihomo 里还没加载完的订阅名  # rev：订阅节点名单每变化一次加一（/api/state 的策略组缓存键、/api/ping 版本号用）
 RX_CACHE = {}
+RX_CACHE_MAX = 512  # v9.2.4：缓存上限。排除名单正则里拼着用户删掉的节点名，每删一次就是一条新正则，以前缓存只增不减
 
 
 def rx(pattern):
     """编译正则（缓存）；无效时返回 None"""
-    if pattern not in RX_CACHE:
-        try:
-            RX_CACHE[pattern] = re.compile(pattern)
-        except re.error:
-            RX_CACHE[pattern] = None
-    return RX_CACHE[pattern]
+    try:
+        return RX_CACHE[pattern]
+    except KeyError:
+        pass
+    try:
+        r = re.compile(pattern)
+    except re.error:
+        r = None
+    if len(RX_CACHE) >= RX_CACHE_MAX:
+        RX_CACHE.clear()  # 超过上限整体清空（重新编译很便宜），常驻进程内存不再随时间增长
+    RX_CACHE[pattern] = r
+    return r  # 返回局部变量：别的线程这时清空缓存也不会 KeyError
 
 
 def sub_cache_path(name):
@@ -1933,6 +2156,10 @@ def clean_custom_group(b):
             if st not in LB_STRATEGIES:
                 raise ValueError("负载均衡策略只支持一致性哈希 / 轮询")
             g["strategy"] = st
+        if t == "fallback" and b.get("priority"):
+            # v9.2.0 主备故障转移：成员按顺序是优先级（主用不通才用备用，主用恢复再切回）。mihomo 的 fallback 本来就是这样；
+            # sing-box 没有 fallback，这类组改为 selector + 面板按顺序探活切换（failover.py）。没勾的旧组照旧（sing-box 按自动测速）
+            g["priority"] = True
     return g
 
 
@@ -2000,6 +2227,12 @@ def lb_members(members, dl, tol):
     if len(keep) < 2:
         keep = set(sorted(ok, key=lambda m: (dl[m], ok.index(m)))[:2])
     return [m for m in members if m in keep]
+
+
+def prio_groups(d):
+    """勾了「主备优先」的故障转移组名（v9.2.0）：sing-box 下生成 selector，由 failover.fo_loop 按成员顺序探活切换"""
+    return {g["name"] for g in (d or {}).get("custom_groups") or []
+            if isinstance(g, dict) and g.get("type") == "fallback" and g.get("priority") and isinstance(g.get("name"), str)}
 '''
 _SRC['shunt.mihomo'] = '''"""生成配置"""
 import ipaddress, json, os, re, shlex, threading, time
@@ -2011,7 +2244,7 @@ from .base import (
     LAN_DNS_SUFFIX, LAN_PTR_ZONES, TUN_DEFAULT, TUN_STACKS
 )
 from .data import LB_KINDS, auto_name, lb_name, region_label, rs_file, safe
-from . import gguard, landing
+from . import gguard, hotswitch, landing
 from .groups import LB_TOL, bw_resolve, clean_custom_group, gcfg, group_opts, lb_delays, lb_members, names_rx, pick_plan, region_plan, rx, rx_or, sub_orig_nodes, sub_removed
 from .ruleutil import AB_RULE_ONLY, DOMAIN_RX, LOGICAL_RX, adblock_providers, adblock_scopes, complete_rule, dns_policy_of, norm_rule, \\
     rule_policy_index, split_rule
@@ -2379,6 +2612,7 @@ def build_rule_providers(d, dc):
                                      "url": r["url"], "path": f"./rules/{rs_file(r['name'])}.{ext}", "interval": 86400}
     ab_prov, ab_rules = adblock_providers(d)
     rule_providers.update(ab_prov)
+    rule_providers.update(hotswitch.providers(d))  # 切换不断连的开关规则集（没打开时为空）
     rule_providers["cn-apps"] = {"type": "inline", "behavior": "domain", "payload": list(CN_APP_DOMAINS)}
     if dc["block_bypass"]:  # 阻止局域网设备绕过 mihomo DNS：拒绝 DoT/DoQ(853) 与已知公共 DoH 服务器
         rule_providers["dns-bypass-ip"] = {"type": "inline", "behavior": "ipcidr", "payload": list(DOH_IPS)}
@@ -2409,7 +2643,8 @@ def mihomo_rules(d, policies, dc):
     rs_rules = []
     for r in d.get("rulesets", []):
         tgt = r.get("target", G_SEL) if r.get("target", G_SEL) in policies else G_SEL
-        rs_rules.append(f"RULE-SET,{r['name']},{tgt}" + (",no-resolve" if r.get("behavior") == "ipcidr" else ""))
+        # v9.2.0 切换不断连：没打开、也没切换过时与以前逐字相同（RULE-SET,名,目标）
+        rs_rules += hotswitch.rules_for(d, r["name"], tgt, r.get("behavior") == "ipcidr")
     custom = [fix_rule_policy(x, policies) for x in d["rules"]]
     pre = []
     if d.get("proxy_mode") == "tun":  # TUN 模式下无法在 nftables 里按来源绕过，改用规则让这些设备直连
@@ -2556,7 +2791,9 @@ def mihomo_tun(d):
     p = tun_params(d)
     if not p["enable"]:
         return {"enable": False}
-    return {"enable": True, "stack": mh_tun_stack(p["stack"]), "device": p["device"], "auto-route": True,
+    # v9.2.4：按本次要生成的内核（d 里的 core）检测 gVisor。以前不传路径，mh_bin() 再 load() 一次 data.json 取「磁盘上当前的内核」：
+    # 从 mihomo 切到 Smart（或内核更新时给没在用的内核生成校验配置）时拿另一个程序的 gVisor 结果决定协议栈，还多读一次整份 data.json
+    return {"enable": True, "stack": mh_tun_stack(p["stack"], mh_bin(active_core(d))), "device": p["device"], "auto-route": True,
             "auto-redirect": p["auto_redirect"], "auto-detect-interface": True, "dns-hijack": ["any:53", "tcp://any:53"],
             "strict-route": p["strict_route"], "mtu": p["mtu"]}
 
@@ -2835,6 +3072,7 @@ def write_config(d, path=None):
     if path is None:
         migrate_ruleset_cache(d)
     path = path or os.path.join(CONF_DIR, "config.yaml")
+    hotswitch.write_flags(d)  # 切换不断连的开关文件要在内核读配置之前就在
     write_atomic(path, build_config(d))  # JSON 是 YAML 的子集，mihomo 可直接读取
     return path
 
@@ -3863,7 +4101,8 @@ SB_CONF = os.path.join(SB_DIR, "config.json")
 SB_RULE_DIR = os.environ.get("SB_RULES", os.path.join(SB_DIR, "rules"))
 SB_SUB_DIR = os.path.join(PANEL_DIR, "sb_subs")
 CORE_FILE = os.path.join(PANEL_DIR, "core")  # init.d/shunt-core 读取它决定启动哪个内核
-CORE_PID = os.environ.get("PANEL_CORE_PID", "/run/shunt-core.pid" if os.path.isfile("/etc/init.d/shunt-core") else "/run/mihomo.pid")
+CORE_PID = os.environ.get("PANEL_CORE_PID", "/run/shunt-core.pid" if (os.path.isfile("/etc/init.d/shunt-core")
+                                                                       or os.path.isfile("/etc/systemd/system/shunt-core.service")) else "/run/mihomo.pid")
 CORES = {"mihomo": "mihomo", "smart": "mihomo Smart", "singbox": "sing-box"}
 SB_GEO = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo"
 SB_REPO = os.environ.get("SB_REPO", "https://github.com/SagerNet/sing-box/releases")
@@ -5389,8 +5628,9 @@ import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, 
 from .base import (
     AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_BW, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
+from . import hotswitch
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
-from .groups import bw_resolve, clean_custom_group, gcfg, pick_plan, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
+from .groups import bw_resolve, clean_custom_group, gcfg, pick_plan, prio_groups, prov_set, rx, sub_orig_nodes, LB_TOL, lb_delays, lb_members
 from .mihomo import BUILTIN_GEO, mh_has_gvisor, RS_SB_EXTS, build_config, build_rule_providers, dns_cfg, migrate_ruleset_cache, policy_parts, tun_params, write_atomic, write_config
 from .corehttp import core_json
 from .sb_common import CORE_PID, SB_BIN, SB_CONF, SB_DIR, SB_RULE_DIR, SB_STATE, active_core
@@ -5412,6 +5652,7 @@ def build_singbox(d):
     v6 = bool(d.get("ipv6"))
     gc = gcfg(d)
     gc["_lbd"] = lb_delays()
+    gc["_prio"] = prio_groups(d)
     warn = []
     outbounds, node_names, prov_names = sb_node_outbounds(d, cfg, sub_out, warn)
     picks = sb_custom_picks(d, sub_out, prov_names)
@@ -5497,7 +5738,7 @@ def build_singbox(d):
         conf["experimental"]["urltest_unified_delay"] = True
     if endpoints:
         conf["endpoints"] = endpoints
-    need = {tag: rsd for tag, rsd in rule_sets.items() if rsd["kind"] != "inline"}
+    need = {tag: rsd for tag, rsd in rule_sets.items() if rsd["kind"] not in ("inline", "switch")}
     return conf, list(dict.fromkeys(warn)), need
 
 
@@ -5714,7 +5955,8 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, picks=None, fork=F
     groups = [g for g in cfg["proxy-groups"] if g["name"] not in region_lb]
     gnames = {g["name"] for g in groups}
     alias = {k: v for k, v in alias.items() if v in gnames}
-    lb_custom = [g["name"] for g in groups if g["type"] == "fallback" or (g["type"] == "load-balance" and not fork)]
+    prio = gc.get("_prio") or set()  # 主备故障转移组（v9.2.0）：selector + 面板按顺序探活，不再降级成自动测速
+    lb_custom = [g["name"] for g in groups if (g["type"] == "fallback" and g["name"] not in prio) or (g["type"] == "load-balance" and not fork)]
     if lb_custom:
         what = "故障转移组" if fork else "负载均衡 / 故障转移组（换成魔改版内核可用负载均衡）"
         warn.append(f"sing-box 没有{what}，已按自动测速运行：" + "、".join(lb_custom[:6]) + ("…" if len(lb_custom) > 6 else ""))
@@ -5746,6 +5988,8 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, picks=None, fork=F
             members = ["DIRECT"]
         if g["type"] == "select":
             o = {"type": "selector", "tag": g["name"], "outbounds": members, "interrupt_exist_connections": False}
+        elif g["type"] == "fallback" and g["name"] in prio:  # 默认选第一个（主用）；面板 failover.fo_loop 按顺序探活后切换
+            o = {"type": "selector", "tag": g["name"], "outbounds": members, "default": members[0], "interrupt_exist_connections": False}
         elif g["type"] == "load-balance" and fork:  # 魔改版：多节点聚合，按策略把连接分摊到组内各节点，自动跳过不健康的节点
             members = lb_members(members, gc.get("_lbd") or {}, max(LB_TOL, int(gc.get("tolerance") or 0)))
             o = {"type": "loadbalance", "tag": g["name"], "outbounds": members,
@@ -5830,7 +6074,7 @@ def sb_rule_need(d):
     dc = dns_cfg(d)
     need = sb_rule_sets({"rule-providers": build_rule_providers(d, dc)[0]}, [])
     need.update(sb_geo_rule_sets(d, dc))
-    return {tag: rsd for tag, rsd in need.items() if rsd["kind"] != "inline"}
+    return {tag: rsd for tag, rsd in need.items() if rsd["kind"] not in ("inline", "switch")}
 
 
 def sb_rule_sets(cfg, warn):
@@ -5847,6 +6091,8 @@ def sb_rule_sets(cfg, warn):
                     k, v = _mh_domain(x)
                     r.setdefault(k, []).append(v)
             rule_sets[name] = {"kind": "inline", "rules": [r] if r else []}
+        elif name.startswith("switch-") and prov.get("type") == "file":  # 切换不断连的开关（本地 source 文件，面板直接写）
+            rule_sets[name] = {"kind": "switch", "path": name + ".json"}
         elif name.startswith("ad-") and prov.get("type") == "file":  # 广告拦截列表是本地文件；用户的 http 规则集叫 ad-xxx 照常下载
             rule_sets[name] = {"kind": "adblock", "src": os.path.join(AB_DIR, os.path.basename(prov["path"])), "path": name + ".json"}
         else:
@@ -6234,6 +6480,7 @@ def write_sb_config(d, path=None):
     os.makedirs(SB_DIR, exist_ok=True)
     if path is None:
         migrate_ruleset_cache(d)
+    hotswitch.write_flags(d)  # 切换不断连的开关文件（sb_rule_set_defs 只收本地已有的文件）
     conf, warn, _ = build_singbox(d)
     SB_STATE["warn"] = warn
     path = path or SB_CONF
@@ -6992,30 +7239,55 @@ _SRC['shunt.panel_update'] = '''"""面板在线更新"""
 import hashlib, os, re, shlex, shutil, time, urllib.request, urllib.error
 
 from .errlog import log_err
-from .base import BASE, PANEL_VERSION, UA, UPD_STATE, dl_check, local_file, upd_begin, upd_busy_msg
-from .core_update import gh_api, GhRateLimit
+from .base import BASE, PANEL_VERSION, UA, UPD_STATE, dl_check, local_file, read_full, upd_begin, upd_busy_msg
+from .core_update import gh_api, GhRateLimit, open_url
 from .sysopt import proxy_opener, sh
 from .https import restart_self
 from .update_guard import start_update_guard
 PANEL_RAW = os.environ.get("PANEL_RAW", "https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt")
 CHANNELS = ("stable", "preview")  # 更新通道：正式版（PANEL_RAW 分支）/ 预览版（同仓库「<分支>-preview」分支，由 tools/publish.sh --preview 发布）
-CHANNEL = {"v": "stable"}  # 本次检查 / 更新所用的通道（self_update 开头按 data.json 的 update_channel 设置）
+CHANNEL = {"v": "stable"}  # panel_raw() 不带参数时的默认通道（兼容旧调用）；self_update 按参数传通道，不再改这个全局值（以前出错后会一直停在预览）
+SUMS_FILE = "SHA256SUMS"  # v9.2.2：tools/publish.sh 在发布分支里生成的 SHA-256 清单，GitHub API 限流 / 不通时用它校验
+RAW_HOST = "https://raw.githubusercontent.com/"
+PU_MAX = 4 << 20  # 单个面板文件的上限（server.py 约 1 MB）
 
 
-def panel_raw():
-    """当前通道的面板文件地址：预览版是正式版分支名加 -preview"""
-    return PANEL_RAW.rstrip("/") + ("-preview" if CHANNEL["v"] == "preview" else "")
+def pu_read(r, limit):
+    """读完整个响应：连接中途断开（没收满 Content-Length）或超过上限时抛 IOError。
+    v9.2.4：以前 r.read(limit) 遇到这两种情况都静默返回前半截，「未校验」更新时半截的 tproxy.sh / 图标照样被装上"""
+    data = read_full(r, limit + 1)
+    if len(data) > limit:
+        raise IOError(f"文件超过 {limit >> 20} MB 上限")
+    return data
+
+
+def panel_raw(channel=None):
+    """某个通道的面板文件地址（分支目录）：预览版是正式版分支名加 -preview（已经以 -preview 结尾时不再重复加）"""
+    ch = CHANNEL["v"] if channel is None else channel
+    base = PANEL_RAW.strip().rstrip("/")
+    if ch == "preview" and not base.endswith("-preview"):
+        base += "-preview"
+    return base
+
+
+def raw_parts(raw):
+    """拆出 (加速前缀, 仓库, 分支)：PANEL_RAW 可以是 https://ghfast.top/https://raw.githubusercontent.com/o/r/br 这种带加速前缀的写法；
+    不是 raw.githubusercontent.com 地址（自建镜像等）时返回 ("", "", "")"""
+    m = re.match(r"^(.*?)https://raw\\.githubusercontent\\.com/([\\w.\\-]+/[\\w.\\-]+)/(.+?)/*$", raw or "")
+    if not m:
+        return "", "", ""
+    return m.group(1), m.group(2), m.group(3)
 
 
 UPD_FILES = ["server.py", "index.html", "tproxy.sh", "selftest.sh", "init.d/shunt", "init.d/shunt-core"]
 UPD_LIST = "update-files.txt"  # 仓库里的部署文件清单：以后增减文件只改清单，不用再改更新程序
 
 
-def remote_file_list(gh, commit, shas):
-    """读取仓库里的部署文件清单（必须通过 GitHub 校验）；没有或拿不到校验值时用内置列表"""
+def remote_file_list(gh, commit, shas, algo="git", raw=None):
+    """读取仓库里的部署文件清单（必须通过校验：GitHub 的 blob SHA1 或 SHA256SUMS）；没有或拿不到校验值时用内置列表"""
     if not shas or UPD_LIST not in shas:
         return list(UPD_FILES)
-    raw = fetch_raw(UPD_LIST, gh, commit, shas[UPD_LIST]).decode("utf-8", "replace")
+    raw = fetch_raw(UPD_LIST, gh, commit, shas[UPD_LIST], algo=algo, raw=raw).decode("utf-8", "replace")
     out = []
     for ln in raw.splitlines():
         f = ln.split("#", 1)[0].strip()
@@ -7024,7 +7296,7 @@ def remote_file_list(gh, commit, shas):
         if not re.fullmatch(r"[\\w.\\-]+(/[\\w.\\-]+)*", f) or ".." in f.split("/") or f.startswith("."):
             raise ValueError(f"部署清单里有不安全的路径：{f}")
         if f not in shas:
-            raise ValueError(f"部署清单里的 {f} 在仓库中不存在")
+            raise ValueError(f"部署清单里的 {f} 在仓库中不存在" + ("（SHA256SUMS 里没有它）" if algo == "sha256" else ""))
         out.append(f)
     for need in ("server.py", "index.html"):
         if need not in out:
@@ -7032,30 +7304,136 @@ def remote_file_list(gh, commit, shas):
     return out
 
 
-def panel_manifest():
-    """返回 (commit, {路径: git blob sha1})；失败返回 (None, {})"""
-    m = re.match(r"https://raw\\.githubusercontent\\.com/([^/]+/[^/]+)/(.+?)/?$", panel_raw())
-    if not m:
+def unverified_list(gh, raw):
+    """拿不到任何校验值时的文件清单：照样读分支里的 update-files.txt（只从 GitHub 直接下载），路径安全检查不变；读不到再用内置列表"""
+    try:
+        txt = fetch_raw(UPD_LIST, gh, None, None, raw=raw).decode("utf-8", "replace")
+    except Exception:
+        return list(UPD_FILES)
+    out = []
+    for ln in txt.splitlines():
+        f = ln.split("#", 1)[0].strip()
+        if f and re.fullmatch(r"[\\w.\\-]+(/[\\w.\\-]+)*", f) and ".." not in f.split("/") and not f.startswith(".") and f not in out:
+            out.append(f)
+    return out if "server.py" in out and "index.html" in out else list(UPD_FILES)
+
+
+def pu_is_404(e):
+    """每条线路都是 404（不是网络不通）才算「不存在」"""
+    parts = [x for x in re.split(r"[；;]", str(e)) if x.strip()]
+    return bool(parts) and all("404" in x for x in parts)
+
+
+def pu_net_reason(what, e):
+    """把 open_url 的「线路: 错误；线路: 错误」整理成一句话，代理 / 直连分别说明"""
+    if isinstance(e, GhRateLimit):
+        return str(e)
+    t = str(e).strip()
+    return f"{what}失败（{t[:300]}）" if t else f"{what}失败"
+
+
+def panel_manifest(channel=None, errs=None):
+    """经 GitHub API 取分支最新提交和文件校验值：返回 (commit, {路径: git blob sha1})；失败返回 (None, {})，原因追加到 errs"""
+    raw = panel_raw(channel)
+    _, repo, br = raw_parts(raw)
+    if not repo:
+        if errs is not None:
+            errs.append(f"更新地址 PANEL_RAW（{raw}）不是 raw.githubusercontent.com 地址，无法向 GitHub 取校验值")
         return None, {}
     try:
-        c = gh_api(f"/repos/{m.group(1)}/commits/{m.group(2)}")
-        t = gh_api(f"/repos/{m.group(1)}/git/trees/{c['commit']['tree']['sha']}?recursive=1")
+        c = gh_api(f"/repos/{repo}/commits/{br}")
+        t = gh_api(f"/repos/{repo}/git/trees/{c['commit']['tree']['sha']}?recursive=1", cache=True)  # 树按哈希寻址、内容不变，可以缓存
         return c["sha"], {x["path"]: x["sha"] for x in t.get("tree", []) if x.get("type") == "blob"}
     except Exception as e:
-        if not isinstance(e, GhRateLimit):
+        if errs is not None:
+            if pu_is_404(e):
+                errs.append(f"GitHub 上没有分支 {repo}@{br}（API 返回 404）")
+            else:
+                errs.append(pu_net_reason("GitHub API 访问", e))
+        if not isinstance(e, (GhRateLimit, IOError)):  # 限流、网络不通不是面板故障，不记入内部错误
             log_err("获取面板校验值", e)
         return None, {}
+
+
+def pu_get(url, timeout=20):
+    """直接从 GitHub 取（经 mihomo 代理，再直连；绝不走第三方加速镜像：提交号和校验清单必须来自 GitHub 本身）"""
+    with open_url(url + ("&" if "?" in url else "?") + "t=" + str(int(time.time())), "", timeout=timeout) as r:
+        return pu_read(r, 1 << 20)
+
+
+def atom_head(repo, br):
+    """不用 API 取分支最新提交：github.com/<仓库>/commits/<分支>.atom（不占 API 额度）"""
+    feed = pu_get(f"https://github.com/{repo}/commits/{br}.atom", timeout=15).decode("utf-8", "replace")
+    m = re.search(r"Grit::Commit/([0-9a-f]{40})\\b", feed) or re.search(r"/commit/([0-9a-f]{40})\\b", feed)
+    if not m:
+        raise ValueError("提交记录里没有提交号")
+    return m.group(1)
+
+
+def parse_sums(text):
+    """解析 sha256sum 格式（「哈希  路径」，路径前可带 * 或 ./）"""
+    out = {}
+    for ln in text.splitlines():
+        m = re.match(r"^([0-9a-fA-F]{64})\\s+\\*?(?:\\./)?(\\S+)\\s*$", ln)
+        if m:
+            out[m.group(2)] = m.group(1).lower()
+    return out
+
+
+def sums_manifest(channel=None, errs=None):
+    """GitHub API 限流 / 不通时的校验来源：从 commits.atom 取最新提交，再取同一提交里的 SHA256SUMS；
+    atom 也取不到时退一步取分支当前的 SHA256SUMS（文件按分支下载，发布中途被换掉会校验失败而不是装上混合版本）。
+    返回 (commit 或 "", {路径: sha256})；拿不到返回 (None, {})"""
+    raw = panel_raw(channel)
+    _, repo, br = raw_parts(raw)
+    if not repo:
+        return None, {}
+    commit = ""
+    try:
+        commit = atom_head(repo, br)
+    except Exception as e:
+        if errs is not None:
+            errs.append(f"GitHub 上没有分支 {repo}@{br}（提交记录 404）" if pu_is_404(e) else pu_net_reason("读取提交记录（commits.atom）", e))
+    try:
+        sums = parse_sums(pu_get(f"{RAW_HOST}{repo}/{commit or br}/{SUMS_FILE}").decode("utf-8", "replace"))
+    except Exception as e:
+        if errs is not None:
+            errs.append(f"分支里还没有 {SUMS_FILE}（9.2.2 之前的发布没有）" if pu_is_404(e) else pu_net_reason(f"下载 {SUMS_FILE}", e))
+        return None, {}
+    if not sums or UPD_LIST not in sums or "server.py" not in sums:
+        if errs is not None:
+            errs.append(f"{SUMS_FILE} 内容不完整")
+        return None, {}
+    return commit, sums
+
+
+def panel_source(channel, errs):
+    """决定这次更新从哪里取、怎么校验：GitHub API（blob SHA1）→ commits.atom + SHA256SUMS → 不校验（只从 GitHub 直接下载、不走加速镜像）"""
+    commit, shas = panel_manifest(channel, errs)
+    if commit:
+        return commit, shas, "git"
+    commit, sums = sums_manifest(channel, errs)
+    if sums:
+        return commit, sums, "sha256"
+    return "", {}, ""
 
 
 def git_blob_sha(data):
     return hashlib.sha1(b"blob %d\\0" % len(data) + data).hexdigest()
 
 
-def fetch_raw(f, gh, commit=None, sha=None):
-    """下载面板文件。有 GitHub 给的校验值时可以走加速镜像，下载后逐个比对；没有校验值时不走镜像"""
-    base = panel_raw()
-    if commit:
-        base = base.rsplit("/", 1)[0] + "/" + commit
+def fetch_raw(f, gh, commit=None, sha=None, algo="git", raw=None):
+    """下载面板文件。有校验值（GitHub 的 blob SHA1 或 SHA256SUMS 里的 SHA-256）时可以走加速镜像，下载后逐个比对；没有校验值时不走镜像"""
+    raw = raw or panel_raw()
+    pre, repo, br = raw_parts(raw)
+    if repo:
+        base = RAW_HOST + repo + "/" + (commit or br)
+        if pre and sha and not gh:
+            gh = pre  # PANEL_RAW 自带加速前缀：有校验值时照样用它加速
+        if pre and not sha:
+            base = raw if not commit else base  # 不校验时按用户给的地址原样下载（以前的行为）
+    else:
+        base = raw
     url = base + "/" + f
     if not sha:
         gh = ""
@@ -7067,9 +7445,12 @@ def fetch_raw(f, gh, commit=None, sha=None):
             dl_check(u, via_proxy=use_proxy)  # SSRF 防护：直连时校验 DNS，走代理时由代理解析（字面内网 IP 永远拦截）
             req = urllib.request.Request(u + ("&" if "?" in u else "?") + "t=" + str(int(time.time())), headers={"User-Agent": UA})
             with proxy_opener(use_proxy).open(req, timeout=20) as r:
-                data = r.read(4 << 20)
-            if sha and git_blob_sha(data) != sha:
-                raise ValueError("文件校验失败（与 GitHub 上的不一致，可能被加速镜像篡改）")
+                data = pu_read(r, PU_MAX)
+            if sha:
+                got = hashlib.sha256(data).hexdigest() if algo == "sha256" else git_blob_sha(data)
+                if got != sha.lower():
+                    src = "SHA256SUMS" if algo == "sha256" else "GitHub 上的"
+                    raise ValueError(f"文件校验失败（与 {src} 不一致，可能被加速镜像篡改或发布中途更换）")
             return data
         except Exception as e:
             errs.append(f"{u.split('/')[2]}{'(代理)' if use_proxy else '(直连)'}: {str(e)[:120]}")
@@ -7118,27 +7499,45 @@ def self_update(apply=False, gh="", channel="stable"):
     # 只检查不替换时不占用忙标志；真正更新时与内核更新 / 切换 / 回滚互斥（内核替换到一半时重启面板会留下半截二进制）
     if apply and not upd_begin("panel"):
         return False, {"message": upd_busy_msg()}
-    CHANNEL["v"] = channel if channel in CHANNELS else "stable"
+    ch = channel if channel in CHANNELS else "stable"
+    name = "预览版" if ch == "preview" else "正式版"
+    raw = panel_raw(ch)
+    errs = []  # 校验来源拿不到的原因（限流 / 线路不通 / 分支不存在 / 地址不是 GitHub），出错或不校验时如实告诉用户
     try:
         files, changed = {}, []
-        commit, shas = panel_manifest()
-        if not commit and CHANNEL["v"] == "preview":
-            raise ValueError("预览通道暂时没有可用版本（或 GitHub API 受限），可切回正式版")
-        flist = remote_file_list(gh, commit, shas)
-        for f in flist:
-            data = fetch_raw(f, gh, commit, shas.get(f))
-            files[f] = data
-            try:
-                with open(local_file(f), "rb") as fh:
-                    same = fh.read() == data
-            except OSError:
-                same = False
-            if not same:
-                changed.append(f)
+        commit, shas, algo = panel_source(ch, errs)
+        try:
+            flist = remote_file_list(gh, commit, shas, algo or "git", raw) if shas else unverified_list(gh, raw)
+            for f in flist:
+                data = fetch_raw(f, gh, commit, shas.get(f), algo or "git", raw)
+                files[f] = data
+                try:
+                    with open(local_file(f), "rb") as fh:
+                        same = fh.read() == data
+                except OSError:
+                    same = False
+                if not same:
+                    changed.append(f)
+        except Exception as e:
+            why = "；".join(errs)
+            if pu_is_404(e) and (not shas or any("没有分支" in x for x in errs)):
+                msg = f"{name}通道没有可用版本：{raw} 不存在（GitHub 返回 404）"
+            else:
+                msg = f"{name}更新失败：{str(e)[:400]}"
+            if why:
+                msg += "。校验来源：" + why
+            if ch == "preview":
+                msg += "。可稍后重试、切回正式版，或用一键安装命令（PANEL_BRANCH=<分支>-preview）直接装预览版"
+            raise ValueError(msg) from e
+        verify = {"git": "github", "sha256": "sha256sums"}.get(algo, "none")
         info = {"current": PANEL_VERSION, "remote": remote_version(files["server.py"]), "changed": changed,
-                "source": panel_raw(), "channel": CHANNEL["v"], "verified": bool(shas), "commit": (commit or "")[:10]}
+                "source": raw, "channel": ch, "verified": bool(shas), "verify": verify, "commit": (commit or "")[:10]}
+        if not shas:
+            info["warning"] = "未校验：" + ("；".join(errs) or "拿不到校验值") + "（文件只从 GitHub 直接下载，未走加速镜像）"
+        elif algo == "sha256":
+            info["note"] = "GitHub API 不可用（" + "；".join(errs) + "），已改用发布分支里的 SHA256SUMS 校验"
         if not apply:
-            info["message"] = "已是最新" if not changed else f"有 {len(changed)} 个文件可更新"
+            info["message"] = ("已是最新" if not changed else f"有 {len(changed)} 个文件可更新") + ("（未校验）" if not shas else "")
             return True, info
         if not changed:
             info["message"] = "已是最新，无需更新"
@@ -7194,7 +7593,8 @@ def self_update(apply=False, gh="", channel="stable"):
         shutil.rmtree(tmpd, ignore_errors=True)
         start_update_guard(flist)
         restart_self()
-        info["message"] = (f"已更新 {len(changed)} 个文件（{'、'.join(changed)}）" + ("，已通过 GitHub 校验" if shas else "")
+        info["message"] = (f"已更新 {len(changed)} 个文件（{'、'.join(changed)}）"
+                           + ({"git": "，已通过 GitHub 校验", "sha256": "，已通过 SHA256SUMS 校验"}.get(algo, "，「未校验」：" + "；".join(errs)))
                            + "，面板正在重启；新版启动失败会在 90 秒内自动回滚")
         return True, info
     except Exception as e:
@@ -7657,7 +8057,8 @@ def core_arch():
     m = os.uname().machine
     if m == "x86_64":
         try:  # 支持 AVX2 等 x86-64-v3 指令集的 CPU 用 v3 版本更快，否则用兼容版
-            flags = open("/proc/cpuinfo").read()
+            with open("/proc/cpuinfo") as f:
+                flags = f.read()
             if all(f in flags for f in (" avx2", " bmi2", " fma", " movbe")):
                 return "amd64-v3"
         except OSError:
@@ -7682,6 +8083,7 @@ def open_url(url, gh, timeout=20, headers=None):
     tries += [(url, True), (url, False)]
     errs = []
     for u, use_proxy in tries:
+        eff_proxy = False
         try:
             eff_proxy = use_proxy and core_alive()
             dl_check(u, via_proxy=eff_proxy)  # SSRF 防护：直连时校验 DNS，走代理时由代理解析（字面内网 IP 永远拦截）
@@ -7691,8 +8093,20 @@ def open_url(url, gh, timeout=20, headers=None):
             req = urllib.request.Request(u, headers=hd)
             return proxy_opener(eff_proxy).open(req, timeout=timeout)
         except Exception as e:
-            errs.append(f"{u.split('/')[2]}{'(代理)' if use_proxy else ''}: {str(e)[:120]}")
+            route = "(代理)" if eff_proxy else ("(核心未运行，直连)" if use_proxy else "(直连)")  # 每条线路标清楚，便于判断是代理还是直连不通
+            errs.append(f"{u.split('/')[2]}{route}: {gh_err_text(e)[:160]}")
     raise IOError("；".join(errs))  # 每种方式的错误都保留：只看最后一次直连的错误容易误判原因
+
+
+def gh_err_text(e):
+    """HTTP 错误的文字：GitHub API 限流时 403 的原因短语不一定写 rate limit（HTTP/2 没有原因短语、新版返回 429），
+    按 x-ratelimit-remaining: 0 / 429 认出来，并带上恢复时间（x-ratelimit-reset），gh_get 据此算准限流时长"""
+    if isinstance(e, urllib.error.HTTPError) and e.code in (403, 429):
+        h = e.headers or {}
+        if e.code == 429 or str(h.get("x-ratelimit-remaining", "")).strip() == "0":
+            reset = str(h.get("x-ratelimit-reset", "")).strip()
+            return f"HTTP Error {e.code}: rate limit exceeded" + (f" (reset={reset})" if reset.isdigit() else "")
+    return str(e)
 
 
 class GhRateLimit(IOError):
@@ -7754,9 +8168,13 @@ def gh_get(url, timeout=15, cache=True, opener=None):
             j = json.loads(r.read(8 << 20))
     except IOError as e:
         low = str(e).lower()
-        if "rate limit" in low:
-            GH_RL["until"] = time.time() + GH_RL_WAIT
-            raise GhRateLimit(_rl_msg(GH_RL_WAIT // 60, tok)) from e
+        if "rate limit" in low or "http error 429" in low:
+            wait = GH_RL_WAIT
+            resets = [int(x) for x in re.findall(r"reset=(\\d+)", low)]
+            if resets:  # GitHub 给了恢复时间：按它算（至少 1 分钟、最多 1 小时），提示的分钟数也准
+                wait = min(3600, max(60, min(resets) - int(time.time())))
+            GH_RL["until"] = time.time() + wait
+            raise GhRateLimit(_rl_msg(max(1, (wait + 59) // 60), tok)) from e
         if tok and "http error 401" in low:
             raise IOError("GitHub Token 无效或已过期（HTTP 401），请在「面板更新」里重新填写或清空") from e
         raise
@@ -8483,6 +8901,84 @@ def net_ifaces():
         return []
 
 
+# 不做 RPS 的虚拟网卡：容器 / 虚拟化网桥、隧道、TUN（TUN / WireGuard 的 type 不是 1，也会被下面的 type 判断排除）
+_RPS_SKIP = re.compile(r"^(lo$|docker|br-|veth|virbr|vmbr|cni|flannel|cali|kube|vxlan|genev|tun|tap|utun|wg|tailscale|zt|Meta$|mihomo|"
+                       r"sing|warp|dummy|ifb|gre|erspan|sit|ip6tnl|ip6gre|ip_vti|ip6_vti|nlmon|bond)")
+
+
+def route_ifaces():
+    """IPv4 默认路由走的网卡（/proc/net/route 里目的 00000000 的行）"""
+    out = []
+    for ln in rfile(os.path.join(PROC, "net", "route")).splitlines()[1:]:
+        f = ln.split()
+        if len(f) > 2 and f[1] == "00000000" and f[0] not in out:
+            out.append(f[0])
+    return out
+
+
+def rps_ifaces():
+    """要做 RPS 的网卡。有物理网卡（有 device 链接）时与以前一样只取物理网卡；
+    没有时（LXC / Docker 容器里网卡是 veth，没有 device 链接）取真正承载流量的以太网卡：默认路由网卡 +
+    其余 UP 的以太网卡（透明代理的局域网口），排除 lo / docker / 网桥 / TUN / WireGuard 等虚拟网卡。
+    v9.2.0 及以前只认物理网卡，容器里一律显示「未找到物理网卡」，其实容器自己网络命名空间里的 veth 也能做 RPS"""
+    phys = net_ifaces()
+    if phys:
+        return phys
+    base = os.path.join(SYS_ROOT, "class", "net")
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return []
+    deflt = route_ifaces()
+    out = []
+    for n in names:
+        if _RPS_SKIP.match(n) or rfile(os.path.join(base, n, "type")) != "1":
+            continue
+        if not glob_paths(os.path.join(base, n, "queues", "rx-*", "rps_cpus")):
+            continue
+        if n in deflt or rfile(os.path.join(base, n, "operstate")) in ("up", "unknown"):
+            out.append(n)
+    return sorted(out, key=lambda n: (n not in deflt, n))
+
+
+def rps_queues(ifaces=None):
+    """网卡的 rx 队列目录（含 rps_cpus 的）"""
+    out = []
+    for ifc in rps_ifaces() if ifaces is None else ifaces:
+        out += sorted(os.path.dirname(q) for q in glob_paths(os.path.join(SYS_ROOT, "class/net", ifc, "queues/rx-*/rps_cpus")))
+    return out
+
+
+def cpu_list():
+    """本进程可用的 CPU（容器按 cpuset 限制后的核心；裸机就是全部核心）"""
+    try:
+        cpus = sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpus = []
+    return cpus or list(range(os.cpu_count() or 1))
+
+
+def cpu_mask(cpus=None):
+    """RPS 掩码：十六进制，每 32 位用逗号分组（内核要求；32 核以内与以前的写法完全相同）"""
+    bits = 0
+    for c in cpu_list() if cpus is None else cpus:
+        bits |= 1 << c
+    parts = []
+    while True:
+        parts.append(bits & 0xFFFFFFFF)
+        bits >>= 32
+        if not bits:
+            break
+    return ",".join([f"{parts[-1]:x}"] + [f"{p:08x}" for p in reversed(parts[:-1])])
+
+
+def mask_on(path):
+    try:
+        return int(rfile(path, "0").replace(",", "") or "0", 16) != 0
+    except ValueError:
+        return False
+
+
 def cpu_govs():
     return sorted(glob_paths(os.path.join(SYS_ROOT, "devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor")))
 
@@ -8502,6 +8998,21 @@ def in_container():
             v = "docker"
         _CT["v"] = v
     return _CT["v"]
+
+
+def ct_unprivileged():
+    """非特权容器：root 映射到宿主机的普通用户（uid_map 第一行不是 0 0 ...）"""
+    m = rfile(os.path.join(PROC, "self", "uid_map")).split()
+    return len(m) >= 2 and m[0] == "0" and m[1] != "0"
+
+
+CAP_SYS_TIME = 25
+
+
+def has_cap(bit):
+    """当前进程的有效能力集（/proc/self/status 的 CapEff）里有没有这一位"""
+    m = re.search(r"^CapEff:\\s*([0-9a-fA-F]+)", rfile(os.path.join(PROC, "self", "status")), re.M)
+    return bool(m) and bool(int(m.group(1), 16) >> bit & 1)
 
 
 def path_writable(path):
@@ -8543,28 +9054,193 @@ def glob_paths(pat):
     return glob.glob(pat)
 
 
+# ---------------------------------------------------------------- 容器里的时钟偏差（v9.2.1）
+_OFS = {"t": 0.0, "v": None, "src": "", "busy": False, "lock": threading.Lock()}
+NTP_SERVERS = ("ntp.aliyun.com", "time.cloudflare.com")
+DATE_HOSTS = ("www.baidu.com", "www.qq.com")  # 明文 HTTP：时钟偏差大时 HTTPS 证书校验本身就会失败
+
+
+def sntp_offset(server, timeout=1.5, port=123):
+    """SNTP 查询一次，返回本机时钟偏差（毫秒，正数 = 本机慢了）；失败抛 OSError"""
+    import socket, struct
+    pkt = bytearray(48)
+    pkt[0] = 0x23  # LI 0, VN 4, Mode 3（客户端）
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(timeout)
+        t1 = time.time()
+        s.sendto(bytes(pkt), (socket.gethostbyname(server), port))
+        data, _ = s.recvfrom(128)
+        t4 = time.time()
+    if len(data) < 48 or data[1] == 0:  # stratum 0：服务器拒绝（Kiss-o'-Death）
+        raise OSError("bad ntp reply")
+
+    def ts(off):
+        sec, frac = struct.unpack("!II", data[off:off + 8])
+        return sec - 2208988800 + frac / 2 ** 32  # NTP 纪元 1900 → Unix 1970
+    t2, t3 = ts(32), ts(40)
+    return round(((t2 - t1) + (t3 - t4)) / 2 * 1000)
+
+
+def http_date_offset(host, timeout=2.0):
+    """HTTP Date 头估算偏差（精度约 ±1 秒，NTP 被拦时兜底）"""
+    from email.utils import parsedate_to_datetime
+    c = http.client.HTTPConnection(host, 80, timeout=timeout)
+    try:
+        t1 = time.time()
+        c.request("HEAD", "/", headers={"User-Agent": UA})
+        r = c.getresponse()
+        t4 = time.time()
+        date = r.getheader("Date")
+    finally:
+        c.close()
+    if not date:
+        raise OSError("no Date header")
+    return round((parsedate_to_datetime(date).timestamp() + 0.5 - (t1 + t4) / 2) * 1000)
+
+
+def _measure_offset():
+    for s in NTP_SERVERS:
+        try:
+            return sntp_offset(s), "NTP " + s
+        except (OSError, ValueError):
+            continue
+    for h in DATE_HOSTS:
+        try:
+            return http_date_offset(h), "HTTP " + h
+        except (OSError, ValueError, TypeError, http.client.HTTPException):
+            continue
+    return None, ""
+
+
+def clock_offset(wait=2.5):
+    """(偏差毫秒或 None, 来源, 是否还在测)。成功结果缓存 10 分钟、失败 2 分钟；后台线程测量、最多等 wait 秒，
+    打开设置页不会因为 NTP 被拦而卡住。离线（测试）模式不联网"""
+    if os.environ.get("PANEL_OFFLINE"):
+        return None, "", False
+    o = _OFS
+    th = None
+    with o["lock"]:
+        fresh = o["t"] and time.time() - o["t"] < (600 if o["v"] is not None else 120)
+        if not fresh and not o["busy"]:
+            o["busy"] = True
+
+            def run():
+                try:
+                    v, src = _measure_offset()
+                except Exception:
+                    v, src = None, ""
+                with o["lock"]:
+                    o.update(v=v, src=src, t=time.time(), busy=False)
+            th = threading.Thread(target=run, daemon=True)
+            th.start()
+    if th is not None:
+        th.join(wait)
+    with o["lock"]:
+        return o["v"], o["src"], o["busy"]
+
+
+def offset_text(ms):
+    a = abs(ms)
+    sign = "+" if ms >= 0 else "-"
+    s = f"{sign}{a} ms" if a < 10000 else f"{sign}{a / 1000:.1f} 秒"
+    if a < 1000:
+        return s + "（正常）"
+    if a < 30000:
+        return s + "（偏差偏大，建议在宿主机上校时）"
+    return s + "（偏差过大：TLS 握手会失败，必须在宿主机上校时）"
+
+
+# ---------------------------------------------------------------- 宿主机命令（容器里改不了的项给出可复制的命令）
+def _host_name(ct):
+    return "PVE 宿主机" if ct == "lxc" else "宿主机"
+
+
+def _host_sysctl(iid, kv):
+    body = "\\n".join(f"{k} = {v}" for k, v in kv.items())
+    f = f"/etc/sysctl.d/98-shunt-{iid}.conf"
+    return f"cat > {f} <<'EOF'\\n{body}\\nEOF\\nsysctl -p {f}"
+
+
+HOST_RPS = ("cat > /usr/local/sbin/shunt-rps.sh <<'EOF'\\n#!/bin/sh\\nM=$(printf %x $(( (1 << $(nproc)) - 1 )))\\n"
+            "for q in /sys/class/net/*/queues/rx-*/rps_cpus; do echo $M > \\"$q\\" 2>/dev/null; done\\nEOF\\n"
+            "chmod +x /usr/local/sbin/shunt-rps.sh && /usr/local/sbin/shunt-rps.sh\\n"
+            "echo '@reboot root /usr/local/sbin/shunt-rps.sh' > /etc/cron.d/shunt-rps")
+HOST_GOV = ("echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor\\n"
+            "echo '@reboot root echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null'"
+            " > /etc/cron.d/cpu-performance")
+HOST_NTP = "apt install -y chrony && systemctl enable --now chrony && chronyc makestep"
+HOST_BBR = "modprobe tcp_bbr && echo tcp_bbr > /etc/modules-load.d/bbr.conf"
+HOST_CONNTRACK = "modprobe nf_conntrack && echo nf_conntrack > /etc/modules-load.d/conntrack.conf"
+
+
+def _host_fd(ct):
+    if ct == "lxc":
+        return ("# 在 PVE 宿主机上：把 <容器ID> 换成这个容器的编号，然后重启容器\\n"
+                "echo 'lxc.prlimit.nofile: 1048576' >> /etc/pve/lxc/<容器ID>.conf\\npct reboot <容器ID>")
+    return "# 重新创建容器时加上：\\ndocker run --ulimit nofile=1048576:1048576 ..."
+
+
+def _ct_ro_why(ct):
+    """容器里 /sys 写不进去的原因"""
+    if ct == "lxc":
+        return "非特权容器的 /sys 只读" if ct_unprivileged() else "容器的 /sys 以只读方式挂载"
+    if ct == "docker":
+        return "Docker 容器的 /sys 只读（没加 --privileged）"
+    return "/sys 只读"
+
+
 def opt_items():
-    """按内存 / CPU 计算推荐值。每项：id、名称、说明、sysctl 目标值、是否支持"""
-    mem, ncpu = mem_mb(), os.cpu_count() or 1
+    """按内存 / CPU 计算推荐值。每项：id、名称、说明、sysctl 目标值、是否支持。
+    容器里改不了、要在宿主机上做的项：ok=False 且 host=True，host_cmd 是可复制到宿主机执行的命令（不算错误）"""
+    mem = mem_mb()
+    ncpu = len(cpu_list())
     buf = 16 << 20 if mem >= 1024 else 8 << 20  # quic-go（Hysteria2 / TUIC）建议 UDP 缓冲 ≥7.5MB
     ct = max(32768, min(262144, mem * 256))
     bbr_ok = "bbr" in (rsys("net.ipv4.tcp_available_congestion_control") or "") or os.path.exists(
         f"/lib/modules/{os.uname().release}/kernel/net/ipv4/tcp_bbr.ko") or bool(
         glob_paths(f"/lib/modules/{os.uname().release}/kernel/net/ipv4/tcp_bbr.ko*"))
-    govs = cpu_govs()
-    gov_ok = bool(govs) and "performance" in rfile(os.path.join(os.path.dirname(govs[0]), "scaling_available_governors")) if govs else False
     ct_name = in_container()
     if ct_name:  # 容器里没有自己的内核：模块要在宿主机上加载
         bbr_ok = "bbr" in (rsys("net.ipv4.tcp_available_congestion_control") or "")
-    gov_ok = gov_ok and path_writable(govs[0])
+    host = _host_name(ct_name)
+    # CPU 调频：容器里 /sys/devices/system/cpu 往往看得见但只读；特权容器挂了可写的 /sys 时照样能开
+    govs = cpu_govs()
+    gov_avail = bool(govs) and "performance" in rfile(os.path.join(os.path.dirname(govs[0]), "scaling_available_governors"))
+    gov_ok = gov_avail and path_writable(govs[0])
     nof = nofile_target()
-    rpsq = [q for q in glob_paths(os.path.join(SYS_ROOT, "class/net/*/queues/rx-*/rps_cpus"))
-            if q.split("/class/net/")[1].split("/")[0] in net_ifaces()]
-    rps_ok = ncpu > 1 and bool(rpsq) and path_writable(rpsq[0])
-    host = "宿主机" + ("（PVE / LXC）" if ct_name == "lxc" else "")
+    # RPS：先挑网卡，再逐个队列试写（把当前值原样写回）
+    queues = rps_queues()
+    rps_w = [q for q in queues if path_writable(os.path.join(q, "rps_cpus"))]
+    rps_ok = ncpu > 1 and bool(rps_w)
+    if ncpu <= 1:
+        rps_why = "单核 CPU 无需开启"
+    elif not queues:
+        rps_why = f"容器里看不到网卡的 RPS 参数，请在{host}上对网桥 / 物理网卡开启（命令见下）" if ct_name else "未找到物理网卡"
+    elif ct_name:
+        rps_why = (f"{_ct_ro_why(ct_name)}，网卡 RPS 参数写不进去：请在{host}上对网桥 / 物理网卡开启（效果相同，命令见下），"
+                   "或给容器可写的 /sys（特权容器 lxc.mount.auto: sys:rw）")
+    else:
+        rps_why = "网卡参数只读"
+    ntp_ok = not ct_name or has_cap(CAP_SYS_TIME)
+    if ntp_ok:
+        ntp_why = ""
+    elif ct_name == "lxc":
+        ntp_why = "容器没有 CAP_SYS_TIME（PVE 默认 lxc.cap.drop: sys_time），和宿主机共用系统时钟，由宿主机校时"
+    else:
+        ntp_why = "容器没有 CAP_SYS_TIME（Docker 需 --cap-add SYS_TIME），和宿主机共用系统时钟，由宿主机校时"
+    if gov_ok:
+        gov_why = ""
+    elif ct_name:
+        gov_why = (f"CPU 调频由{host}控制（{_ct_ro_why(ct_name)}）" if gov_avail else
+                   f"CPU 调频由{host}控制（宿主机没有 performance 模式）" if govs else
+                   f"容器里看不到 CPU 调频，由{host}控制（宿主机可能没有调频驱动或已固定频率）")
+    else:
+        gov_why = "调频参数只读" if gov_avail else "CPU 不支持调频或没有 performance 模式"
+    ct_host = bool(ct_name)
     items = [
         {"id": "bbr", "name": "BBR 拥塞控制", "rec": True, "ok": bbr_ok,
-         "why": "" if bbr_ok else f"宿主机内核未加载 tcp_bbr，请在{host}上执行 modprobe tcp_bbr" if ct_name else "内核没有 tcp_bbr 模块",
+         "why": "" if bbr_ok else f"宿主机内核未加载 tcp_bbr，请在{host}上加载" if ct_name else "内核没有 tcp_bbr 模块",
+         "host": ct_host and not bbr_ok, "host_cmd": HOST_BBR if ct_host and not bbr_ok else "",
          "desc": "TCP 改用 BBR + fq 队列，丢包或长距离线路下的下载速度明显更高",
          "sysctl": {"net.core.default_qdisc": "fq", "net.ipv4.tcp_congestion_control": "bbr"}},
         {"id": "buf", "name": "网络缓冲区", "rec": True, "ok": True,
@@ -8579,21 +9255,26 @@ def opt_items():
                     "net.ipv4.tcp_tw_reuse": 1, "net.ipv4.tcp_fin_timeout": 15, "net.ipv4.ip_local_port_range": "10000 65535",
                     "net.ipv4.tcp_keepalive_time": 600, "net.ipv4.tcp_notsent_lowat": 131072}},
         {"id": "conntrack", "name": "连接跟踪表", "rec": True, "ok": rsys("net.netfilter.nf_conntrack_max") is not None,
-         "why": "nf_conntrack 未加载", "desc": f"连接数上限提高到 {ct}，已建立连接的超时从 5 天缩短到 2 小时，避免设备多时连接表被占满导致断流",
+         "why": f"nf_conntrack 未加载，请在{host}上加载" if ct_name else "nf_conntrack 未加载",
+         "host": ct_host, "host_cmd": HOST_CONNTRACK if ct_host else "",
+         "desc": f"连接数上限提高到 {ct}，已建立连接的超时从 5 天缩短到 2 小时，避免设备多时连接表被占满导致断流",
          "sysctl": {"net.netfilter.nf_conntrack_max": ct, "net.netfilter.nf_conntrack_tcp_timeout_established": 7200,
                     "net.netfilter.nf_conntrack_udp_timeout": 60, "net.netfilter.nf_conntrack_udp_timeout_stream": 180}},
-        {"id": "fd", "name": "文件句柄上限", "rec": True, "ok": nof > 1024, "why": "本机文件句柄硬上限只有 1024，需在宿主机上调高",
+        {"id": "fd", "name": "文件句柄上限", "rec": True, "ok": nof > 1024,
+         "why": f"本机文件句柄硬上限只有 1024，需在{host}上调高",
+         "host": ct_host, "host_cmd": _host_fd(ct_name) if ct_host else "",
          "desc": f"核心可同时打开的连接数固定为 {nof}，并提高系统总句柄数，设备多或 BT 下载时不再报 too many open files（下次重启核心生效）。"
                  "未开启时启动脚本也会按本机硬上限给核心兜底，不会停在 1024",
          "sysctl": {"fs.file-max": 1048576, "fs.nr_open": 1048576}},
-        {"id": "rps", "name": "多核网络分流 (RPS)", "rec": ncpu > 1, "ok": rps_ok,
-         "why": "单核 CPU 无需开启" if ncpu <= 1 else "未找到物理网卡" if not rpsq else f"网卡参数只读，请在{host}上设置",
-         "desc": f"把网卡收包分摊到全部 {ncpu} 个 CPU 核心，单队列网卡（树莓派、多数 ARM 盒子、虚拟机）满速时不再单核 100%",
-         "sysctl": {"net.core.rps_sock_flow_entries": 32768}},
-        {"id": "gov", "name": "CPU 性能模式", "rec": False, "ok": gov_ok,
-         "why": f"CPU 调频由{host}控制" if govs and ct_name else "CPU 不支持调频或没有 performance 模式",
+        {"id": "rps", "name": "多核网络分流 (RPS)", "rec": ncpu > 1, "ok": rps_ok, "why": rps_why,
+         "host": ct_host and ncpu > 1 and not rps_ok, "host_cmd": HOST_RPS if ct_host and ncpu > 1 and not rps_ok else "",
+         "desc": f"把网卡收包分摊到全部 {ncpu} 个 CPU 核心，单队列网卡（树莓派、多数 ARM 盒子、虚拟机、容器的 veth）满速时不再单核 100%",
+         "queues": rps_w, "sysctl": {"net.core.rps_sock_flow_entries": 32768}},
+        {"id": "gov", "name": "CPU 性能模式", "rec": False, "ok": gov_ok, "why": gov_why,
+         "host": ct_host and not gov_ok, "host_cmd": HOST_GOV if ct_host and not gov_ok else "",
          "desc": "CPU 一直跑在最高频率，延迟更低更稳定；功耗和发热会增加，散热差的设备慎开", "sysctl": {}},
-        {"id": "ntp", "name": "时间同步", "rec": True, "ok": not ct_name, "why": "容器和宿主机共用系统时钟，请在宿主机上校时",
+        {"id": "ntp", "name": "时间同步", "rec": True, "ok": ntp_ok, "why": ntp_why,
+         "host": not ntp_ok, "host_cmd": HOST_NTP if not ntp_ok else "",
          "desc": "安装并开机启动 chrony 自动校时。系统时间不准会导致 TLS 握手失败、VMess / Trojan 等节点全部不可用",
          "sysctl": {}},
     ]
@@ -8604,9 +9285,15 @@ def opt_items():
         w = {k: v for k, v in allk.items() if sys_writable(k)}
         it["skipped"] = [k for k in allk if k not in w]
         it["sysctl"] = w
-        if not w and it["id"] != "fd":
+        if it["skipped"] and ct_name:  # 只读的那部分给出宿主机上的写法（全局参数在宿主机上改了，容器里同样生效）
+            it["host_cmd"] = _host_sysctl(it["id"], {k: allk[k] for k in it["skipped"]})
+        if not w and it["id"] not in ("fd", "rps"):  # 文件句柄（rc_ulimit）、RPS（写网卡队列）不靠 sysctl 也能生效
             it["ok"] = False
+            it["host"] = ct_host
             it["why"] = f"这些内核参数在容器里只读，由{host}决定" if ct_name else "内核参数只读"
+        elif it["skipped"] and it["id"] == "rps":
+            it["part"] = ("RFS 全局流表（net.core.rps_sock_flow_entries）只读" + (f"，由{host}决定" if ct_name else "")
+                          + "，已跳过；RPS 多核分流照常生效")
         elif it["skipped"]:
             it["part"] = f"有 {len(it['skipped'])}/{len(allk)} 个参数只读（{'由' + host + '决定' if ct_name else '内核不允许修改'}），已跳过"
     return items
@@ -8620,6 +9307,7 @@ def opt_status():
     d = load()
     on = set(d.get("sysopt") or [])
     out = []
+    measuring = False
     for it in opt_items():
         cur, hit = {}, 0
         for k, v in it["sysctl"].items():
@@ -8630,14 +9318,13 @@ def opt_status():
         live = bool(it["sysctl"]) and hit == len(it["sysctl"])
         if it["id"] == "fd":
             live = (live or not it["sysctl"]) and f'rc_ulimit="-n {nofile_target()}"' in rfile(OPT_CONFD)
-        elif it["id"] == "rps":
-            live = live and it["ok"] and all(int(rfile(q, "0").replace(",", "") or "0", 16) != 0
-                                            for q in glob_paths(os.path.join(SYS_ROOT, "class/net/*/queues/rx-*/rps_cpus"))
-                                            if q.split("/class/net/")[1].split("/")[0] in net_ifaces())
+        elif it["id"] == "rps":  # RFS 全局参数只读被跳过时（容器）只看网卡队列
+            qs = it.get("queues") or []
+            live = (live or not it["sysctl"]) and it["ok"] and bool(qs) and all(mask_on(os.path.join(q, "rps_cpus")) for q in qs)
         elif it["id"] == "gov":
             live = it["ok"] and all(rfile(g) == "performance" for g in cpu_govs())
         elif it["id"] == "ntp":
-            live = ntp_running()
+            live = it["ok"] and ntp_running()
         show = {}
         if it["id"] == "bbr":
             show = {"当前": rsys("net.ipv4.tcp_congestion_control") or "-", "队列": rsys("net.core.default_qdisc") or "-"}
@@ -8645,12 +9332,33 @@ def opt_status():
             show = {"当前上限": f"{int(rsys('net.core.rmem_max') or 0) >> 10} KB"}
         elif it["id"] == "conntrack":
             show = {"已用 / 上限": f"{rsys('net.netfilter.nf_conntrack_count') or '-'} / {rsys('net.netfilter.nf_conntrack_max') or '-'}"}
-        elif it["id"] == "gov" and it["ok"]:
-            show = {"当前": rfile(cpu_govs()[0])}
+        elif it["id"] == "rps" and it["ok"]:
+            ifs = sorted({q.split("/class/net/")[1].split("/")[0] for q in it.get("queues") or []})
+            show = {"网卡": " ".join(ifs)}
+        elif it["id"] == "gov":
+            govs = cpu_govs()
+            g = rfile(govs[0]) if govs else ""
+            if g:  # 由宿主机控制时也只读地显示当前模式和频率
+                show = {"当前": g}
+                f = rfile(os.path.join(os.path.dirname(govs[0]), "scaling_cur_freq"))
+                if f.isdigit():
+                    show["频率"] = f"{int(f) // 1000} MHz"
+        elif it["id"] == "ntp" and not it["ok"]:  # 容器里不能自己校时：量一下和标准时间差多少
+            ms, src, busy = clock_offset()
+            if ms is not None:
+                show = {"时钟偏差": offset_text(ms)}
+            elif busy:
+                show = {"时钟偏差": "正在测量…"}
+                measuring = True
+            else:
+                show = {"时钟偏差": "测不出（NTP 和 HTTP 都连不上）"}
+            it["offset"] = ms
         out.append({k: it[k] for k in ("id", "name", "desc", "rec", "ok")} | {
             "why": "" if it["ok"] else it.get("why", ""), "enabled": it["id"] in on, "active": live, "show": show,
-            "part": it.get("part", "") if it["ok"] else ""})
-    return {"items": out, "mem": mem_mb(), "cpu": os.cpu_count() or 1, "kernel": os.uname().release, "container": in_container()}
+            "part": it.get("part", "") if it["ok"] else "", "host": bool(it.get("host")) and not it["ok"],
+            "host_cmd": it.get("host_cmd", ""), "offset": it.get("offset")})
+    return {"items": out, "mem": mem_mb(), "cpu": len(cpu_list()), "kernel": os.uname().release, "container": in_container(),
+            "unprivileged": bool(in_container()) and ct_unprivileged(), "measuring": measuring}
 
 
 def opt_migrate_confd(on=None):
@@ -8684,16 +9392,21 @@ def opt_fix_ulimit():
         wfile(OPT_CONFD, txt.replace(m.group(0), f'rc_ulimit="-n {nofile_target()}"') + ("" if txt.endswith("\\n") else "\\n"))
 
 
-def _opt_locald(on):
-    """开机脚本：RPS 与 CPU 调频不是 sysctl，由 /etc/local.d 在每次启动时重新写入"""
+def _opt_locald(on, rps_ifs=None):
+    """开机脚本：RPS 与 CPU 调频不是 sysctl，由 /etc/local.d 在每次启动时重新写入。
+    rps_ifs：没有物理网卡（容器的 veth）时要写的网卡名；None 表示和以前一样写全部物理网卡"""
     lines = ["#!/bin/sh", "# 由 Shunt 面板生成：系统优化（开机执行）"]
     if "rps" in on:
-        n = os.cpu_count() or 1
-        lines += [f"MASK={((1 << n) - 1):x}",
-                  "for q in /sys/class/net/*/queues/rx-*; do",
-                  '  i=${q#/sys/class/net/}; i=${i%%/*}; [ -e "/sys/class/net/$i/device" ] || continue',
-                  '  echo $MASK > "$q/rps_cpus" 2>/dev/null; echo 4096 > "$q/rps_flow_cnt" 2>/dev/null',
-                  "done"]
+        lines += [f"MASK={cpu_mask()}"]
+        if rps_ifs:  # 容器：网卡是 veth，没有 device 链接，按名字写（容器重启时 veth 重建，这里重新写入）
+            lines += [f"for q in {' '.join(f'/sys/class/net/{i}/queues/rx-*' for i in rps_ifs if re.fullmatch(r'[A-Za-z0-9_.@-]+', i))}; do",
+                      '  echo $MASK > "$q/rps_cpus" 2>/dev/null; echo 4096 > "$q/rps_flow_cnt" 2>/dev/null',
+                      "done"]
+        else:
+            lines += ["for q in /sys/class/net/*/queues/rx-*; do",
+                      '  i=${q#/sys/class/net/}; i=${i%%/*}; [ -e "/sys/class/net/$i/device" ] || continue',
+                      '  echo $MASK > "$q/rps_cpus" 2>/dev/null; echo 4096 > "$q/rps_flow_cnt" 2>/dev/null',
+                      "done"]
     if "gov" in on:
         lines += ["for g in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do echo performance > \\"$g\\" 2>/dev/null; done"]
     if "bbr" in on:
@@ -8761,18 +9474,19 @@ def opt_apply(ids):
                     f.write(txt + "\\n" if txt else "")
         except OSError as e:
             errs.append(f"写入 {OPT_CONFD} 失败：{e}")
-        # RPS
-        mask = f"{((1 << (os.cpu_count() or 1)) - 1):x}"
-        for ifc in net_ifaces():
-            for q in glob_paths(os.path.join(SYS_ROOT, "class/net", ifc, "queues/rx-*")):
-                key = "rps:" + q
-                if "rps" in want:
-                    orig.setdefault(key, rfile(os.path.join(q, "rps_cpus"), "0"))
-                    if not (wfile(os.path.join(q, "rps_cpus"), mask) and wfile(os.path.join(q, "rps_flow_cnt"), 4096)):
-                        errs.append(f"{ifc} RPS 写入失败")
-                elif "rps" in prev and key in orig:
-                    wfile(os.path.join(q, "rps_cpus"), orig[key])
-                    wfile(os.path.join(q, "rps_flow_cnt"), 0)
+        # RPS：只写试过能写的队列（opt_items 里逐个试写过）；RFS 的 rps_flow_cnt 写不进去不算失败
+        mask = cpu_mask()
+        if "rps" in want:
+            for q in items["rps"].get("queues") or []:
+                orig.setdefault("rps:" + q, rfile(os.path.join(q, "rps_cpus"), "0"))
+                if not wfile(os.path.join(q, "rps_cpus"), mask):
+                    errs.append(f"{q.split('/class/net/')[-1].split('/')[0]} RPS 写入失败")
+                wfile(os.path.join(q, "rps_flow_cnt"), 4096)
+        elif "rps" in prev:  # 按记下的原值恢复（网卡列表可能已经变了，不按当前网卡找）
+            for key in [k for k in orig if k.startswith("rps:")]:
+                q = key[4:]
+                wfile(os.path.join(q, "rps_cpus"), orig[key])
+                wfile(os.path.join(q, "rps_flow_cnt"), 0)
         # CPU 调频
         for g in cpu_govs():
             key = "gov:" + g
@@ -8787,7 +9501,8 @@ def opt_apply(ids):
             if set(want) - {"ntp"}:
                 os.makedirs(os.path.dirname(OPT_LOCALD), exist_ok=True)
                 with open(OPT_LOCALD, "w") as f:
-                    f.write(_opt_locald(set(want)))
+                    f.write(_opt_locald(set(want), None if net_ifaces() else sorted(
+                        {q.split("/class/net/")[1].split("/")[0] for q in items["rps"].get("queues") or []})))
                 os.chmod(OPT_LOCALD, 0o755)
                 sh("rc-update add local default")
             elif os.path.exists(OPT_LOCALD):
@@ -10194,9 +10909,10 @@ def api_post(b):
         return (200 if ok else 500), {"message": "WARP 节点已重新写入" if ok else msg}
     return 400, {"message": "未知操作"}
 '''
-_SRC['shunt.landing'] = '''"""SOCKS5 落地（预览版）：指定国家的出口 IP。
+_SRC['shunt.landing'] = '''"""链式代理 / 落地：指定国家的出口 IP（住宅 / 静态 IP 等）。
 
-每个落地是一个 socks5 手动节点，可选「前置节点」（默认 WARP，也可选其它手动节点、地区竞技组或直连），
+每个落地是一个 socks5 / http / https 手动节点（v9.2.0 起支持 http / https 出口；没写类型的旧数据都是 socks5），
+可选「前置节点」（默认 WARP，也可选其它手动节点、地区竞技组、自定义策略组或直连），
 mihomo 用 dialer-proxy、sing-box 用 detour 做链式代理：设备 → 前置节点 → SOCKS5 落地 → 目标网站。
 落地节点和 WARP 一样直接进 🚀 节点选择 / 🖐️ 手动选择 / 各分流组，不进地区竞技和全局自动。
 检测：每个落地在本机 127.0.0.1:<LD_PORT0+序号> 开一个只走该落地的 mixed 入站，curl 经它查出口 IP / 国家 / 延迟。
@@ -10212,16 +10928,22 @@ DIRECT = "DIRECT"
 _NAME_BAD = re.compile(r"[,:#\\n\\r\\"']")
 
 
-def parse_line(line):
-    """socks5://user:pass@host:port#名称 / host:port:user:pass / host:port → dict；空行返回 None"""
+KINDS = ("socks5", "http", "https")  # 出口协议；socks5 不写进数据（旧数据与旧配置完全不变）
+_SCHEMES = {"socks5": "socks5", "socks5h": "socks5", "socks": "socks5", "http": "http", "https": "https"}
+
+
+def parse_line(line, kind="socks5"):
+    """socks5:// / http:// / https://user:pass@host:port#名称 / host:port:user:pass / host:port → dict；空行返回 None。
+    不带协议头的按 kind（表单里选的出口类型）"""
     s = str(line or "").strip()
     if not s or s.startswith("//"):
         return None
     name = ""
     if "://" in s:
         u = urllib.parse.urlsplit(s)
-        if u.scheme.lower() not in ("socks5", "socks5h", "socks"):
-            raise ValueError(f"只支持 socks5 链接：{s[:60]}")
+        kind = _SCHEMES.get(u.scheme.lower())
+        if not kind:
+            raise ValueError(f"只支持 socks5 / http / https 链接：{s[:60]}")
         try:
             host, port = u.hostname or "", u.port or 0
         except ValueError:
@@ -10234,7 +10956,10 @@ def parse_line(line):
             raise ValueError(f"格式不对：{s[:60]}（应为 socks5://用户:密码@地址:端口 或 地址:端口:用户:密码）")
         host, port = parts[0], parts[1]
         user, pw = (parts[2], parts[3]) if len(parts) == 4 else ("", "")
-    return {"name": name, "server": host, "port": port, "username": user, "password": pw}
+    out = {"name": name, "server": host, "port": port, "username": user, "password": pw}
+    if kind != "socks5":
+        out["type"] = kind
+    return out
 
 
 def clean(b, taken=()):
@@ -10254,12 +10979,36 @@ def clean(b, taken=()):
     if name in taken:
         raise ValueError(f"已有同名节点「{name}」，换个名称")
     via = str(b.get("via") or "").strip() or DIRECT
-    return {"name": name, "server": host, "port": port, "username": str(b.get("username") or "")[:200],
-            "password": str(b.get("password") or "")[:200], "via": via[:80]}
+    kind = str(b.get("type") or "socks5").strip().lower()
+    if kind not in KINDS:
+        raise ValueError("出口类型只能是 socks5 / http / https")
+    out = {"name": name, "server": host, "port": port, "username": str(b.get("username") or "")[:200],
+           "password": str(b.get("password") or "")[:200], "via": via[:80]}
+    if kind != "socks5":  # socks5 不写类型：旧数据、旧配置逐字节不变
+        out["type"] = kind
+        if kind == "https":
+            sni = str(b.get("sni") or "").strip()[:253]
+            if sni and any(c in sni for c in " /\\\\@,#"):
+                raise ValueError("SNI 不对")
+            if sni:
+                out["sni"] = sni
+            if b.get("insecure"):
+                out["insecure"] = True
+    return out
 
 
 def node_proxy(x):
-    p = {"name": x["name"], "type": "socks5", "server": x["server"], "port": x["port"], "udp": True}
+    kind = x.get("type") or "socks5"
+    if kind == "socks5":
+        p = {"name": x["name"], "type": "socks5", "server": x["server"], "port": x["port"], "udp": True}
+    else:  # http / https 出口（HTTP CONNECT 只有 TCP，不写 udp）
+        p = {"name": x["name"], "type": "http", "server": x["server"], "port": x["port"]}
+        if kind == "https":
+            p["tls"] = True
+            if x.get("sni"):
+                p["sni"] = x["sni"]
+            if x.get("insecure"):
+                p["skip-cert-verify"] = True
     if x.get("username"):
         p["username"], p["password"] = x["username"], x.get("password") or ""
     if x.get("via") and x["via"] != DIRECT:
@@ -10300,6 +11049,11 @@ def via_options(d, cfg=None):
         out += [g["name"] for g in cfg.get("proxy-groups") or [] if g.get("type") in race and g["name"] not in out]
         if G_AUTO not in out and any(g["name"] == G_AUTO for g in cfg.get("proxy-groups") or []):
             out.append(G_AUTO)
+    lands = {x.get("name") for x in d.get("landings") or []}
+    for g in d.get("custom_groups") or []:  # 自定义策略组也能做前置（成员里有链式代理的会成环，不列出）
+        n = (g or {}).get("name")
+        if n and n not in out and not lands & set(g.get("proxies") or []):
+            out.append(n)
     return out
 
 
@@ -10347,6 +11101,10 @@ def view(d):
     out = []
     for x in d.get("landings") or []:
         y = {k: x.get(k) for k in ("name", "server", "port", "username", "via")}
+        y["type"] = x.get("type") or "socks5"
+        if x.get("sni"):
+            y["sni"] = x["sni"]
+        y["insecure"] = bool(x.get("insecure"))
         y["has_password"] = bool(x.get("password"))
         out.append(y)
     return out
@@ -10386,13 +11144,16 @@ def api_post(b):
         if act == "add":
             via = str(b.get("via") or "").strip() or default_via(d)
             items = []
+            kind = str(b.get("type") or "socks5")
             if str(b.get("text") or "").strip():
                 for line in text_lines(str(b["text"])):
-                    x = parse_line(line)
+                    x = parse_line(line, kind)
                     if x:
+                        if kind == "https" and x.get("type") == "https":
+                            x.update(sni=b.get("sni"), insecure=b.get("insecure"))
                         items.append(x)
             else:
-                items.append({k: b.get(k) for k in ("name", "server", "port", "username", "password")})
+                items.append(dict({k: b.get(k) for k in ("name", "server", "port", "username", "password", "sni", "insecure")}, type=kind))
             if not items:
                 return 400, {"message": "没有可添加的落地"}
             taken = _others(d) | {x["name"] for x in cur}
@@ -10417,8 +11178,11 @@ def api_post(b):
             if i < 0:
                 return 404, {"message": "找不到这个落地"}
             x = dict(cur[i])
-            for k in ("name", "server", "port", "username", "via"):
+            for k in ("name", "server", "port", "username", "via", "type"):
                 if b.get(k) not in (None, ""):
+                    x[k] = b[k]
+            for k in ("sni", "insecure"):
+                if k in b:
                     x[k] = b[k]
             if "username" in b and not str(b.get("username") or "").strip():
                 x["username"], x["password"] = "", ""
@@ -10438,12 +11202,163 @@ def api_post(b):
     except ValueError as e:
         return 400, {"message": str(e)}
     names = {y["name"] for y in nl}
+    cg = {g.get("name"): set(g.get("proxies") or []) for g in d.get("custom_groups") or [] if isinstance(g, dict)}
     for y in nl:
         if y["via"] in names:
             return 400, {"message": f"落地「{y['name']}」的前置不能是落地节点"}
+        if y["via"] in cg and cg[y["via"]] & names:  # 前置组里有链式代理节点：链路成环，内核加载失败
+            return 400, {"message": f"链式代理「{y['name']}」的前置组「{y['via']}」里含有链式代理节点，会形成环路"}
     prev = update(lambda d: (d.__setitem__("landings", nl), sync_nodes(d)))
     ok, m = reload_core(prev)
     return (200 if ok else 500), {"message": msg if ok else m}
+'''
+_SRC['shunt.failover'] = '''"""主备故障转移（v9.2.0）：故障转移组勾了「主备优先」后，成员顺序就是优先级——主用不通才切到备用，主用恢复再切回。
+
+- mihomo：本来就是 fallback 组（按成员顺序取第一个健康的），内核自己做，这里什么都不做。
+- sing-box：没有 fallback 出站。以前故障转移组一律降级成 urltest（按延迟选，没有主备之分）。勾了「主备优先」的组
+  生成 selector（默认选第一个成员），由本模块按组的测速间隔经 clash_api 依次探测成员（GET /proxies/<成员>/delay），
+  选第一个通的，和当前选中的不一样才 PUT /proxies/<组> 切换。selector 切换不重启内核、不打断已建立的连接
+  （interrupt_exist_connections: false），之后的新连接走新成员。
+  探测按顺序、找到第一个通的就停：主用正常时每轮只测主用一个，开销和 urltest 差不多。全部不通时保持当前选择。
+"""
+import json, threading, time, urllib.parse
+
+from .errlog import log_err
+
+MIN_IV = 30
+_FO_STATE = {}  # 组名 → {"t": 上次检查, "now": 当前选中, "alive": 选中的成员, "tested": {成员: 毫秒 / 0}, "switched": 时间}
+_FO_LOCK = threading.Lock()
+
+
+def plan(d=None):
+    """[(组名, [成员...], 测速地址, 间隔秒)]：只在 sing-box 下、按正在运行的配置文件里真实存在的 selector 来"""
+    from .data import load, read_json
+    from .groups import gcfg, prio_groups
+    from .sb_common import SB_CONF, active_core
+    d = d or load()
+    if active_core(d) != "singbox":
+        return []
+    prio = prio_groups(d)
+    if not prio:
+        return []
+    cfg = read_json(SB_CONF, None) or {}
+    outs = {o.get("tag"): o for o in cfg.get("outbounds") or [] if isinstance(o, dict)}
+    gc = gcfg(d)
+    out = []
+    for g in d.get("custom_groups") or []:
+        n = g.get("name")
+        o = outs.get(n)
+        if n not in prio or not o or o.get("type") != "selector":
+            continue
+        iv = max(int(g.get("interval") or gc.get("interval") or 60), MIN_IV)
+        out.append((n, list(o.get("outbounds") or []), g.get("url") or gc.get("url"), iv))
+    return out
+
+
+def fo_probe(member, url, timeout_ms=5000):
+    """经 clash_api 测一个成员的延迟；不通返回 0"""
+    from .corehttp import core
+    q = urllib.parse.urlencode({"url": url or "https://www.gstatic.com/generate_204", "timeout": int(timeout_ms)})
+    code, body = core("GET", f"/proxies/{urllib.parse.quote(member, safe='')}/delay?{q}", timeout=timeout_ms / 1000 + 3)
+    if code != 200:
+        return 0
+    try:
+        return int(json.loads(body).get("delay") or 0)
+    except (ValueError, TypeError, AttributeError):
+        return 0
+
+
+def current(name):
+    from .corehttp import core_json
+    j = core_json(f"/proxies/{urllib.parse.quote(name, safe='')}", timeout=5) or {}
+    return j.get("now") or ""
+
+
+def check_group(name, members, url):
+    """按顺序探测，切到第一个通的成员。返回 (是否切换, 选中的成员或 "")"""
+    from .corehttp import core
+    tested, pick = {}, ""
+    for m in members:
+        ms = fo_probe(m, url)
+        tested[m] = ms
+        if ms > 0:
+            pick = m
+            break
+    now = current(name)
+    switched = False
+    if pick and now and pick != now:
+        code, _ = core("PUT", f"/proxies/{urllib.parse.quote(name, safe='')}", {"name": pick}, timeout=5)
+        switched = code < 300
+        if switched:
+            print(time.strftime("%F %T"), f"[failover] {name}：{now} → {pick}" + ("（主用恢复，切回）" if members and pick == members[0] else "（前面的成员不通）"), flush=True)
+            now = pick
+    with _FO_LOCK:
+        st = _FO_STATE.setdefault(name, {})
+        st.update(t=time.time(), now=now, alive=pick, tested=tested)
+        if switched:
+            st["switched"] = time.time()
+    return switched, pick
+
+
+def tick(d=None):
+    """检查到期的组；返回检查过的组名"""
+    from .notify import core_alive
+    from .base import mass_testing
+    groups = plan(d)
+    if not groups or mass_testing() or not core_alive(timeout=3):
+        return []
+    done = []
+    now = time.time()
+    for name, members, url, iv in groups:
+        last = (_FO_STATE.get(name) or {}).get("t") or 0
+        if now - last < iv:
+            continue
+        try:
+            check_group(name, members, url)
+            done.append(name)
+        except Exception as e:
+            log_err("故障转移组探测：" + name, e)
+    return done
+
+
+def fo_loop():
+    time.sleep(20)
+    while True:
+        try:
+            tick()
+        except Exception as e:
+            log_err("故障转移组", e)
+        time.sleep(10)
+
+
+def fo_status():
+    with _FO_LOCK:
+        return {k: dict(v) for k, v in _FO_STATE.items()}
+
+
+def fo_api_get():
+    from .data import load
+    from .sb_common import active_core
+    d = load()
+    groups = plan(d)
+    st = fo_status()
+    return 200, {"core": active_core(d), "groups": [dict(st.get(n) or {}, name=n, members=m, interval=iv) for n, m, _, iv in groups]}
+
+
+def fo_api_post(b):
+    """立即检查一个组（name）或全部"""
+    want = str((b or {}).get("name") or "")
+    groups = [g for g in plan() if not want or g[0] == want]
+    if not groups:
+        return 404, {"message": "没有需要面板切换的主备组（mihomo 下由内核自己切换）"}
+    from .notify import core_alive
+    if not core_alive(timeout=3):
+        return 409, {"message": "核心没在运行"}
+    res = {}
+    for name, members, url, _ in groups:
+        sw, pick = check_group(name, members, url)
+        res[name] = {"switched": sw, "now": pick}
+    return 200, {"results": res, "message": "已检查 " + "、".join(res)}
 '''
 _SRC['shunt.gguard'] = '''"""Google 专用组（预览）：Google / YouTube / Gemini / Play 只走名字里不带中国 / 中转等字样的节点。
 
@@ -14084,7 +14999,8 @@ def diagnose():
         ok, err = check_config(cfg)
         item("配置校验 (mihomo -t)", ok, "通过" if ok else err[-200:], "在设置中撤销最近的修改，或恢复备份")
     try:
-        fwd = open("/proc/sys/net/ipv4/ip_forward").read().strip() == "1"
+        with open("/proc/sys/net/ipv4/ip_forward") as f:
+            fwd = f.read().strip() == "1"
     except OSError:
         fwd = False
     item("IPv4 转发", fwd if mode != "off" else ("warn" if not fwd else True), "已开启" if fwd else "未开启",
@@ -15264,6 +16180,950 @@ def static_file(name):
     STATIC[name] = (key, val)
     return val
 '''
+_SRC['shunt.share'] = '''"""订阅分享（v9.2.0）：选几个节点生成一个订阅链接，由面板按令牌提供，给手机 / 电脑上的客户端直接订阅。
+
+- 每个分享：标题、节点（手动节点或某个订阅里的节点，按名字引用，订阅更新后自动跟上新参数）、令牌（32 位十六进制）、
+  启用 / 停用、可选的访问地址（域名 / IP，留空用打开面板时的地址）和协议前缀（http / https）。
+- 链接 /share/<令牌>：默认返回 base64 分享链接列表（v2rayN / NekoBox / Shadowrocket 等通用）；?format=clash 或客户端 UA
+  是 Clash / mihomo / Stash 时返回 Clash 配置（proxies + 一个选择组）。令牌就是凭据：停用、删除或「换新链接」后旧链接立刻失效。
+- 访问控制与面板相同：默认只允许局域网访问（面板打开了「允许外网访问」才能从外网订阅）；不需要面板密码（客户端带不了），
+  也不检查 Host 白名单（只读、凭令牌）。
+- 二维码在浏览器里生成（web/js/33-qr.js），不连任何外部服务。
+"""
+import base64, json, os, re, secrets, time
+from urllib.parse import quote
+
+from .base import CONF_DIR
+from .data import safe
+from .errlog import log_err
+
+MAX_SHARES = 50
+MAX_NODES = 500
+_TOKEN = re.compile(r"^[0-9a-f]{32}$")
+_SHARE_CACHE = {}  # 订阅名 → (文件签名, [节点])
+
+
+# ---------------------------------------------------------------- 节点来源
+def _sig(path):
+    try:
+        st = os.stat(path)
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
+def _sub_nodes(s):
+    """一个订阅的节点（mihomo 格式的字典）：sing-box 下用面板缓存；否则解析 mihomo 下载的 ./providers/<名>.yaml"""
+    from .groups import sub_cache_path, sub_removed
+    gone = set(sub_removed(s))
+    paths = [sub_cache_path(s["name"]), os.path.join(CONF_DIR, "providers", safe(s["name"]) + ".yaml")]
+    for path in paths:
+        sig = _sig(path)
+        if sig is None:
+            continue
+        hit = _SHARE_CACHE.get(path)
+        if hit and hit[0] == sig:
+            nodes = hit[1]
+        else:
+            try:
+                if path.endswith(".json"):
+                    with open(path) as f:
+                        nodes = (json.load(f) or {}).get("nodes") or []
+                else:
+                    from .sb_subs import parse_sub_text
+                    with open(path, encoding="utf-8", errors="ignore") as f:
+                        nodes = parse_sub_text(f.read())[0]
+            except (OSError, ValueError) as e:
+                log_err("订阅分享：读取订阅节点", e)
+                continue
+            _SHARE_CACHE[path] = (sig, nodes)
+        # v9.2.4：sing-box JSON 订阅的节点只有原样的 sing-box 出站（_sb），没有 server / port，类型名也是 sing-box 的
+        # （shadowsocks、socks…）：以前照样列为可选节点，选了以后 base64 分享里没有它，Clash 配置里写成 type: shadowsocks，
+        # 客户端报 unsupport proxy type 整份加载失败。这类节点分享不了，不再列出
+        nodes = [p for p in nodes if isinstance(p, dict) and not p.get("_sb")]
+        if nodes:
+            return [p for p in nodes if str(p.get("name") or "") not in gone]
+    return []
+
+
+def sub_proxies(d):
+    """{订阅名: [节点字典]}"""
+    return {s["name"]: _sub_nodes(s) for s in d.get("subs") or [] if isinstance(s, dict) and s.get("name")}
+
+
+def share_candidates(d, subs=None):
+    """可选节点：[{sub, name, type}]（手动节点 sub 为空）。subs：已算好的 sub_proxies(d)"""
+    out = [{"sub": "", "name": n["proxy"]["name"], "type": n["proxy"].get("type", "")}
+           for n in d.get("nodes") or [] if isinstance(n, dict) and isinstance(n.get("proxy"), dict) and n["proxy"].get("name")]
+    for sub, lst in (sub_proxies(d) if subs is None else subs).items():
+        out += [{"sub": sub, "name": str(p.get("name")), "type": p.get("type", "")} for p in lst]
+    return out
+
+
+def resolve(d, refs, subs=None):
+    """引用 → 节点字典（找不到的跳过）。subs：已算好的 sub_proxies(d)，一次列出多个分享时共用（以前每个分享都把全部订阅读一遍）"""
+    manual = {n["proxy"]["name"]: n["proxy"] for n in d.get("nodes") or [] if isinstance(n, dict) and isinstance(n.get("proxy"), dict)}
+    index = {}  # 订阅名 → {节点名: 节点}（同名取第一个，与以前逐个查找的结果相同）：以前每个引用都线性扫一遍整个订阅
+    out = []
+    for r in refs or []:
+        if not r.get("sub"):
+            p = manual.get(r.get("name"))
+        else:
+            if r["sub"] not in index:
+                if subs is None:
+                    subs = sub_proxies(d)
+                idx = {}
+                for x in subs.get(r["sub"]) or []:
+                    idx.setdefault(str(x.get("name")), x)
+                index[r["sub"]] = idx
+            p = index[r["sub"]].get(r.get("name"))
+        if p:
+            p = dict(p)
+            p.pop("dialer-proxy", None)  # 前置节点只在本机存在，分享出去没有意义
+            out.append(p)
+    return out
+
+
+# ---------------------------------------------------------------- 节点 → 分享链接
+def _qs(pairs):
+    return "&".join(f"{k}={quote(str(v), safe='')}" for k, v in pairs if v not in (None, "", False))
+
+
+def _hostport(p):
+    h = str(p["server"])
+    return (f"[{h}]" if ":" in h else h) + f":{int(p['port'])}"
+
+
+def _tls_q(p, sni_key):
+    q = [("sni", p.get(sni_key) or p.get("sni") or p.get("servername") or "")]
+    if p.get("alpn"):
+        q.append(("alpn", ",".join(p["alpn"]) if isinstance(p["alpn"], list) else p["alpn"]))
+    if p.get("client-fingerprint"):
+        q.append(("fp", p["client-fingerprint"]))
+    if p.get("skip-cert-verify"):
+        q.append(("allowInsecure", 1))
+    return q
+
+
+def _transport_q(p):
+    net = p.get("network") or "tcp"
+    q = []
+    if net == "ws":
+        o = p.get("ws-opts") or {}
+        q += [("type", "httpupgrade" if o.get("v2ray-http-upgrade") else "ws"), ("path", o.get("path") or "/"),
+              ("host", (o.get("headers") or {}).get("Host") or "")]
+    elif net == "grpc":
+        q += [("type", "grpc"), ("serviceName", (p.get("grpc-opts") or {}).get("grpc-service-name") or "")]
+    elif net == "h2":
+        o = p.get("h2-opts") or {}
+        q += [("type", "h2"), ("path", o.get("path") or "/"), ("host", ",".join(o.get("host") or []))]
+    elif net == "http":
+        o = p.get("http-opts") or {}
+        path = o.get("path") or ["/"]
+        q += [("type", "tcp"), ("headerType", "http"), ("path", path[0] if isinstance(path, list) else path),
+              ("host", ",".join((o.get("headers") or {}).get("Host") or []))]
+    else:
+        q.append(("type", "tcp"))
+    return q
+
+
+def to_link(p):
+    """mihomo 节点字典 → 分享链接；不支持的协议（wireguard、http 等）返回 ""。"""
+    t = p.get("type")
+    name = "#" + quote(str(p.get("name") or ""), safe="")
+    try:
+        hp = _hostport(p)
+        if t == "ss":
+            ui = base64.urlsafe_b64encode(f"{p['cipher']}:{p['password']}".encode()).decode().rstrip("=")
+            plug = ""
+            if p.get("plugin") == "obfs":
+                o = p.get("plugin-opts") or {}
+                plug = "?plugin=" + quote(f"obfs-local;obfs={o.get('mode', 'http')};obfs-host={o.get('host', '')}", safe="")
+            elif p.get("plugin") == "v2ray-plugin":
+                o = p.get("plugin-opts") or {}
+                plug = "?plugin=" + quote(f"v2ray-plugin;mode={o.get('mode', 'websocket')};host={o.get('host', '')};path={o.get('path', '/')}"
+                                          + (";tls" if o.get("tls") else ""), safe="")
+            elif p.get("plugin"):
+                return ""
+            return f"ss://{ui}@{hp}{plug}{name}"
+        if t == "vmess":
+            net = p.get("network") or "tcp"
+            j = {"v": "2", "ps": str(p.get("name") or ""), "add": str(p["server"]), "port": str(p["port"]), "id": p["uuid"],
+                 "aid": str(p.get("alterId") or 0), "scy": p.get("cipher") or "auto", "net": net, "type": "none", "host": "", "path": "",
+                 "tls": "tls" if p.get("tls") else "", "sni": p.get("servername") or ""}
+            if net == "ws":
+                o = p.get("ws-opts") or {}
+                j.update(path=o.get("path") or "/", host=(o.get("headers") or {}).get("Host") or "")
+            elif net == "grpc":
+                j["path"] = (p.get("grpc-opts") or {}).get("grpc-service-name") or ""
+            elif net == "h2":
+                o = p.get("h2-opts") or {}
+                j.update(path=o.get("path") or "/", host=",".join(o.get("host") or []))
+            elif net == "http":
+                o = p.get("http-opts") or {}
+                path = o.get("path") or ["/"]
+                j.update(net="tcp", type="http", path=path[0] if isinstance(path, list) else path,
+                         host=",".join((o.get("headers") or {}).get("Host") or []))
+            if p.get("alpn"):
+                j["alpn"] = ",".join(p["alpn"]) if isinstance(p["alpn"], list) else p["alpn"]
+            if p.get("client-fingerprint"):
+                j["fp"] = p["client-fingerprint"]
+            if p.get("skip-cert-verify"):  # v9.2.4：以前漏写，自签证书的 vmess 节点分享后在客户端连不上（vless / trojan 本来就带）
+                j["allowInsecure"] = "1"
+            return "vmess://" + base64.b64encode(json.dumps(j, ensure_ascii=False).encode()).decode()
+        if t == "vless":
+            q = [("encryption", p.get("encryption") or "none")]
+            if p.get("reality-opts"):
+                ro = p["reality-opts"]
+                q += [("security", "reality"), ("pbk", ro.get("public-key") or ""), ("sid", ro.get("short-id") or "")] + _tls_q(p, "servername")
+            elif p.get("tls"):
+                q += [("security", "tls")] + _tls_q(p, "servername")
+            if p.get("flow"):
+                q.append(("flow", p["flow"]))
+            q += _transport_q(p)
+            return f"vless://{quote(str(p['uuid']), safe='')}@{hp}?{_qs(q)}{name}"
+        if t == "trojan":
+            q = [("security", "tls")] + _tls_q(p, "sni") + _transport_q(p)
+            return f"trojan://{quote(str(p['password']), safe='')}@{hp}?{_qs(q)}{name}"
+        if t == "hysteria2":
+            q = _tls_q(p, "sni")
+            if p.get("obfs"):
+                q += [("obfs", p["obfs"]), ("obfs-password", p.get("obfs-password") or "")]
+            if p.get("ports"):
+                q.append(("mport", p["ports"]))
+            return f"hysteria2://{quote(str(p.get('password') or ''), safe='')}@{hp}?{_qs(q)}{name}"
+        if t == "tuic":
+            q = _tls_q(p, "sni") + [("congestion_control", p.get("congestion-controller") or "bbr"),
+                                    ("udp_relay_mode", p.get("udp-relay-mode") or "native")]
+            if p.get("disable-sni"):
+                q.append(("disable_sni", 1))
+            return f"tuic://{quote(str(p.get('uuid') or ''), safe='')}:{quote(str(p.get('password') or ''), safe='')}@{hp}?{_qs(q)}{name}"
+        if t == "anytls":
+            return f"anytls://{quote(str(p.get('password') or ''), safe='')}@{hp}?{_qs(_tls_q(p, 'sni'))}{name}"
+        if t == "hysteria":
+            q = [("upmbps", p.get("up") or ""), ("downmbps", p.get("down") or ""), ("auth", p.get("auth-str") or ""),
+                 ("obfsParam", p.get("obfs") or "")] + _tls_q(p, "sni")
+            return f"hysteria://{hp}?{_qs(q)}{name}"
+        if t == "socks5":
+            ui = ""
+            if p.get("username"):
+                ui = base64.urlsafe_b64encode(f"{p['username']}:{p.get('password') or ''}".encode()).decode().rstrip("=") + "@"
+            return f"socks://{ui}{hp}{name}"
+    except (KeyError, TypeError, ValueError):
+        return ""
+    return ""
+
+
+# ---------------------------------------------------------------- Clash 格式
+def _yv(v):
+    """YAML 标量 / 流式集合：JSON 是 YAML 的子集，字符串一律用 JSON 双引号（中文、emoji、特殊字符都安全）"""
+    return json.dumps(v, ensure_ascii=False)
+
+
+_CLASH_BUILTIN = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL"}
+
+
+def _uniq(name, used):
+    """名字在 used 里已存在时依次加「 2」「 3」…，返回新名字并记入 used"""
+    n, k = name, 2
+    while n in used:
+        n, k = f"{name} {k}", k + 1
+    used.add(n)
+    return n
+
+
+def clash_text(title, proxies):
+    # v9.2.3：mihomo / Clash 不允许重名——两个订阅里同名的节点（如都叫「香港 01」）或节点与选择组同名时整份配置加载失败，
+    # 客户端订阅报 duplicate name。重名的节点依次加「 2」「 3」，选择组名也避开节点名和内置名字
+    used = set(_CLASH_BUILTIN)
+    proxies = [dict(p, name=_uniq(str(p.get("name")), used)) for p in proxies]
+    title = _uniq(title, used)
+    names = [p["name"] for p in proxies]
+    lines = ["# Shunt 订阅分享：" + title.replace("\\n", " "), "proxies:"]
+    lines += ["  - {" + ", ".join(f"{_yv(k)}: {_yv(v)}" for k, v in p.items()) + "}" for p in proxies]
+    lines += ["proxy-groups:", "  - {" + f'"name": {_yv(title)}, "type": "select", "proxies": {_yv(names or ["DIRECT"])}' + "}",
+              "rules:", "  - " + _yv("MATCH," + title)]
+    return "\\n".join(lines) + "\\n"
+
+
+def base64_text(proxies):
+    links = [x for x in (to_link(p) for p in proxies) if x]
+    return base64.b64encode("\\n".join(links).encode()).decode()
+
+
+# ---------------------------------------------------------------- 提供订阅（/share/<令牌>）
+def find(d, token):
+    if not _TOKEN.match(token or ""):
+        return None
+    return next((s for s in d.get("shares") or [] if isinstance(s, dict) and secrets.compare_digest(str(s.get("token") or ""), token)), None)
+
+
+def serve(token, fmt="", ua=""):
+    """→ (状态码, 内容 bytes, Content-Type, 额外响应头)"""
+    from .data import load
+    d = load()
+    s = find(d, token)
+    if not s or not s.get("enabled", True):
+        return 404, b"not found", "text/plain", {}
+    proxies = resolve(d, s.get("nodes"))
+    fmt = (fmt or "").lower()
+    if not fmt:
+        fmt = "clash" if re.search(r"clash|mihomo|stash|meta", ua or "", re.I) else "base64"
+    title = str(s.get("title") or "Shunt")
+    head = {"Content-Disposition": "attachment; filename*=UTF-8''" + quote(title + (".yaml" if fmt == "clash" else ".txt")),
+            "profile-title": "base64:" + base64.b64encode(title.encode()).decode(), "profile-update-interval": "24"}
+    if fmt == "clash":
+        return 200, clash_text(title, proxies).encode(), "text/yaml", head
+    return 200, base64_text(proxies).encode(), "text/plain", head
+
+
+# ---------------------------------------------------------------- 接口（/api/share）
+def _clean_refs(refs):
+    out = []
+    for r in refs if isinstance(refs, list) else []:
+        if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]:
+            x = {"sub": str(r.get("sub") or ""), "name": r["name"][:200]}
+            if x not in out:
+                out.append(x)
+    return out[:MAX_NODES]
+
+
+def _clean(b, old=None):
+    s = dict(old or {})
+    if "title" in b or not old:
+        title = str(b.get("title") or "").strip()[:60]
+        if not title:
+            raise ValueError("请填写标题")
+        s["title"] = title
+    if "nodes" in b or not old:
+        refs = _clean_refs(b.get("nodes"))
+        if not refs:
+            raise ValueError("请至少选择一个节点")
+        s["nodes"] = refs
+    if "host" in b:
+        host = str(b.get("host") or "").strip()
+        if host and not re.fullmatch(r"[A-Za-z0-9.\\-]+(?::\\d{1,5})?|\\[[0-9A-Fa-f:.]+\\](?::\\d{1,5})?", host):
+            raise ValueError("访问地址只能是域名或 IP（可带 :端口）")
+        s["host"] = host
+    if "scheme" in b:
+        s["scheme"] = "https" if b.get("scheme") == "https" else "http"
+    s.setdefault("host", "")
+    s.setdefault("scheme", "http")
+    s.setdefault("enabled", True)
+    return s
+
+
+def share_view(d, subs=None):
+    if subs is None and any(isinstance(s, dict) and any(isinstance(r, dict) and r.get("sub") for r in s.get("nodes") or [])
+                            for s in d.get("shares") or []):
+        subs = sub_proxies(d)  # 只在有分享引用订阅节点时读一遍，所有分享共用
+    out = []
+    for s in d.get("shares") or []:
+        if not isinstance(s, dict):
+            continue
+        out.append({"id": s.get("id"), "title": s.get("title"), "token": s.get("token"), "enabled": s.get("enabled", True),
+                    "host": s.get("host") or "", "scheme": s.get("scheme") or "http", "nodes": s.get("nodes") or [],
+                    "n": len(resolve(d, s.get("nodes"), subs)), "t": s.get("t") or 0, "path": "/share/" + str(s.get("token"))})
+    return out
+
+
+def share_api_get():
+    from .data import load
+    d = load()
+    subs = sub_proxies(d)
+    return 200, {"shares": share_view(d, subs), "candidates": share_candidates(d, subs)}
+
+
+def share_api_post(b):
+    """action: add | edit（id）| toggle（id, enabled）| rotate（id，换令牌）| delete（id）"""
+    from .data import load, update
+    act = b.get("action")
+    sid = str(b.get("id") or "")
+    res = {}
+
+    def fn(d):
+        lst = [s for s in d.get("shares") or [] if isinstance(s, dict)]
+        i = next((k for k, s in enumerate(lst) if s.get("id") == sid), -1)
+        if act == "add":
+            if len(lst) >= MAX_SHARES:
+                raise ValueError(f"分享最多 {MAX_SHARES} 个")
+            s = _clean(b)
+            s.update(id=secrets.token_hex(4), token=secrets.token_hex(16), t=int(time.time()))
+            lst.append(s)
+            res["msg"] = f"已生成分享「{s['title']}」"
+        elif i < 0:
+            raise LookupError("找不到这个分享")
+        elif act == "edit":
+            lst[i] = _clean(b, lst[i])
+            res["msg"] = "已保存"
+        elif act == "toggle":
+            lst[i]["enabled"] = bool(b.get("enabled"))
+            res["msg"] = "已启用" if lst[i]["enabled"] else "已停用：旧链接暂时无法订阅"
+        elif act == "rotate":
+            lst[i]["token"] = secrets.token_hex(16)
+            res["msg"] = "已换新链接：旧链接立即失效"
+        elif act == "delete":
+            res["msg"] = f"已删除分享「{lst[i].get('title')}」"
+            lst.pop(i)
+        else:
+            raise KeyError(act)
+        if lst:
+            d["shares"] = lst
+        else:
+            d.pop("shares", None)
+    try:
+        update(fn)
+    except ValueError as e:
+        return 400, {"message": str(e)}
+    except KeyError:  # KeyError 是 LookupError 的子类，要先接
+        return 400, {"message": "未知操作"}
+    except LookupError as e:
+        return 404, {"message": str(e)}
+    return 200, {"message": res.get("msg", ""), "shares": share_view(load())}
+'''
+_SRC['shunt.entry'] = '''"""直连不进内核（入口旁路，v9.2.0，默认关）+ 关闭连接时清掉系统连接跟踪。
+
+入口旁路：TProxy 模式下，目标地址落在「直连集合」里的连接在 nftables 入口（tproxy.sh 的 prerouting 链）直接放行，
+不再打标记送进内核：直连流量少过一遍内核，CPU 和延迟都更低。直连集合由三部分组成（设置里可分别关掉）：
+  - 中国大陆 IP（geoip-cn）：只在 DNS 用 Fake-IP 时加入。Fake-IP 下走代理的域名拿到的是 198.18.x 占位地址，
+    一定进内核；能拿到真实地址的只有按规则直连解析的域名、Fake-IP 过滤名单里的域名和直接按 IP 访问的连接，
+    这些目标是大陆 IP 时内核本来也按 GEOIP,CN 直连，所以 DNS 和连接不会一边直连一边代理。
+    DNS 不是 Fake-IP（redir-host）时代理域名也会解析出真实地址，可能落在大陆 IP 段里，所以这种情况下不加入（面板提示）。
+  - 节点服务器地址：订阅和手动节点的服务器 IP（局域网设备直接连节点服务器时不绕一圈内核）。
+  - 用户规则里「IP-CIDR → DIRECT」的网段。
+  用户规则里 IP-CIDR 指向代理 / 拒绝的网段会从集合里扣掉。
+边界（与 README 一致）：远程 IP 规则集（behavior: ipcidr）的内容面板看不到，指向代理的 IP 规则集和大陆 IP 段重叠的部分不会扣掉；
+Fake-IP 过滤名单里的域名如果按规则要走代理、却解析到大陆 IP，会被入口直连；终端自己缓存的、开 Fake-IP 之前的真实地址同理。
+TUN 模式由内核的 auto-route 接管全部流量，nftables 入口没有分流的位置，入口旁路不生效（面板提示）。
+入口放行的连接不经过内核，「连接」页和流量统计看不到它们。
+
+关闭连接清理 conntrack：「连接」页关掉一条连接时（或「全部关闭」），顺带用 conntrack 删掉系统里这条连接的跟踪记录，
+卡住的 UDP 长连接（游戏、语音）重新发包时按当前规则重新判定。需要 conntrack 命令（Alpine：apk add conntrack-tools），
+没有时面板提示。默认关。
+"""
+import hashlib, ipaddress, json, os, re, socket, threading, time
+
+from .base import PANEL_DIR, UA
+from .errlog import log_err
+
+CN_URL = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.list"
+CN_FILE = os.path.join(PANEL_DIR, "geoip-cn.txt")
+NFT_FILE = os.path.join(PANEL_DIR, "entry-bypass.nft")
+EB_DEFAULT = {"on": False, "cn": True, "nodes": True, "rules": True, "ct_flush": False}
+MAX_NODE_HOSTS = 300
+_EB_LOCK = threading.Lock()
+_EB_STATE = {"sig": None, "t": 0, "n4": 0, "n6": 0, "note": "", "sets": {}}
+NFT_TABLE = "mihomo_panel"  # 与 tproxy.sh 的 TABLE 一致
+
+
+def cfg(d):
+    c = (d or {}).get("entry_bypass")
+    out = dict(EB_DEFAULT)
+    if isinstance(c, dict):
+        out.update({k: bool(c[k]) for k in EB_DEFAULT if k in c})
+    return out
+
+
+def active(d):
+    """入口旁路此刻是否生效：打开了且是 TProxy 模式"""
+    return cfg(d)["on"] and (d or {}).get("proxy_mode") == "tproxy"
+
+
+def cn_usable(d):
+    from .mihomo import dns_cfg
+    return dns_cfg(d)["mode"] == "fake-ip"
+
+
+# ---------------------------------------------------------------- 数据来源
+def _parse_cidrs(text):
+    out = []
+    for line in str(text or "").splitlines():
+        s = line.strip().split("#")[0].strip()
+        if not s:
+            continue
+        if s.upper().startswith(("IP-CIDR,", "IP-CIDR6,")):
+            s = s.split(",")[1]
+        try:
+            out.append(ipaddress.ip_network(s, strict=False))
+        except ValueError:
+            continue
+    return out
+
+
+def cn_from_srs():
+    """本机有 sing-box 和 geoip-cn.srs 时直接反编译（离线可用）"""
+    from .sb_common import SB_BIN, SB_RULE_DIR
+    from .sysopt import sh
+    srs = os.path.join(SB_RULE_DIR, "geoip-cn.srs")
+    if not (os.path.isfile(SB_BIN) and os.path.isfile(srs)):
+        return []
+    tmp = os.path.join(PANEL_DIR, f".geoip-cn.{os.getpid()}.json")
+    try:
+        code, _ = sh(f"'{SB_BIN}' rule-set decompile '{srs}' -o '{tmp}'", timeout=30)
+        if code != 0:
+            return []
+        with open(tmp) as f:
+            rules = json.load(f).get("rules") or []
+        return _parse_cidrs("\\n".join(c for r in rules if isinstance(r, dict) for c in r.get("ip_cidr") or []))
+    except (OSError, ValueError, AttributeError):
+        return []
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def cn_download(d):
+    from .base import dl_check, read_full
+    from .notify import core_alive
+    from .sysopt import proxy_opener
+    import urllib.request
+    gh = (d.get("gh_proxy") or "").rstrip("/")
+    urls = ([gh + "/" + CN_URL] if gh else []) + [CN_URL]
+    err = ""
+    for u in urls:
+        for via in ((True, False) if core_alive(timeout=2) else (False,)):
+            try:
+                dl_check(u, via_proxy=via)
+                with proxy_opener(via).open(urllib.request.Request(u, headers={"User-Agent": UA}), timeout=30) as r:
+                    text = read_full(r, 8 << 20).decode("utf-8", "ignore")
+                nets = _parse_cidrs(text)
+                if len(nets) > 1000:
+                    return nets, ""
+                err = "下载的列表不完整"
+            except Exception as e:
+                err = str(e)[:120]
+    return [], err
+
+
+def cn_nets(d, refresh=False, net=True):
+    """大陆 IP 段：缓存文件（7 天内有效）→ 本机 sing-box 反编译 → 下载（net=False 时不下载：核心启动路径上不能等网络）"""
+    try:
+        fresh = time.time() - os.path.getmtime(CN_FILE) < 7 * 86400
+    except OSError:
+        fresh = False
+    if fresh and not refresh:
+        with open(CN_FILE) as f:
+            nets = _parse_cidrs(f.read())
+        if nets:
+            return nets, ""
+    nets, err = cn_from_srs(), ""
+    if not nets and net:
+        nets, err = cn_download(d)
+    elif not nets:
+        err = "本机还没有大陆 IP 列表（在设置里点「重新生成」下载）"
+    if nets:
+        from .data import _atomic_write
+        _atomic_write(CN_FILE, ("\\n".join(map(str, nets)) + "\\n").encode(), 0o644)
+        return nets, ""
+    try:  # 都失败：用过期的缓存
+        with open(CN_FILE) as f:
+            old = _parse_cidrs(f.read())
+        if old:
+            return old, "大陆 IP 列表更新失败，沿用旧列表：" + err
+    except OSError:
+        pass
+    return [], "大陆 IP 列表获取失败：" + err
+
+
+def node_hosts(d):
+    """手动节点 + 订阅节点（面板缓存）的服务器地址"""
+    hosts = []
+    for n in d.get("nodes") or []:
+        p = (n or {}).get("proxy") or {}
+        if p.get("server") and not p.get("dialer-proxy"):  # 链式代理的落地经前置节点连，局域网不会直连它
+            hosts.append(str(p["server"]))
+    try:
+        from .share import sub_proxies
+        for _, lst in sub_proxies(d).items():
+            hosts += [str(p.get("server")) for p in lst if isinstance(p, dict) and p.get("server")]
+    except Exception as e:
+        log_err("入口旁路：读取订阅节点", e)
+    return list(dict.fromkeys(h.strip("[]") for h in hosts if h))[:MAX_NODE_HOSTS * 4]
+
+
+def resolve_hosts(hosts, budget=3.0):
+    """字面 IP 直接用；域名并行解析（总共最多 budget 秒，解析不出的跳过）"""
+    ips, names = [], []
+    for h in hosts:
+        try:
+            ips.append(ipaddress.ip_network(h))
+        except ValueError:
+            names.append(h)
+    names = names[:MAX_NODE_HOSTS]
+    out = {}
+
+    def one(h):
+        try:
+            out[h] = [ipaddress.ip_network(a[4][0].split("%")[0]) for a in socket.getaddrinfo(h, None, type=socket.SOCK_STREAM)]
+        except (OSError, ValueError):
+            pass
+    ts = [threading.Thread(target=one, args=(h,), daemon=True) for h in names]
+    for t in ts:
+        t.start()
+    end = time.time() + budget
+    for t in ts:
+        t.join(max(0, end - time.time()))
+    for v in list(out.values()):
+        ips += v
+    return [n for n in ips if n.is_global]
+
+
+_IP_RULE = re.compile(r"^\\s*IP-CIDR6?\\s*,\\s*([^,\\s]+)\\s*,\\s*([^,]+?)\\s*(?:,.*)?$", re.I)
+
+
+def rule_nets(d):
+    """自定义规则里的 IP-CIDR：(直连网段, 非直连网段)"""
+    direct, other = [], []
+    for line in d.get("rules") or []:
+        m = _IP_RULE.match(str(line))
+        if not m:
+            continue
+        try:
+            n = ipaddress.ip_network(m.group(1), strict=False)
+        except ValueError:
+            continue
+        (direct if m.group(2).strip() == "DIRECT" else other).append(n)
+    return direct, other
+
+
+# ---------------------------------------------------------------- 生成 nft 片段
+_RESERVED4 = [ipaddress.ip_network(x) for x in ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+                                                 "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "198.18.0.0/15")]
+_RESERVED6 = [ipaddress.ip_network(x) for x in ("::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8")]
+
+
+def subtract(nets, minus):
+    """nets 里扣掉 minus 覆盖的部分（返回合并后的网段列表）"""
+    minus = list(ipaddress.collapse_addresses(minus)) if minus else []
+    out = []
+    for n in ipaddress.collapse_addresses(nets):
+        parts = [n]
+        for m in minus:
+            if m.version != n.version:
+                continue
+            nxt = []
+            for p in parts:
+                if p.subnet_of(m):
+                    continue
+                if m.subnet_of(p):
+                    nxt += list(p.address_exclude(m))
+                else:
+                    nxt.append(p)
+            parts = nxt
+            if not parts:
+                break
+        out += parts
+    return list(ipaddress.collapse_addresses(out))
+
+
+def build_sets(d, refresh=False, net=True, stats=None):
+    """→ (v4 网段, v6 网段, 说明)。stats（dict）：顺带填每个来源的条数——
+    cn（None = 没勾 / 不是 Fake-IP 没加入）、nodes（解析出的节点 IP 数）、hosts（节点地址总数）、rules（自定义直连网段数）"""
+    c = cfg(d)
+    nets, notes = [], []
+    st = {"cn": None, "cn_skip": "", "nodes": None, "hosts": 0, "rules": None}
+    if c["cn"]:
+        if cn_usable(d):
+            cn, err = cn_nets(d, refresh, net)
+            nets += cn
+            st["cn"] = len(cn)
+            if err:
+                notes.append(err)
+                st["cn_skip"] = err
+        else:
+            notes.append("DNS 不是 Fake-IP：大陆 IP 段不在入口放行（避免代理域名解析到大陆 IP 时 DNS 与连接分家）")
+            st["cn_skip"] = "DNS 不是 Fake-IP"
+    if c["nodes"]:
+        hosts = node_hosts(d)
+        got = resolve_hosts(hosts)
+        nets += got
+        st.update(nodes=len(set(got)), hosts=len(hosts))
+    dr, other = rule_nets(d)
+    if c["rules"]:
+        nets += dr
+        st["rules"] = len(dr)
+    if stats is not None:
+        stats.update(st)
+    minus = other + _RESERVED4 + _RESERVED6
+    v4 = subtract([n for n in nets if n.version == 4], [m for m in minus if m.version == 4])
+    v6 = subtract([n for n in nets if n.version == 6], [m for m in minus if m.version == 6]) if d.get("ipv6") else []
+    return v4, v6, "；".join(notes)
+
+
+def nft_text(v4, v6):
+    def st(name, typ, items):
+        el = f"\\n    elements = {{ {', '.join(map(str, items))} }}" if items else ""
+        return f"  set {name} {{\\n    type {typ}; flags interval{el}\\n  }}\\n"
+    return st("entry_direct", "ipv4_addr", v4) + st("entry_direct6", "ipv6_addr", v6)
+
+
+def signature(d):
+    c = cfg(d)
+    key = json.dumps([c, d.get("ipv6"), cn_usable(d), node_hosts(d) if c["nodes"] else [], rule_nets(d)[0] if c["rules"] else [],
+                      [str(x) for x in rule_nets(d)[1]]], default=str, sort_keys=True)
+    return hashlib.sha1(key.encode()).hexdigest()
+
+
+def ensure(d, force=False, max_age=6 * 3600, net=False):
+    """入口旁路生效时保证 NFT_FILE 是最新的；返回文件路径（不生效时 ""）"""
+    if not active(d):
+        return ""
+    with _EB_LOCK:
+        sig = signature(d)
+        fresh = os.path.isfile(NFT_FILE) and _EB_STATE["sig"] == sig and time.time() - _EB_STATE["t"] < max_age
+        if fresh and not force:
+            return NFT_FILE
+        if not force and _EB_STATE["sig"] is None and os.path.isfile(NFT_FILE):
+            try:  # 面板刚启动：文件里记着上次的签名，没变就沿用（核心启动时不必重新解析节点域名）
+                with open(NFT_FILE) as f:
+                    head = f.readline()
+                if head.strip() == "# sig " + sig and time.time() - os.path.getmtime(NFT_FILE) < max_age:
+                    _EB_STATE.update(sig=sig, t=os.path.getmtime(NFT_FILE), **read_stat())
+                    return NFT_FILE
+            except OSError:
+                pass
+        try:
+            stats = {}
+            v4, v6, note = build_sets(d, refresh=force, net=net, stats=stats)
+            from .data import _atomic_write
+            stat = {"n4": len(v4), "n6": len(v6), "note": note, "sets": stats}
+            _atomic_write(NFT_FILE, (f"# sig {sig}\\n# stat {json.dumps(stat, ensure_ascii=False)}\\n" + nft_text(v4, v6)).encode(), 0o644)
+            _EB_STATE.update(sig=sig, t=time.time(), **stat)
+        except Exception as e:
+            log_err("入口旁路：生成直连集合", e)
+            if not os.path.isfile(NFT_FILE):
+                return ""
+    return NFT_FILE
+
+
+def read_stat():
+    """NFT_FILE 第二行记着生成时各集合的条数（面板重启后状态页也能显示，不再显示成 0 段）"""
+    try:
+        with open(NFT_FILE) as f:
+            f.readline()
+            ln = f.readline()
+        if ln.startswith("# stat "):
+            j = json.loads(ln[7:])
+            return {k: j[k] for k in ("n4", "n6", "note", "sets") if k in j}
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
+
+
+def tp_env_line(d):
+    """tp_env 追加的一行；入口旁路不生效时为空（tp_env 输出与以前完全相同）"""
+    try:
+        path = ensure(d)
+    except Exception as e:
+        log_err("入口旁路", e)
+        path = ""
+    return f"\\nENTRY_FILE='{path}'" if path else ""
+
+
+# ---------------------------------------------------------------- conntrack
+def conntrack_bin():
+    for p in ("/usr/sbin/conntrack", "/sbin/conntrack", "/usr/bin/conntrack"):
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def conns_meta(cid=None):
+    """要关闭的连接的五元组（只在打开了「关闭连接时清理 conntrack」时取）"""
+    from .data import load
+    if not cfg(load())["ct_flush"] or not conntrack_bin():
+        return []
+    from .corehttp import core_json
+    j = core_json("/connections", timeout=5) or {}
+    out = []
+    for c in j.get("connections") or []:
+        if cid and c.get("id") != cid:
+            continue
+        m = c.get("metadata") or {}
+        try:
+            out.append({"proto": "udp" if str(m.get("network")).lower() == "udp" else "tcp",
+                        "src": str(ipaddress.ip_address(m.get("sourceIP"))), "sport": int(m.get("sourcePort")),
+                        "dst": str(ipaddress.ip_address(m.get("destinationIP"))), "dport": int(m.get("destinationPort"))})
+        except (ValueError, TypeError):
+            continue
+    return out[:500]
+
+
+def ct_flush(metas):
+    """按五元组删除 conntrack 记录；返回删掉的条数（尽力而为）"""
+    from .sysopt import sh
+    b = conntrack_bin()
+    n = 0
+    for x in metas or []:
+        code, _ = sh(f"{b} -D -p {x['proto']} -s {x['src']} --sport {x['sport']} -d {x['dst']} --dport {x['dport']}", timeout=5)
+        n += code == 0
+    return n
+
+
+def after_close(metas):
+    if metas:
+        t = threading.Timer(0.3, ct_flush, args=(metas,))
+        t.daemon = True
+        t.start()
+
+
+# ---------------------------------------------------------------- 接口（/api/entry）
+def _nft_count(txt):
+    m = re.search(r"elements\\s*=\\s*\\{(.*?)\\}", txt or "", re.S)
+    return len([x for x in m.group(1).split(",") if x.strip()]) if m else 0
+
+
+def nft_state():
+    """读真实的 nftables 状态：prerouting 链里有没有 @entry_direct 规则、两个集合各有多少元素。
+    v9.2.0 的状态只看「开关打开 + TProxy 模式」，规则没重载、集合是空的也显示生效"""
+    from .sysopt import sh
+    code, out = sh(f"nft list chain inet {NFT_TABLE} prerouting 2>&1", timeout=5)
+    if code != 0:
+        low = (out or "").lower()
+        if code == 127 or ("nft" in low and "not found" in low and "no such file" not in low):
+            err = "no_nft"
+        elif "permission" in low or "not permitted" in low:
+            err = "perm"
+        else:
+            err = "missing"
+        return {"ok": False, "err": err, "hooked": False, "n4": 0, "n6": 0, "msg": (out or "")[-160:]}
+    hooked = "@entry_direct" in out
+    n = {}
+    for k, name in (("n4", "entry_direct"), ("n6", "entry_direct6")):
+        c2, o2 = sh(f"nft list set inet {NFT_TABLE} {name} 2>&1", timeout=5) if hooked else (1, "")
+        n[k] = _nft_count(o2) if c2 == 0 else 0
+    return {"ok": True, "err": "", "hooked": hooked, **n}
+
+
+_MODE_NAME = {"tun": "TUN", "off": "关闭"}
+
+
+def _empty_reason(c, sets, fakeip):
+    """集合为空时逐个来源说明原因和办法"""
+    why, fix = [], []
+    if c["cn"]:
+        if not fakeip:
+            why.append("大陆 IP 段只在 DNS 为 Fake-IP 时加入，当前 DNS 不是 Fake-IP")
+            fix.append("DNS 页把模式改为 Fake-IP")
+        elif not sets.get("cn"):
+            why.append("大陆 IP 列表还没有拿到" + (f"（{sets['cn_skip']}）" if sets.get("cn_skip") else ""))
+            fix.append("点「重新生成集合」重新下载（可在设置里配置 GitHub 加速）")
+    else:
+        why.append("没勾「中国大陆 IP」")
+    if c["nodes"]:
+        if sets.get("hosts") and not sets.get("nodes"):
+            why.append(f"{sets['hosts']} 个节点地址一个都没解析出来")
+            fix.append("核心运行、DNS 正常后点「重新生成集合」")
+        elif not sets.get("hosts"):
+            why.append("没有手动 / 订阅节点")
+    else:
+        why.append("没勾「节点服务器地址」")
+    if c["rules"]:
+        if not sets.get("rules"):
+            why.append("自定义规则里没有 IP-CIDR → DIRECT")
+    else:
+        why.append("没勾「自定义直连 IP 规则」")
+    return "直连集合是空的：" + "；".join(why), "；".join(fix) or "勾选至少一个有内容的集合"
+
+
+def eb_view(d):
+    """state：off | mode（不是 TProxy）| stopped（核心停止 / 看门狗撤了规则）| nft_err | not_loaded（规则里没有入口旁路）
+    | empty（集合为空）| active。active 只在 nft 里真的挂着规则、集合非空时为真"""
+    c = cfg(d)
+    st = dict(_EB_STATE)
+    if c["on"] and not st.get("sets") and os.path.isfile(NFT_FILE):
+        st.update(read_stat())
+    mode = d.get("proxy_mode")
+    fakeip = cn_usable(d)
+    v = dict(c, mode=mode, fakeip=fakeip, conntrack=bool(conntrack_bin()), n4=st["n4"], n6=st["n6"], note=st["note"],
+             built=int(st["t"] or 0), sets=st.get("sets") or {}, nft=None, state="off", reason="", fix="", active=False)
+    if not c["on"]:
+        return v
+    if mode != "tproxy":
+        v.update(state="mode", reason=f"当前代理方式是 {_MODE_NAME.get(mode, mode)}：入口旁路靠 TProxy 的 nftables 入口分流"
+                 + ("，TUN 模式下流量由内核的 auto-route 接管、不经过这个入口" if mode == "tun" else "，透明代理关闭时流量本来就不进内核"),
+                 fix="设置 → 代理方式 改为 TProxy 后自动生效（LXC 里 TProxy 需要宿主机已加载 nft_tproxy：modprobe nft_tproxy）")
+        return v
+    try:
+        from .notify import WD
+        stopped = WD.get("manual_stop") or WD.get("tp_off")
+    except Exception:
+        stopped = False
+    if stopped:
+        v.update(state="stopped", reason="核心已停止（或看门狗因核心无响应撤掉了透明代理规则），nftables 规则没有挂上",
+                 fix="启动核心后自动生效")
+        return v
+    ns = nft_state()
+    v["nft"] = ns
+    if not ns["ok"]:
+        if ns["err"] == "no_nft":
+            v.update(state="nft_err", reason="本机没有 nft 命令", fix="Alpine：apk add nftables")
+        elif ns["err"] == "perm":
+            v.update(state="nft_err", reason="无权读取 nftables（容器缺 CAP_NET_ADMIN）",
+                     fix="PVE 里给容器开启 nesting / 使用特权容器，Docker 需 --cap-add NET_ADMIN")
+        else:
+            v.update(state="not_loaded", reason="透明代理规则表（inet mihomo_panel）不存在：规则没有加载",
+                     fix="确认核心在运行，然后点「重新生成集合」立即重载（不重启内核）")
+        return v
+    if not ns["hooked"]:
+        v.update(state="not_loaded", reason="透明代理规则里还没有入口旁路（规则没有按新设置重载）",
+                 fix="点「重新生成集合」立即重载（不重启内核）")
+        return v
+    v.update(n4=ns["n4"], n6=ns["n6"])
+    if ns["n4"] + ns["n6"] == 0:
+        r, f = _empty_reason(c, v["sets"], fakeip)
+        v.update(state="empty", reason=r, fix=f)
+        return v
+    v.update(state="active", active=True)
+    return v
+
+
+def eb_api_get():
+    from .data import load
+    return 200, eb_view(load())
+
+
+def eb_api_post(b):
+    """action: save（on / cn / nodes / rules / ct_flush）| refresh（重新生成直连集合）"""
+    from .data import load, update
+    from .webapi_base import tp_apply
+    act = b.get("action")
+    if act == "save":
+        def fn(d):
+            c = cfg(d)
+            for k in EB_DEFAULT:
+                if k in b:
+                    c[k] = bool(b[k])
+            if c == EB_DEFAULT:
+                d.pop("entry_bypass", None)  # 全是默认值：不留键，data.json 与以前一致
+            else:
+                d["entry_bypass"] = c
+        update(fn)
+    elif act != "refresh":
+        return 400, {"message": "未知操作"}
+    d = load()
+    if active(d):
+        ensure(d, force=True, net=True)
+    # 透明代理规则按新设置立即重载（nft 表整体原子替换，内核不重启、已有连接不断）；参数由本进程现算现写，
+    # 不再让 tproxy.sh 另起 Python 重算一遍
+    code, out = tp_apply(fresh=True)
+    v = eb_view(d)
+    if code != 0:
+        return 500, dict(v, message="透明代理规则加载失败：" + (out or "")[-200:])
+    if not v["on"]:
+        msg = "已关闭入口旁路：所有流量都进内核"
+    elif v["state"] == "mode":
+        msg = "已保存；入口旁路只在 TProxy 模式下生效（当前是 " + _MODE_NAME.get(str(d.get("proxy_mode")), str(d.get("proxy_mode"))) + "）"
+    elif not v["active"]:
+        msg = "已保存，但入口旁路还没生效：" + v["reason"] + ("。" + v["fix"] if v["fix"] else "")
+    else:
+        msg = f"入口旁路已生效：{v['n4']} 个 IPv4 段" + (f"、{v['n6']} 个 IPv6 段" if v["n6"] else "") + " 在入口直连"
+    if v["note"]:
+        msg += "（" + v["note"] + "）"
+    return 200, dict(v, message=msg)
+'''
 _SRC['shunt.webapi_base'] = '''"""HTTP 接口公共部分：路由表 ROUTES / @api_route、敏感值打码、状态视图、订阅缓存同步、启停任务等（webapi*.py 共用）"""
 import json, os, threading, time
 from urllib.parse import urlparse
@@ -15273,7 +17133,7 @@ from . import adblock
 from .base import BUILTIN_POLICIES, LOCK, SVC, TPROXY_SH, CONF_DIR, wd_hold
 from .data import config_version, load, region_lb_set, safe
 from .links import reserved_names
-from .groups import NODE_LIST_MAX, all_node_names, node_name_ok, provider_nodes, provider_rev, rx, sb_sub_outbounds, sub_orig_nodes, sub_removed
+from .groups import NODE_LIST_MAX, all_node_names, node_name_ok, prio_groups, provider_nodes, provider_rev, rx, sb_sub_outbounds, sub_orig_nodes, sub_removed
 from .mihomo import build_config, dns_cfg, drop_provider_cache, drop_removed_rulesets, drop_ruleset_cache
 from .corehttp import core
 from .sb_common import active_core
@@ -15297,7 +17157,7 @@ SVC_JOB = {"busy": False, "act": "", "ok": None, "message": "", "t": 0}  # 最�
 SVC_NAMES = {"start": "启动", "stop": "停止", "restart": "重启"}
 
 
-def tp_apply():
+def tp_apply(fresh=False):
     """按当前代理方式重载 nftables 规则。核心被手动停止时不挂规则：否则局域网流量会被导向不存在的核心端口
     （init.d 的 start_post 会在下次启动核心时自动加载）。
     看门狗因核心无响应已撤掉规则、让局域网直连（WD.tp_off）时同样不挂：以前这时保存绕过设备 / IPv6 / DNS 防绕过、
@@ -15305,6 +17165,24 @@ def tp_apply():
     核心恢复后看门狗按当时的设置重新开启规则"""
     if WD["manual_stop"] or WD["tp_off"]:
         return 0, ""
+    if fresh:  # v9.2.1：参数由面板进程现算现写（TPENV_FILE），tproxy.sh 不再另起 Python 重算（入口旁路刚生成的集合立即用上）
+        import shlex, tempfile
+        from .base import PANEL_DIR
+        from .cli import write_prep
+        try:
+            fd, tmp = tempfile.mkstemp(prefix=".tpenv.", dir=PANEL_DIR)
+            os.close(fd)
+        except OSError:
+            tmp = ""
+        if tmp:
+            try:
+                if write_prep(tmp):
+                    return sh(f"TPENV_FILE={shlex.quote(tmp)} {TPROXY_SH} apply")
+            finally:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
     return sh(TPROXY_SH + " apply")
 
 
@@ -15542,7 +17420,7 @@ def ad_today():
     return adblock.AD_STATS.today() if adblock.AD_STATS else 0
 
 
-def sb_group_view(groups, meta, fork=None):
+def sb_group_view(groups, meta, fork=None, prio=()):
     """sing-box 下的策略组视图：官方内核下地区负载均衡并入自动优选（从名单和 meta 里去掉），
     负载均衡 / 故障转移按自动测速运行（meta 改标 url-test，sb_from 记原类型）。
     魔改版内核（多节点聚合）：负载均衡组保留，只有故障转移按自动测速。原地修改 meta，返回过滤后的组名单"""
@@ -15552,6 +17430,8 @@ def sb_group_view(groups, meta, fork=None):
     for n in list(meta):
         if n in lbs:
             meta.pop(n)
+        elif n in prio and meta[n]["type"] == "fallback":  # 主备故障转移组（v9.2.0）：selector + 面板按顺序探活，仍按故障转移显示
+            meta[n]["sb_failover"] = True
         elif meta[n]["type"] in down:
             meta[n].update(sb_from=meta[n]["type"], type="url-test")
     return [g for g in groups if g not in lbs]
@@ -15570,7 +17450,7 @@ def state_groups(d):
         groups = [g["name"] for g in cfg["proxy-groups"]]
         gmeta = group_meta(d, cfg)
         if active_core(d) == "singbox":
-            groups = sb_group_view(groups, gmeta)
+            groups = sb_group_view(groups, gmeta, prio=prio_groups(d))
     except Exception as e:
         log_err("/api/state：生成策略组", e, tb=True)
         return [], {}
@@ -15735,7 +17615,7 @@ from . import stats
 from .base import BUILTIN_POLICIES, GROUP_TYPES, G_SEL, LB_STRATEGIES, PRIMARY_REGIONS, REGIONS
 from .data import auto_name, lb_names, load, update
 from .links import add_links
-from .groups import all_node_names, clean_custom_group, gcfg, region_plan, rx
+from .groups import all_node_names, clean_custom_group, gcfg, prio_groups, region_plan, rx
 from .mihomo import build_config
 from .core import conns_snapshot, refresh_regions, reload_core
 from .sb_common import active_core
@@ -15763,7 +17643,7 @@ class NodesAPI:
         meta = group_meta(d, cfg)
         sb = active_core(d) == "singbox"
         if sb:
-            gnames = sb_group_view(gnames, meta)
+            gnames = sb_group_view(gnames, meta, prio=prio_groups(d))
         regions = [{"name": r[0], "total": r[4], "manual": len(r[3]), "unknown": r[5],
                     "groups": [g for g in gnames if g in [auto_name(r[0])] + lb_names(r[0])]} for r in plan]
         sel = next((g.get("proxies") or [] for g in cfg["proxy-groups"] if g["name"] == G_SEL), [])
@@ -16488,7 +18368,7 @@ import copy, os, re, ssl, threading, time
 from urllib.parse import parse_qs
 
 from .errlog import log_err
-from . import landing, stats, warp
+from . import base, entry, failover, hotswitch, landing, share, stats, warp
 from . import gguard
 from .base import (
     CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, KEY, LOCK, MIHOMO_BIN, PANEL_VERSION, PROXY_MODES, SMART_BIN, TUN_STACKS, UPD_STATE, upd_begin,
@@ -16673,6 +18553,8 @@ class SysAPI:
         ids = b.get("ids")
         if not isinstance(ids, list):
             return self.send(400, {"message": "参数错误"})
+        if base.SYSTEMD:  # v9.2.0 Debian / Ubuntu：系统优化项是按 Alpine（apk / OpenRC local.d）写的，不在 systemd 系统上改动
+            return self.send(400, {"message": "系统优化目前只支持 Alpine（Debian / Ubuntu 请按发行版习惯自行调整 sysctl）"})
         ok, msg, errs = opt_apply([str(i) for i in ids])
         return self.send(200, {"ok": ok, "message": msg, "errors": errs} | opt_status())
 
@@ -16864,6 +18746,39 @@ class SysAPI:
     @api_route("/api/landing", "POST")
     def api_landing_post(self, m, p, b, q):
         return self.send(*landing.api_post(b if isinstance(b, dict) else {}))
+
+    # ---- v9.2.0：主备故障转移 / 切换不断连 / 入口旁路 / 订阅分享
+    @api_route("/api/failover", "GET")
+    def api_failover_get(self, m, p, b, q):
+        return self.send(*failover.fo_api_get())
+
+    @api_route("/api/failover", "POST")
+    def api_failover_post(self, m, p, b, q):
+        return self.send(*failover.fo_api_post(b if isinstance(b, dict) else {}))
+
+    @api_route("/api/switch", "GET")
+    def api_switch_get(self, m, p, b, q):
+        return self.send(*hotswitch.hs_api_get())
+
+    @api_route("/api/switch", "POST")
+    def api_switch_post(self, m, p, b, q):
+        return self.send(*hotswitch.hs_api_post(b if isinstance(b, dict) else {}))
+
+    @api_route("/api/entry", "GET")
+    def api_entry_get(self, m, p, b, q):
+        return self.send(*entry.eb_api_get())
+
+    @api_route("/api/entry", "POST")
+    def api_entry_post(self, m, p, b, q):
+        return self.send(*entry.eb_api_post(b if isinstance(b, dict) else {}))
+
+    @api_route("/api/share", "GET")
+    def api_share_get(self, m, p, b, q):
+        return self.send(*share.share_api_get())
+
+    @api_route("/api/share", "POST")
+    def api_share_post(self, m, p, b, q):
+        return self.send(*share.share_api_post(b if isinstance(b, dict) else {}))
 
     @api_route("/api/stats", "GET")
     def api_stats_get(self, m, p, b, q):
@@ -17256,6 +19171,7 @@ from collections import deque
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .errlog import log_err
+from . import entry, share
 from .base import MAX_BODY, upd_begin, upd_busy_msg
 from .data import load
 from .links import q1
@@ -17452,6 +19368,8 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
         self._want_close, self._started, self._raw, self._cookie = False, False, b"", ""
         u = urlparse(self.path)
         p = u.path
+        if m == "GET" and p.startswith("/share/"):  # 订阅分享（v9.2.0）：凭令牌只读，客户端带不了面板密码 / 请求头
+            return self.share_get(p[len("/share/"):], u.query)
         why = self.guard(m, p)
         if why:
             if self.pending_body():  # 被拒绝的请求不读它的 body，回应后直接关闭连接
@@ -17497,6 +19415,23 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
                 self.close_connection = True
                 return
             return self.send(500, {"message": "内部错误"})
+
+    def share_get(self, token, query):
+        a = acl_cfg()
+        if not a["public"] and not ip_is_lan(self.client_address[0]):  # 与面板相同：默认只给局域网
+            return self.deny("订阅分享默认只允许局域网访问（面板打开「允许外网访问」后才能从外网订阅）")
+        if self.pending_body():
+            self._want_close = True
+        code, body, ctype, head = share.serve(token.strip("/"), q1(parse_qs(query), "format", "fmt"), self.headers.get("User-Agent") or "")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype + "; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in head.items():
+            self.send_header(k, v)
+        self.sec_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     def logstream(self, level):
         if level not in ("debug", "info", "warning", "error"):
@@ -17555,6 +19490,13 @@ class H(NodesAPI, SubsAPI, RulesAPI, SysAPI, BaseHTTPRequestHandler):
         b = self.body() if m in ("POST", "PUT", "PATCH", "DELETE") else {}  # 请求体已在 route() 里完整读入
         if not isinstance(b, dict):  # [1] / "x" / 123 这类合法 JSON：以前各接口 b.get 抛 AttributeError，回 500 并写一条错误堆栈
             return self.send(400, {"message": "请求体必须是 JSON 对象"})
+        if m == "DELETE" and (p == "/api/core/connections" or p.startswith("/api/core/connections/")):
+            # v9.2.0「关闭连接时清理 conntrack」（默认关）：先记下五元组，内核关掉连接后删系统连接跟踪
+            cid = unquote(p[len("/api/core/connections/"):]) if p != "/api/core/connections" else None
+            try:
+                entry.after_close(entry.conns_meta(cid))
+            except Exception as e:
+                log_err("清理连接跟踪", e)
         if p == "/api/core/configs/geo" and m != "POST":
             # 重新下载全部 GEO / 规则集并重载核心：两个内核都只认 POST（与 mihomo 一致）。以前 mihomo 下原样透传，
             # 方法由核心判断；sing-box 下单独拦。统一在这里回 405，不经过核心
@@ -17680,7 +19622,7 @@ import ipaddress, os, re, signal, ssl, sys, threading, time
 
 from .svcmigrate import svc_migrate
 from .errlog import log_err
-from . import adblock, gguard, stats
+from . import adblock, entry, failover, gguard, stats
 from .base import CERT, KEY, PANEL_DIR, PORT
 from . import base
 from .data import load, update
@@ -17728,7 +19670,8 @@ def tp_env():
     return (f"B_IP='{','.join(ips)}'\\nB_MAC='{','.join(macs)}'\\nB_IP6='{','.join(ip6s)}'\\n"
             f"LOCAL6='{','.join(local6)}'\\nIPV6={1 if d.get('ipv6') else 0}\\nTPROXY={1 if d.get('tproxy') else 0}\\n"
             f"MODE={d['proxy_mode']}\\nDNS_ALL={1 if dns_cfg(d)['block_bypass'] else 0}\\n"
-            f"MSS={1 if (d.get('proxy_mode') in ('tproxy', 'tun') and (d.get('tun') or {}).get('mss_clamp')) else 0}")
+            f"MSS={1 if (d.get('proxy_mode') in ('tproxy', 'tun') and (d.get('tun') or {}).get('mss_clamp')) else 0}"
+            + entry.tp_env_line(d))  # v9.2.0 入口旁路：没打开时为空，输出与以前一致
 
 
 def write_prep(path=None):
@@ -17865,7 +19808,7 @@ def main():
     STATS = stats.STATS = Stats()
     AD_STATS = adblock.AD_STATS = AdStats()
     for target, args in ((STATS.loop, ()), (monitor_loop, ()), (AD_STATS.loop, ()), (AD_STATS.dns_loop, ()), (live_loop, ("/traffic",)),
-                         (live_loop, ("/memory",)), (log_loop, ()), (sched_loop, ()), (rdns_loop, ()), (startup_migrate, ()), (gguard.loop, ())):
+                         (live_loop, ("/memory",)), (log_loop, ()), (sched_loop, ()), (rdns_loop, ()), (startup_migrate, ()), (gguard.loop, ()), (failover.fo_loop, ())):
         threading.Thread(target=target, args=args, daemon=True).start()
     try:
         opt_migrate_confd()

@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Shunt 分流 —— mihomo 旁路由面板一键安装 (Alpine Linux)
+# Shunt 分流 —— mihomo 旁路由面板一键安装 (Alpine Linux；v9.2.0 起也支持 Debian / Ubuntu + systemd)
 # 用法: sh install.sh [--cn] [--update-core] [--https] [--selftest]
 # 离线安装包（面板 + 全部内核 + 依赖，GitHub Releases「offline」）:
 #   一键: wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/offline.sh | sh
@@ -28,14 +28,21 @@ for a in "$@"; do
   esac
 done
 
-[ -f /etc/alpine-release ] || { echo "本脚本仅支持 Alpine Linux"; exit 1; }
-REL=$(cut -d. -f1,2 /etc/alpine-release)
+# 系统：Alpine（OpenRC，原有方式，不变）/ Debian、Ubuntu（systemd，v9.2.0）
+OS=alpine
+if [ ! -f /etc/alpine-release ]; then
+  if [ -f /etc/debian_version ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then OS=debian
+  else echo "本脚本只支持 Alpine Linux，或使用 systemd 的 Debian / Ubuntu"; exit 1; fi
+fi
+REL=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null)
 # 离线安装包：同目录有 offline/（内核、geo 数据、apk 依赖），全程不需要联网
 OFF=""; [ -f "$SRC/server.py" ] && [ -f "$SRC/offline/VERSION" ] && OFF="$SRC/offline"
 PKGS="curl wget ca-certificates python3 nftables iptables ip6tables iproute2 gzip tar tzdata kmod coreutils"
 [ -n "$HTTPS" ] && PKGS="$PKGS openssl"
 ONLINE_DEPS=1
-if [ -n "$OFF" ]; then
+if [ -n "$OFF" ] && [ "$OS" = debian ]; then
+  echo ">> 离线安装包：内核与 geo 数据用包里的，依赖用 apt 安装（包内的 apk 依赖只适用于 Alpine）"
+elif [ -n "$OFF" ]; then
   echo ">> 离线安装包：$(tr '\n' ' ' < "$OFF/VERSION")"
   BREL=$(sed -n 's/^alpine=//p' "$OFF/VERSION"); BARCH=$(sed -n 's/^arch=//p' "$OFF/VERSION")
   [ "$BARCH" = "$(uname -m)" ] || { echo "!! 安装包是 $BARCH 的，本机是 $(uname -m)，请下载对应架构的包"; exit 1; }
@@ -46,6 +53,17 @@ if [ -n "$OFF" ]; then
   else
     echo "!! 包内依赖安装失败（详情 /tmp/shunt-apk.log），改为联网安装"
   fi
+fi
+if [ "$OS" = debian ]; then
+  [ -n "$CN" ] && GH="${GH:-https://ghfast.top/}" && echo ">> 国内模式：GitHub 加速 $GH（apt 软件源保持系统设置）"
+  echo ">> 安装依赖（apt）"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update >/dev/null 2>&1 || echo "!! apt-get update 失败，继续尝试安装"
+  for p in curl wget ca-certificates python3 nftables iproute2 gzip tar tzdata kmod coreutils conntrack python3-yaml; do
+    dpkg -s "$p" >/dev/null 2>&1 || apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "!! 依赖 $p 安装失败"
+  done
+  [ -n "$HTTPS" ] && { dpkg -s openssl >/dev/null 2>&1 || apt-get install -y openssl >/dev/null 2>&1; }
+  ONLINE_DEPS=""
 fi
 if [ -n "$ONLINE_DEPS" ]; then
 if [ -n "$CN" ]; then
@@ -85,10 +103,21 @@ open(out, "w").write("".join(f"{x['sha']} {x['path']}\n" for x in t["tree"] if x
 print(c["sha"])
 PY
 )
-  [ -n "$REF" ] || { REF="$BRANCH"; rm -f "$MAN"; echo "!! 无法访问 GitHub API，下载的文件不做完整性校验"; }
+  SUMS="$SRC/.sha256sums"
+  if [ -z "$REF" ]; then
+    REF="$BRANCH"; rm -f "$MAN"
+    # v9.2.2：API 限流 / 不通时改用发布分支里的 SHA256SUMS 校验（先从 GitHub 直接取，取不到再走加速地址）
+    if curl -fsSL --retry 2 -m 20 -o "$SUMS" "https://raw.githubusercontent.com/$REPO/$BRANCH/SHA256SUMS" 2>/dev/null \
+        || { [ -n "$GH" ] && curl -fsSL --retry 2 -m 20 -o "$SUMS" "${GH}https://raw.githubusercontent.com/$REPO/$BRANCH/SHA256SUMS" 2>/dev/null; }; then
+      if grep -q ' server.py$' "$SUMS" && command -v sha256sum >/dev/null 2>&1; then echo ">> GitHub API 不可用，改用 SHA256SUMS 校验"; else rm -f "$SUMS"; fi
+    else
+      rm -f "$SUMS"
+    fi
+    [ -f "$SUMS" ] || echo "!! 无法访问 GitHub API，分支里也取不到 SHA256SUMS：下载的文件不做完整性校验"
+  fi
   RAW="${GH}https://raw.githubusercontent.com/$REPO/$REF"
   echo ">> 下载面板文件 ($REPO@$REF)"
-  FILES="server.py index.html tproxy.sh selftest.sh init.d/shunt init.d/shunt-core"
+  FILES="server.py index.html tproxy.sh selftest.sh init.d/shunt init.d/shunt-core systemd/shunt.service systemd/shunt-core.service systemd/shunt-core.sh systemd/rc-service systemd/rc-update"
   if curl -fsSL --retry 3 -o "$SRC/update-files.txt" "$RAW/update-files.txt"; then
     L=$(sed 's/#.*//' "$SRC/update-files.txt" | tr -s ' \t\r' '\n' | grep -E '^[A-Za-z0-9_][A-Za-z0-9_./-]*$' | grep -v '\.\.' | tr '\n' ' ')
     [ -n "$L" ] && FILES="update-files.txt $L"
@@ -100,6 +129,10 @@ PY
       want=$(awk -v f="$f" '$2==f{print $1}' "$MAN")
       got=$({ printf 'blob %d\000' "$(wc -c < "$SRC/$f")"; cat "$SRC/$f"; } | sha1sum | cut -d' ' -f1)
       [ -n "$want" ] && [ "$want" = "$got" ] || { echo "!! $f 校验失败（可能被篡改或下载不完整），安装中止"; exit 1; }
+    elif [ -f "$SUMS" ]; then
+      want=$(awk -v f="$f" '{p=$2; sub(/^\*/, "", p)} p==f{print $1}' "$SUMS")
+      got=$(sha256sum "$SRC/$f" | cut -d' ' -f1)
+      [ -n "$want" ] && [ "$want" = "$got" ] || { echo "!! $f 与 SHA256SUMS 不一致（可能被篡改、下载不完整或分支刚好在更新，可稍后重试），安装中止"; exit 1; }
     fi
   done
 fi
@@ -153,6 +186,19 @@ echo ">> 安装面板"
 cp "$SRC/server.py" "$SRC/index.html" "$SRC/tproxy.sh" "$SRC/selftest.sh" /opt/mihomo-panel/
 for f in icon.svg icon-180.png icon-512.png; do [ -f "$SRC/$f" ] && cp "$SRC/$f" /opt/mihomo-panel/; done
 chmod +x /opt/mihomo-panel/tproxy.sh /opt/mihomo-panel/selftest.sh
+if [ "$OS" = debian ]; then
+  # systemd：服务单元 + 核心辅助脚本；rc-service / rc-update 兼容层（面板和文档里的命令照常可用，系统已有 OpenRC 时不装）
+  mkdir -p /opt/mihomo-panel/systemd
+  cp "$SRC/systemd/shunt-core.sh" "$SRC/systemd/rc-service" "$SRC/systemd/rc-update" /opt/mihomo-panel/systemd/
+  chmod 755 /opt/mihomo-panel/systemd/shunt-core.sh /opt/mihomo-panel/systemd/rc-service /opt/mihomo-panel/systemd/rc-update
+  cp "$SRC/systemd/shunt.service" "$SRC/systemd/shunt-core.service" /etc/systemd/system/
+  for c in rc-service rc-update; do
+    if ! command -v $c >/dev/null 2>&1 || [ "$(command -v $c)" = "/usr/local/sbin/$c" ]; then
+      install -m 755 "$SRC/systemd/$c" /usr/local/sbin/$c
+    fi
+  done
+  systemctl daemon-reload
+else
 # v7.7.6 起服务名为 shunt（面板）/ shunt-core（核心）：覆盖安装旧版时先停掉并删除旧服务
 for s in mihomo-panel mihomo; do
   if [ -f /etc/init.d/$s ]; then
@@ -161,12 +207,25 @@ for s in mihomo-panel mihomo; do
 done
 cp "$SRC/init.d/shunt" "$SRC/init.d/shunt-core" /etc/init.d/
 chmod +x /etc/init.d/shunt /etc/init.d/shunt-core
+fi
 
 if [ ! -f /etc/mihomo-panel/data.json ]; then
   printf '{"secret":"","mode":"rule","tproxy":true,"subs":[],"rules":[]}\n' > /etc/mihomo-panel/data.json
   NEWPW=1
 fi
 chmod 600 /etc/mihomo-panel/data.json
+# 从预览分支安装（PANEL_BRANCH=xxx-preview）：面板的在线更新通道设为预览版，以后的在线更新继续跟预览分支；其余配置不动
+case "$BRANCH" in *-preview)
+  python3 - <<'PY' && echo ">> 面板更新通道：预览版" || echo "!! 没能把更新通道设为预览版，可在面板「设置 → 备份与更新」里切换"
+import json
+p = "/etc/mihomo-panel/data.json"
+d = json.load(open(p))
+if d.get("update_channel") != "preview":
+    d["update_channel"] = "preview"
+    json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+PY
+  ;;
+esac
 
 if [ -n "$HTTPS" ]; then
   echo ">> 生成自签名证书"
@@ -184,7 +243,7 @@ mkdir -p /etc/sysctl.d
 printf 'net.ipv4.ip_forward=1\n' > /etc/sysctl.d/99-mihomo-panel.conf
 grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf 2>/dev/null || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 sysctl -qw net.ipv4.ip_forward=1
-rc-update add sysctl boot >/dev/null 2>&1 || true
+[ "$OS" = alpine ] && { rc-update add sysctl boot >/dev/null 2>&1 || true; }  # systemd 开机自动加载 /etc/sysctl.d
 
 # 运行环境检测：容器（LXC / Docker）没有自己的内核，模块和设备要在宿主机上准备
 CT=""
@@ -195,7 +254,11 @@ elif [ -f /.dockerenv ] || [ -f /run/.containerenv ] || grep -Eq '/(docker|kubep
 if [ -z "$CT" ]; then
   for m in tun nft_tproxy; do
     modprobe "$m" 2>/dev/null || echo "!! 无法加载内核模块 $m（精简内核可能不支持，对应的代理方式将不可用）"
-    grep -qx "$m" /etc/modules 2>/dev/null || echo "$m" >> /etc/modules
+    if [ "$OS" = debian ]; then
+      mkdir -p /etc/modules-load.d; grep -qx "$m" /etc/modules-load.d/shunt.conf 2>/dev/null || echo "$m" >> /etc/modules-load.d/shunt.conf
+    else
+      grep -qx "$m" /etc/modules 2>/dev/null || echo "$m" >> /etc/modules
+    fi
   done
 fi
 [ -c /dev/net/tun ] || { mkdir -p /dev/net && mknod /dev/net/tun c 10 200 2>/dev/null && chmod 666 /dev/net/tun; }
@@ -224,10 +287,16 @@ if [ -n "$SELFTEST" ]; then
   echo ">> 校验配置"
   sh /opt/mihomo-panel/selftest.sh || echo "!! 自检未全部通过，请把输出反馈给作者"
 fi
+if [ "$OS" = debian ]; then
+  systemctl enable shunt-core.service shunt.service >/dev/null 2>&1
+  systemctl restart shunt-core.service
+  systemctl restart shunt.service
+else
 rc-update add shunt-core default >/dev/null
 rc-update add shunt default >/dev/null
 rc-service shunt-core restart
 rc-service shunt restart
+fi
 
 PORT=$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}PANEL_PORT=["'"'"']\{0,1\}\([0-9]\{1,5\}\).*/\2/p' /etc/conf.d/shunt 2>/dev/null | tail -n 1)
 PORT=${PORT:-8080}
@@ -241,4 +310,6 @@ echo " 面板不需要密码，默认只允许局域网访问"
 echo " 客户端把 网关 和 DNS 都设为 ${IP:-本机IP} 即可走透明代理"
 echo " 代理方式（TProxy / TUN / 关闭）、DNS、广告拦截都在面板“设置 / 广告拦截”里配置"
 echo " 配置自检: sh /opt/mihomo-panel/selftest.sh"
+[ "$OS" = debian ] && echo " 服务: systemctl restart shunt-core / shunt（rc-service 命令同样可用）；日志: /var/log/mihomo.log、journalctl -u shunt-core" \
+  && echo " 系统防火墙（ufw / firewalld）需要自己放行面板端口和局域网转发"
 echo "==========================================="
