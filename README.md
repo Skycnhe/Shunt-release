@@ -1,12 +1,14 @@
 <p align="center"><img src="icon.svg" width="96" alt="Shunt"></p>
 
-<h1 align="center">Shunt 分流</h1>
+<h1 align="center">Shunt 分流 · shunt-preview</h1>
 
 <p align="center">🌐 在线说明：<a href="https://skycnhe.github.io/Shunt-release/">skycnhe.github.io/Shunt-release</a></p>
 
 Shunt 是装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、LXC 容器、旧电脑都行）上的一键透明代理 + Web 管理面板，内核用 mihomo（另可切换 mihomo Smart、sing-box）。局域网设备把 **网关和 DNS** 指向旁路由即可分流：国内直连、国外走代理，手机、电视、游戏机不用逐台装客户端。所有日常操作（订阅、节点、策略组、规则、广告拦截、DNS、代理方式、内核更新、面板更新）都在网页里完成。
 
 > Shunt 只负责分流和管理，**不提供节点**。第一次用请准备好自己的订阅链接或节点链接。
+
+> ⚠️ 这是**预览分支** `shunt-preview`：放最新测试版本，可能有问题，功能和说明以 [CHANGELOG.md](CHANGELOG.md) 为准。日常使用建议装正式分支 [`shunt`](https://github.com/Skycnhe/Shunt-release/tree/shunt)。
 
 ## 目录
 
@@ -39,7 +41,7 @@ Shunt 是装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、
 
 - **正式 / 预览**：正式版是测试过的稳定版本；预览版是最新改动，版本号形如 `9.1.11-preview`、`11.7.8-preview.792+c7b71f9`。两者可以在面板里随时切换（见 [在线更新与预览通道](#在线更新与预览通道)），不用重装。
 - **mihomo 分支 / sing-box 分支**：`shunt` 系列以 mihomo 为主，面板里还能切到 mihomo Smart 或 sing-box；`shunt-singbox` 系列只用 sing-box。两个系列的面板页面基本相同，订阅、规则等数据格式通用。
-- 本页是 **`shunt`** 分支的说明，当前版本见 [CHANGELOG.md](CHANGELOG.md)。
+- 本页是 **`shunt-preview`** 分支的说明，当前版本见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 截图
 
@@ -73,7 +75,7 @@ Fake-IP 模式下设备拿到的是 `198.18.x.x` / `198.19.x.x` 这样的虚拟�
 ## 系统要求
 
 - **Alpine Linux**（OpenRC；离线包按 3.22 / 3.23 / 3.24 打包）；用 **root** 执行安装。
-- **Debian / Ubuntu（systemd，实验性，9.2.0 起）**：install.sh 用 apt 装依赖、服务交给 systemd，面板里的启动 / 停止 / 重启、看门狗、在线更新照常可用；尚未在真机上充分测试，系统防火墙（ufw / firewalld）需自行放行，「系统优化」只支持 Alpine。离线包和 Docker 镜像不变。其他发行版不支持（安装脚本会直接退出）。
+- **Debian / Ubuntu（systemd，实验性，9.2.0 预览版起）**：install.sh 用 apt 装依赖、服务交给 systemd，面板里的启动 / 停止 / 重启、看门狗、在线更新照常可用；尚未在真机上充分测试，系统防火墙（ufw / firewalld）需自行放行，「系统优化」只支持 Alpine。离线包和 Docker 镜像不变。其他发行版不支持（安装脚本会直接退出）。
 - CPU 架构：**amd64（x86_64）/ arm64（aarch64）/ armv7**。
 - 内核模块：TProxy 需要 `nft_tproxy`，TUN 需要 `tun`（`/dev/net/tun`）。安装脚本会尝试加载并写入 `/etc/modules`；两者都不可用时只能用 7890 端口手动代理。
 - 依赖由安装脚本用 apk 自动安装：**python3**、curl、wget、nftables、iptables、iproute2、gzip、tar、tzdata 等。
@@ -82,15 +84,17 @@ Fake-IP 模式下设备拿到的是 `198.18.x.x` / `198.19.x.x` 这样的虚拟�
 
 ## 一键安装
 
-在旁路由上用 root 执行（本分支 `shunt`）：
+在旁路由上用 root 执行（本分支 `shunt-preview`）：
 
 ```sh
 # 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top）
-wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh -s -- --cn
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-preview/install.sh | PANEL_BRANCH=shunt-preview sh -s -- --cn
 
 # 国外网络
-wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-preview/install.sh | PANEL_BRANCH=shunt-preview sh
 ```
+
+> 预览分支的 `install.sh` 默认安装正式分支 `shunt`，所以上面的命令在 `sh` 前加了 `PANEL_BRANCH=shunt-preview`。9.2.2 起用这条命令安装时会自动把面板的更新通道设为 **预览版**（以前需要到「设置 → 备份与更新 → 面板更新」手动选），以后的在线更新继续跟预览版。也可以先装正式版，再在面板里切到预览通道，效果相同（推荐）。
 
 装完会打印面板地址，例如 `http://192.168.1.2:8080`。重复执行同一条命令就是**覆盖升级**，订阅和设置都会保留。
 
@@ -153,7 +157,7 @@ wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox-
 环境变量要写在管道右边的 `sh` 前面，例如：
 
 ```sh
-wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | GH_PROXY=https://gh-proxy.com/ sh -s -- --cn
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-preview/install.sh | GH_PROXY=https://gh-proxy.com/ PANEL_BRANCH=shunt-preview sh -s -- --cn
 ```
 
 如果 `ghfast.top` 也打不开 raw 地址，把命令里的 `https://ghfast.top/` 换成 `https://gh-proxy.com/` 再试。
@@ -178,7 +182,7 @@ wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/offline.
 tar xzf shunt-offline-*.tar.gz && sh shunt-offline/install.sh
 ```
 
-包的 Alpine 版本和本机不同时，依赖装不上会自动改为联网安装；armv7 设备没有离线包，请用一键安装。
+包的 Alpine 版本和本机不同时，依赖装不上会自动改为联网安装；armv7 设备没有离线包，请用一键安装。预览版没有单独的离线包：先离线装正式版，联网后在面板里切到预览通道。
 
 ## Docker 安装
 
@@ -294,7 +298,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on                 # 允许�
 
 连接（实时连接列表）、统计（每日流量、按设备 / 节点明细，保留 60 天）、日志、拓扑（负载均衡组实时连线）、落地（SOCKS5 落地出口，可指定前置节点）、测速（国内直连 / 国外经代理）、流媒体 / AI 解锁检测、网络诊断（一键体检）、系统优化（可一键恢复）、Telegram 通知、定时任务、主题与背景图。
 
-**9.2.x 新增**（9.2.4 正式版起，新开关全部默认关闭，不打开时生成的 mihomo / sing-box 配置和 nftables 规则与 9.1.17 相同）：
+**9.2.0 预览版新增**（新开关全部默认关闭，不打开时生成的 mihomo / sing-box 配置和 nftables 规则与 9.1.17 相同）：
 
 - **切换不断连**（规则 → 规则集订阅）：每个规则集可切「原目标 / 直连 / 拒绝」，只改写开关规则集文件，配置不变、内核不重启，已建立的连接不断。
 - **直连不进内核 / 入口旁路**（设置 → 网络，仅 TProxy）：大陆 IP（仅 Fake-IP 下）、节点服务器 IP、自定义 IP-CIDR → DIRECT 网段在 nftables 入口直接放行；同一卡片可开「关闭连接时清理连接跟踪」（需要 conntrack）。
@@ -303,8 +307,12 @@ python3 /opt/mihomo-panel/server.py --allow-public on                 # 允许�
 - **订阅分享**（订阅页底部）：选节点生成 `/share/<令牌>` 链接，默认 base64，Clash 客户端或 `?format=clash` 返回 Clash 配置；二维码在浏览器本地生成，可停用、换链接、删除。默认只允许局域网访问。
 - **界面多语言**（设置 → 外观）：简体中文 / 繁體中文 / English（English 覆盖主要界面，其余保持简体）。
 - **Debian / Ubuntu 安装（实验性）**：见 [系统要求](#系统要求)。
-- **容器里的系统优化**：PVE LXC / Docker 容器里能开的都开（RPS 对容器 veth 生效、特权容器可开 CPU 性能模式、有 CAP_SYS_TIME 时可开时间同步），开不了的显示「由宿主机控制」并给出宿主机命令和时钟偏差；入口旁路状态按 nftables 里真实的规则和集合条数显示，打开后立即重载。
-- **在线更新更稳**：GitHub API 限流 / 连不上时写明真实原因，改用分支里的 `SHA256SUMS` 校验，实在拿不到校验值时也能「未校验」更新；下载不完整的文件不会被装上（见 [在线更新与预览通道](#在线更新与预览通道)）。
+
+**9.2.1 预览版**：系统优化在 PVE LXC / Docker 容器里能开的都开（RPS 对容器 veth 生效、特权容器可开 CPU 性能模式、有 CAP_SYS_TIME 时可开时间同步），开不了的显示「由宿主机控制」并给出宿主机命令和时钟偏差；入口旁路状态按 nftables 里真实的规则和集合条数显示，打开后立即重载。
+
+**9.2.2 预览版**：修复预览通道在线更新在 GitHub API 限流 / 连不上时提示「预览通道暂时没有可用版本」而更新不了：现在写明真实原因，API 不可用时改用分支里的 `SHA256SUMS` 校验，实在拿不到校验值时也能「未校验」更新。旧版面板（9.2.1 及以前）卡在这个提示时，用上面「一键安装」里的预览分支命令覆盖安装一次即可（订阅和设置保留，更新通道自动设为预览版）。
+
+更早的预览版额外内容（以 CHANGELOG 为准）：🚀 带宽择优组、真实路由验证、Xboard / V2Board 面板账号登录拉订阅、Cloudflare WARP 节点、🛡️ Google 专用组、TUN MTU / QUIC 屏蔽等。
 
 ## 内核
 

@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.2.5"
+PANEL_VERSION = "9.2.7-preview.895+556a2c1"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -76,6 +76,7 @@ MODULES = [
     "svcmigrate",
     "static",
     "share",
+    "perf",
     "entry",
     "webapi_base",
     "webapi_nodes",
@@ -349,7 +350,7 @@ AB_PRESETS = [
     {"cat": "国外 · 隐私", "name": "Frogeye 一方追踪", "url": "https://hostfiles.frogeye.fr/firstparty-trackers.txt",
      "dsc": "伪装成网站子域名的追踪器"}]
 TUN_DEFAULT = {"stack": "auto", "device": "Meta", "auto_redirect": True, "strict_route": False,
-               "mtu": 9000, "quic_block": True, "mss_clamp": False}
+               "mtu": 9000, "quic_block": True, "mss_clamp": False, "multi_queue": False}  # multi_queue：v9.2.5 sing-box 1.15+ 多队列，默认关
 GROUPS_DEFAULT = {"type": "url-test", "lb": True, "rr": True, "auto": True, "strategy": "consistent-hashing", "interval": 60,
                   "tolerance": 50, "url": "https://www.gstatic.com/generate_204", "extra": True, "other": True, "lazy": True,
                   "lgbm": False}
@@ -378,7 +379,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.2.5"
+PANEL_VERSION = "9.2.7-preview.895+556a2c1"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -866,6 +867,7 @@ _HISTORY_LOCK = threading.Lock()  # history.json 读-改-写原子性（update �
 
 HISTORY_FILE = os.path.join(PANEL_DIR, "history.json")
 HISTORY_MAX = 10
+HISTORY_MAX_BYTES = 4 << 20  # v9.2.5：快照文件合计上限（订阅 / 规则很多时 10 份全量快照可达几十 MB），超过时从最旧的丢起，至少留 1 份
 HISTORY_SKIP = {"tests_rev", "sched_rev", "core", "secret", "devices", "https", "schema", "sysopt", "sysopt_orig", "sysopt_mods", "health", "health_cfg", "gh_token"}
 KEY_LABEL = {"subs": "订阅", "nodes": "节点", "rules": "自定义规则", "rulesets": "规则集", "dns": "DNS", "adblock": "广告拦截",
              "custom_groups": "自定义策略组", "groups_cfg": "地区分组", "region_groups": "地区分组", "proxy_mode": "代理方式",
@@ -874,11 +876,20 @@ KEY_LABEL = {"subs": "订阅", "nodes": "节点", "rules": "自定义规则", "r
              "log_limit": "日志上限", "gh_proxy": "GitHub 加速", "gh_token": "GitHub Token", "tproxy": "代理方式"}
 
 
+def history_list():
+    """配置快照列表（新的在前），只留格式正确的条目：文件损坏 / 手改坏时 /api/history 不再 500"""
+    h = read_json(HISTORY_FILE, [])
+    return [x for x in h if isinstance(x, dict) and isinstance(x.get("id"), str)] if isinstance(h, list) else []
+
+
 def history_push(prev, cur):
     keys = sorted(k for k in set(prev) | set(cur) if k not in HISTORY_SKIP and prev.get(k) != cur.get(k))
     if not keys:
         return
     h = read_json(HISTORY_FILE, [])
+    if not isinstance(h, list):  # 文件损坏 / 被改成别的格式：重新开始记，不让每次保存都报错
+        h = []
+    h = [x for x in h if isinstance(x, dict)]
     snap = {k: v for k, v in prev.items() if k not in HISTORY_SKIP}
     if h and h[0].get("data") == snap:
         return
@@ -888,7 +899,15 @@ def history_push(prev, cur):
         if lb not in labels:
             labels.append(lb)
     h.insert(0, {"id": secrets.token_hex(4), "t": int(time.time()), "changed": labels, "data": snap})
-    write_json(HISTORY_FILE, h[:HISTORY_MAX])
+    h = h[:HISTORY_MAX]
+    raw = json.dumps(h, ensure_ascii=False).encode()  # 与 write_json 同一格式；没超上限时只序列化这一次
+    if len(raw) > HISTORY_MAX_BYTES and len(h) > 1:
+        sizes = [len(json.dumps(x, ensure_ascii=False).encode()) + 1 for x in h]
+        while len(h) > 1 and sum(sizes) > HISTORY_MAX_BYTES:
+            h.pop()
+            sizes.pop()
+        raw = json.dumps(h, ensure_ascii=False).encode()
+    _atomic_write(HISTORY_FILE, raw, 0o600)
 
 
 def read_json(path, default):
@@ -2784,6 +2803,7 @@ def tun_params(d):
         "mtu": max(1280, min(9000, mtu)),
         "quic_block": bool(tc.get("quic_block", True)),
         "mss_clamp": bool(tc.get("mss_clamp", False)),
+        "multi_queue": tc.get("multi_queue") is True,  # 老 data.json 没有这个字段：按关闭处理
     }
 
 
@@ -2799,9 +2819,11 @@ def mihomo_tun(d):
 
 
 def mh_tun_stack(stack, path=None):
-    """mihomo 实际要写的协议栈：没有 sing-tun 自有协议栈，「默认」按 mixed；内核没编译 gVisor（-v 的 Use tags 里没有 with_gvisor）时
+    """mihomo 实际要写的协议栈：没有 sing-tun 自有协议栈，「默认」按 system（v9.2.5 起；以前按 mixed。旁路由 ARM 小板上实测 system 更快，
+    且不依赖 gVisor。显式选了 mixed / gvisor 的照旧）；内核没编译 gVisor（-v 的 Use tags 里没有 with_gvisor）时
     gvisor / mixed 启动即报错、TUN 起不来，改用 system"""
-    stack = "mixed" if stack == "auto" else stack
+    if stack == "auto" or stack not in TUN_STACKS:
+        return "system"
     if stack in ("gvisor", "mixed") and not mh_has_gvisor(path):
         return "system"
     return stack
@@ -6053,6 +6075,13 @@ def sb_inbounds(d, v6, warn=None):
         if tp["stack"] in ("gvisor", "mixed") and tun.get("stack") != tp["stack"] and warn is not None:
             warn.append(f"当前 sing-box 内核没有编译 gVisor，TUN 协议栈 {tp['stack']} 已自动改用"
                         + ("默认（sing-tun 自有协议栈）" if "stack" not in tun else " system"))
+        if tp["multi_queue"]:
+            # v9.2.5 多队列（IFF_MULTI_QUEUE）：只在用 sing-tun 自有协议栈（不写 stack）时有效，且要 Linux、多核、1.15+ 内核
+            ok, why = sb_multi_queue_ok()
+            if ok and "stack" not in tun:
+                tun["multi_queue"] = True
+            elif warn is not None:
+                warn.append("TUN 多队列未启用：" + (why if not ok else "只在协议栈为「默认」（sing-tun 自有栈）时生效"))
         inbounds.append(tun)
     return inbounds
 
@@ -6745,6 +6774,36 @@ def sb_tun_native(path=None):
         m = re.match(r"(\\d+)\\.(\\d+)\\.", v or "")
         return bool(v), bool(m) and (int(m.group(1)), int(m.group(2))) >= (1, 15)
     return _cap_cached(_NATIVE, path, False, probe)
+
+
+def sb_kernel_mq(release=None):
+    """Linux 内核支不支持 TUN 多队列（IFF_MULTI_QUEUE，3.8 起）；读不出版本号按支持"""
+    if release is None:
+        try:
+            release = os.uname().release
+        except AttributeError:
+            return False
+    m = re.match(r"(\\d+)\\.(\\d+)", release or "")
+    return not m or (int(m.group(1)), int(m.group(2))) >= (3, 8)
+
+
+def sb_multi_queue_ok(path=None):
+    """TUN 多队列能不能开 → (能否, 不能的原因)。条件：Linux（3.8+ 内核）、可用 CPU 多于 1 核、sing-box 1.15+（sing-tun 自有协议栈）"""
+    import sys as _sys
+    if not _sys.platform.startswith("linux"):
+        return False, "只支持 Linux"
+    if not sb_kernel_mq():
+        return False, "系统内核太旧（需要 3.8 及以上）"
+    try:
+        from .sysopt import cpu_list
+        n = len(cpu_list())
+    except Exception:
+        n = os.cpu_count() or 1
+    if n <= 1:
+        return False, "只有 1 个 CPU 核心，多队列没有收益（单核设备已禁用）"
+    if not sb_tun_native(path):
+        return False, "需要 sing-box 1.15 及以上（sing-tun 自有协议栈）"
+    return True, ""
 
 
 def sb_tun_stack(stack, path=None):
@@ -7650,6 +7709,10 @@ from .base import BASE, DATA_FILE, PANEL_VERSION
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(DATA_FILE)), "backups")
 # 保留最近多少个备份
 KEEP_N = 10
+# v9.2.5：备份目录合计上限与剩余空间底线（小板子的 eMMC / TF 卡常常只有几百 MB 可用）：
+# 超过合计上限时从最旧的删起（最新的一份和正要恢复的那份始终保留）；剩余空间低于底线时自动备份直接跳过，不把存储写满
+BACKUP_MAX_TOTAL = 48 << 20
+BACKUP_MIN_FREE = 24 << 20
 
 # 打包进备份的文件（相对于 BASE / DATA_FILE 所在目录）
 _FILES = [
@@ -7688,16 +7751,20 @@ def _parse_name(name):
     return m.group(1) if m else None
 
 
-def create(version=None, auto=False, keep=None):
+def create(version=None, auto=False, keep=None, force=False):
     """创建备份。返回 (ok, name_or_message)。
 
     version: 打上的版本号，默认当前 PANEL_VERSION。
     auto: 是否自动备份（更新前调用），失败不抛异常。
     keep: 清理旧备份时必须保留的文件名（恢复时保住正要恢复的那个）。
+    force: 不检查剩余空间底线（恢复前的防呆备份：空间紧张时也不该拦住回滚，真写不下照样报错中止）。
     """
     version = version or PANEL_VERSION
     try:
         _ensure_dir()
+        free = _free_bytes()
+        if not force and free is not None and free < BACKUP_MIN_FREE:
+            return False, "存储剩余 %d MB，低于 %d MB，跳过备份（清理日志或旧备份后再试）" % (free >> 20, BACKUP_MIN_FREE >> 20)
         name = _backup_name(version)
         path = os.path.join(BACKUP_DIR, name)
         # 同名极小概率冲突（同一秒两次），加后缀
@@ -7771,11 +7838,31 @@ def delete(name):
         return False, str(e)
 
 
-def cleanup(keep=KEEP_N, protect=None):
-    """只保留最近 keep 个，删除最旧的（protect 指定的文件不删）。"""
+def _free_bytes():
+    try:
+        st = os.statvfs(BACKUP_DIR)
+        return st.f_bavail * st.f_frsize
+    except (OSError, AttributeError):
+        return None
+
+
+def cleanup(keep=KEEP_N, protect=None, max_total=None):
+    """只保留最近 keep 个、合计不超过 max_total 字节（默认 BACKUP_MAX_TOTAL），删除最旧的。
+    protect 指定的文件和最新的一份始终保留（哪怕它一个就超过上限）。"""
+    max_total = BACKUP_MAX_TOTAL if max_total is None else max_total
     allb = list()
     items = [it for it in allb if it["name"] != protect]
-    for it in items[keep - (len(allb) - len(items)):]:
+    drop = items[keep - (len(allb) - len(items)):]
+    kept = [it for it in allb if it not in drop]
+    total = sum(it["size"] for it in kept)
+    for it in reversed(kept):  # 从最旧的删起
+        if total <= max_total:
+            break
+        if it["name"] == protect or it is allb[0]:
+            continue
+        drop.append(it)
+        total -= it["size"]
+    for it in drop:
         try:
             os.unlink(os.path.join(BACKUP_DIR, it["name"]))
         except OSError:
@@ -7824,7 +7911,7 @@ def restore(name, check_data=None, apply_data=None):
                     except ValueError as e:
                         return False, "备份里的设置无效，未恢复（当前设置未改动）：%s" % e
                 # 防呆：先备份当前。已有 10 个备份时新备份会挤掉最旧的一个——恰好是要恢复的这个时以前会把它删掉
-                ok, cur = create(keep=name)
+                ok, cur = create(keep=name, force=True)
                 if not ok:
                     return False, "备份当前版本失败，中止恢复：%s" % cur
                 # 搬文件
@@ -11252,9 +11339,11 @@ _SRC['shunt.failover'] = '''"""主备故障转移（v9.2.0）：故障转移组�
   （interrupt_exist_connections: false），之后的新连接走新成员。
   探测按顺序、找到第一个通的就停：主用正常时每轮只测主用一个，开销和 urltest 差不多。全部不通时保持当前选择。
 """
-import json, threading, time, urllib.parse
+import json, os, threading, time, urllib.parse
+from collections import deque
 
 from .errlog import log_err
+from .base import PANEL_DIR
 
 MIN_IV = 30
 _FO_STATE = {}  # 组名 → {"t": 上次检查, "now": 当前选中, "alive": 选中的成员, "tested": {成员: 毫秒 / 0}, "switched": 时间}
@@ -11321,7 +11410,9 @@ def check_group(name, members, url):
         code, _ = core("PUT", f"/proxies/{urllib.parse.quote(name, safe='')}", {"name": pick}, timeout=5)
         switched = code < 300
         if switched:
-            print(time.strftime("%F %T"), f"[failover] {name}：{now} → {pick}" + ("（主用恢复，切回）" if members and pick == members[0] else "（前面的成员不通）"), flush=True)
+            why = "主用恢复，切回" if members and pick == members[0] else "前面的成员不通"
+            print(time.strftime("%F %T"), f"[failover] {name}：{now} → {pick}（{why}）", flush=True)
+            fo_record("switch", group=name, src=now, dst=pick, why="主备优先（面板切换）：" + why)
             now = pick
     with _FO_LOCK:
         st = _FO_STATE.setdefault(name, {})
@@ -11359,6 +11450,10 @@ def fo_loop():
             tick()
         except Exception as e:
             log_err("故障转移组", e)
+        try:
+            fo_watch_tick()
+        except Exception as e:
+            log_err("故障切换记录", e)
         time.sleep(10)
 
 
@@ -11390,6 +11485,168 @@ def fo_api_post(b):
         sw, pick = check_group(name, members, url)
         res[name] = {"switched": sw, "now": pick}
     return 200, {"results": res, "message": "已检查 " + "、".join(res)}
+
+
+# ---------------------------------------------------------------- v9.2.5：节点连续失败与切换记录
+# 只记录、不切换：mihomo 的 fallback / url-test 组、sing-box 的 urltest 组由内核自己切，sing-box 的「主备优先」组由上面的 check_group 切。
+# 这里每 FO_WATCH_IV 秒读一次 /proxies：组的当前选中（now）变了记一条「切换」；节点最近一次测速（history 最后一条）连续失败
+# FO_FAIL_N 次记一条「连续失败」，之后恢复记一条「恢复」。最近 FO_EV_MAX（v9.2.7 起 5）条存在 failover_events.json（面板重启后照常显示）。
+FO_EV_FILE = os.path.join(PANEL_DIR, "failover_events.json")
+FO_EV_MAX = 5  # v9.2.7：只保留最新 5 条（以前 50 条）；新事件写入时挤掉更早的，读到超过 5 条的旧文件时裁剪并写回
+FO_FAIL_N = 3
+FO_WATCH_IV = 30
+FO_AUTO_TYPES = ("Fallback", "URLTest")  # clash API 里的组类型（mihomo 与 sing-box 一样）；Selector 是用户手动选的，不算故障切换
+_FO_EV = {"q": None}
+_FO_EV_LOCK = threading.Lock()
+_FO_WATCH = {"now": {}, "seen": {}, "fail": {}, "t": 0.0}  # 组 → 当前选中；节点 → 最后一条测速的时间；节点 → 连续失败次数
+
+
+def _fo_events():
+    """事件队列（第一次用时从文件读；调用方持有 _FO_EV_LOCK）"""
+    if _FO_EV["q"] is None:
+        from .data import read_json, write_json
+        raw = read_json(FO_EV_FILE, [])
+        good = [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+        _FO_EV["q"] = deque(good[:FO_EV_MAX], maxlen=FO_EV_MAX)  # 文件里新的在前：只留最前面 FO_EV_MAX 条
+        if isinstance(raw, list) and len(raw) > FO_EV_MAX:
+            # 9.2.5 / 9.2.6 预览存了最多 50 条：读到时裁剪并写回，文件里也只剩最新 FO_EV_MAX 条
+            try:
+                write_json(FO_EV_FILE, list(_FO_EV["q"]))
+            except OSError as e:
+                log_err("故障切换记录", e)
+    return _FO_EV["q"]
+
+
+def fo_record(kind, **kw):
+    """记一条事件：kind = switch / fail / recover；新的在前"""
+    from .data import write_json
+    ev = {"t": int(time.time()), "kind": kind}
+    ev.update({k: str(v)[:120] if isinstance(v, str) else v for k, v in kw.items()})
+    with _FO_EV_LOCK:
+        q = _fo_events()
+        q.appendleft(ev)
+        snap = list(q)
+        try:
+            write_json(FO_EV_FILE, snap)
+        except OSError as e:
+            log_err("故障切换记录", e)
+    return ev
+
+
+def fo_events(limit=FO_EV_MAX):
+    with _FO_EV_LOCK:
+        return list(_fo_events())[:max(0, int(limit))]
+
+
+def fo_clear():
+    from .data import write_json
+    with _FO_EV_LOCK:
+        _fo_events().clear()
+        try:
+            write_json(FO_EV_FILE, [])
+        except OSError as e:
+            log_err("故障切换记录", e)
+
+
+def _fo_last(p):
+    """节点最近一次测速 → (时间串, 延迟)；没有记录返回 (None, None)"""
+    h = p.get("history") if isinstance(p, dict) else None
+    if not isinstance(h, list) or not h or not isinstance(h[-1], dict):
+        return None, None
+    try:
+        return str(h[-1].get("time") or ""), int(h[-1].get("delay") or 0)
+    except (TypeError, ValueError):
+        return str(h[-1].get("time") or ""), 0
+
+
+def fo_watch(px):
+    """比较一份 /proxies 与上一份，记下切换 / 连续失败 / 恢复。返回本轮新记的事件。px 为 None（内核没运行）时不改状态"""
+    if not isinstance(px, dict):
+        return []
+    st, out = _FO_WATCH, []
+    first = not st["now"] and not st["seen"]
+    if not first and fo_reset_like(px, st["seen"]):
+        # 内核重启 / 热重载（mihomo PUT /configs 会重建全部节点）后测速记录全部清空、组回到默认选中：
+        # 以前有记录的节点大多变成没记录，按「重新开始」处理，不把每个节点都记成失败、也不把组的复位记成切换
+        first = True
+    now_map, seen, fail = {}, {}, {}
+    for name, p in px.items():
+        if not isinstance(p, dict):
+            continue
+        t = p.get("type")
+        if t in FO_AUTO_TYPES:
+            cur = str(p.get("now") or "")
+            now_map[name] = cur
+            old = st["now"].get(name)
+            if old and cur and old != cur and not first:
+                ot, od = _fo_last(px.get(old) or {})
+                why = ("原节点不通" if od == 0 and ot is not None else
+                       "按顺序取第一个可用的节点" if t == "Fallback" else "自动测速选了延迟更低的节点")
+                out.append(fo_record("switch", group=name, src=old, dst=cur, why=why))
+            continue
+        if isinstance(p.get("all"), list):  # 其他策略组
+            continue
+        tm, dl = _fo_last(p)
+        prev_t, cnt = st["seen"].get(name), st["fail"].get(name, 0)
+        if tm is None:
+            # sing-box 测速失败时直接删掉这个节点的 history：以前有过记录、现在没有，每轮按失败一次计（从没测过的节点不算）
+            if prev_t is not None and not first:
+                cnt += 1
+                seen[name] = ""
+            fail[name] = cnt
+        else:
+            seen[name] = tm
+            if tm != prev_t and not first:
+                cnt = cnt + 1 if dl == 0 else 0
+                if dl > 0 and st["fail"].get(name, 0) >= FO_FAIL_N:
+                    out.append(fo_record("recover", node=name, delay=dl))
+            elif first:
+                cnt = 1 if dl == 0 else 0
+            fail[name] = cnt
+        if cnt == FO_FAIL_N and st["fail"].get(name, 0) < FO_FAIL_N:
+            out.append(fo_record("fail", node=name, count=cnt))
+    # 每轮按当前 /proxies 重建三张表：删掉的节点 / 组不会一直留在内存里
+    st.update(now=now_map, seen=seen, fail={k: v for k, v in fail.items() if v}, t=time.time())
+    return out
+
+
+def fo_reset_like(px, seen):
+    """这份 /proxies 像不像内核刚重启：以前有过测速记录的节点里，至少 3 个且 80% 以上现在没有记录"""
+    had = [n for n, t in seen.items() if t]
+    if len(had) < 3:
+        return False
+    gone = sum(1 for n in had if not ((px.get(n) or {}).get("history") if isinstance(px.get(n), dict) else None))
+    return gone >= 0.8 * len(had)
+
+
+def fo_watch_tick(force=False):
+    """fo_loop 每 10 秒调一次，实际每 FO_WATCH_IV 秒读一次 /proxies；全节点测速时跳过（大批测速结果不算故障）"""
+    from .base import mass_testing
+    from .corehttp import core_json
+    if not force and time.time() - _FO_WATCH["t"] < FO_WATCH_IV:
+        return []
+    if mass_testing():
+        return []
+    from .sb_config import core_pid
+    pid = core_pid()
+    if pid != _FO_WATCH.get("pid"):  # 内核换了进程（重启 / 切换内核）：重新建基线
+        _FO_WATCH.update(now={}, seen={}, fail={}, pid=pid)
+    j = core_json("/proxies", timeout=5)
+    if j is None:
+        _FO_WATCH["t"] = time.time()
+        return []
+    return fo_watch(j.get("proxies"))
+
+
+def fo_events_api(q=None):
+    """GET /api/failover/events：最近的事件 + 哪些组由谁负责切换"""
+    from .data import load
+    from .sb_common import active_core
+    d = load()
+    core = active_core(d)
+    auto = [g.get("name") for g in d.get("custom_groups") or [] if isinstance(g, dict) and g.get("type") in ("fallback", "url-test")]
+    return 200, {"events": fo_events(), "core": core, "fail_n": FO_FAIL_N, "interval": FO_WATCH_IV, "max": FO_EV_MAX, "auto_groups": auto,
+                 "panel_groups": [n for n, *_ in plan(d)]}
 '''
 _SRC['shunt.gguard'] = '''"""Google 专用组（预览）：Google / YouTube / Gemini / Play 只走名字里不带中国 / 中转等字样的节点。
 
@@ -14613,7 +14870,7 @@ def mh_update_subs(names):
 
 
 # ---------- 订阅更新：「定时更新订阅」（每天定点）与「订阅自动更新」（按间隔）共用一个任务 ----------
-# v9.2.4 及以前两套调度各管各的：sing-box 下同一轮里自动更新先下载 + 重载一次，紧接着定时任务再下载 + 重载一次；
+# v9.2.5 及以前两套调度各管各的：sing-box 下同一轮里自动更新先下载 + 重载一次，紧接着定时任务再下载 + 重载一次；
 # 自动更新不加锁，与手动「立即执行」/ 订阅页「更新」能同时拉同一个订阅、同时重载；自动更新失败不重试、不恢复选择组。
 # 现在：一把锁（SUB_LOCK）串行，同一轮的来源合并成一次下载、一次 refresh_regions（最多一次重载），
 # 30 分钟内刚成功更新过的订阅定时任务不再重复拉取；锁被占时定时 / 自动更新留在待办里下一轮再试，不丢弃
@@ -16421,8 +16678,9 @@ def _sig(path):
         return None
 
 
-def _sub_nodes(s):
-    """一个订阅的节点（mihomo 格式的字典）：sing-box 下用面板缓存；否则解析 mihomo 下载的 ./providers/<名>.yaml"""
+def _sub_nodes(s, keep_sb=False):
+    """一个订阅的节点（mihomo 格式的字典）：sing-box 下用面板缓存；否则解析 mihomo 下载的 ./providers/<名>.yaml。
+    keep_sb：保留 sing-box JSON 订阅的原样出站（_sb，分享不了，但性能体检要看它的加密方式）"""
     from .groups import sub_cache_path, sub_removed
     gone = set(sub_removed(s))
     paths = [sub_cache_path(s["name"]), os.path.join(CONF_DIR, "providers", safe(s["name"]) + ".yaml")]
@@ -16449,10 +16707,15 @@ def _sub_nodes(s):
         # v9.2.4：sing-box JSON 订阅的节点只有原样的 sing-box 出站（_sb），没有 server / port，类型名也是 sing-box 的
         # （shadowsocks、socks…）：以前照样列为可选节点，选了以后 base64 分享里没有它，Clash 配置里写成 type: shadowsocks，
         # 客户端报 unsupport proxy type 整份加载失败。这类节点分享不了，不再列出
-        nodes = [p for p in nodes if isinstance(p, dict) and not p.get("_sb")]
+        nodes = [p for p in nodes if isinstance(p, dict) and (keep_sb or not p.get("_sb"))]
         if nodes:
             return [p for p in nodes if str(p.get("name") or "") not in gone]
     return []
+
+
+def share_nodes_raw(s):
+    """一个订阅的全部节点（含 sing-box 原样出站），只读：调用方不要修改返回的字典（与分享列表共用缓存）"""
+    return _sub_nodes(s, keep_sb=True)
 
 
 def sub_proxies(d):
@@ -16789,6 +17052,405 @@ def share_api_post(b):
     except LookupError as e:
         return 404, {"message": str(e)}
     return 200, {"message": res.get("msg", ""), "shares": share_view(load())}
+'''
+_SRC['shunt.perf'] = '''# SPDX-License-Identifier: GPL-3.0-or-later
+"""板子性能体检（v9.2.5）：测速时看内核进程 CPU、CPU 核数与 AES 硬件加速、主网口协商速率，判断瓶颈在 CPU、网口还是节点；
+无 AES 加速时列出用 AES 类加密的节点；TUN 协议栈手动对比的引导；按设备汇总当前连接的流量与所用节点。
+
+- 全部只读：不改任何设置、不切节点、不重启内核。
+- /proc、/sys 读不到（非 Linux、容器限制、内核没运行）时对应项返回 None / 「未知」，接口照常 200，不让面板报错。
+- 采样：两次读 /proc/<pid>/stat、/proc/stat、网口计数器，间隔 PF_GAP 秒；PF_TTL 秒内的并发请求共用同一份结果
+  （测速时前端每 1.5 秒轮询，多个浏览器同时打开也只采样一次）。
+- 模块里的顶层名字都带 pf_ 前缀（server.py 把所有模块摊平到一个命名空间）。
+"""
+import os, re, sys, threading, time
+
+from . import sysopt as _so
+
+PF_GAP = 0.5
+PF_TTL = 1.0
+PF_LOCK = threading.Lock()
+PF_LAST = {"t": 0.0, "v": None}
+PF_AES_RX = re.compile(r"aes", re.I)
+
+
+def pf_read(path):
+    """读小文件；读不到返回 None（rfile 读不到返回空串，与「文件为空」分不清）"""
+    try:
+        with open(path) as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def pf_cpuinfo(text=None):
+    """CPU 型号、核数、有没有 AES 硬件加速。aes：True / False / None（读不到 /proc/cpuinfo，或其中没有 flags / Features 行）"""
+    if text is None:
+        text = pf_read(os.path.join(_so.PROC, "cpuinfo"))
+    try:
+        cores = len(_so.cpu_list())
+    except Exception:
+        cores = os.cpu_count() or 1
+    model, feats, seen = "", set(), False
+    for ln in (text or "").splitlines():
+        k, _, v = ln.partition(":")
+        k = k.strip().lower()
+        if k in ("flags", "features"):  # x86：flags；ARM（32 / 64 位）：Features
+            seen = True
+            feats.update(v.split())
+        elif not model and k in ("model name", "hardware", "model", "cpu model", "processor") and v.strip() and not v.strip().isdigit():
+            model = v.strip()
+    aes = ("aes" in feats) if seen else None
+    try:
+        arch = os.uname().machine
+    except AttributeError:
+        arch = sys.platform
+    return {"cores": max(1, cores), "aes": aes, "model": model[:80], "arch": arch}
+
+
+def pf_cpu_times(text=None):
+    """{"cpu": (忙, 总), "cpu0": …}：/proc/stat 的 jiffies。读不到返回 {}"""
+    if text is None:
+        text = pf_read(os.path.join(_so.PROC, "stat"))
+    out = {}
+    for ln in (text or "").splitlines():
+        if not ln.startswith("cpu"):
+            continue
+        f = ln.split()
+        try:
+            v = [int(x) for x in f[1:9]]  # user nice system idle iowait irq softirq steal（guest 已含在 user 里）
+        except ValueError:
+            continue
+        if len(v) < 4:
+            continue
+        idle = v[3] + (v[4] if len(v) > 4 else 0)
+        out[f[0]] = (sum(v) - idle, sum(v))
+    return out
+
+
+def pf_proc_ticks(pid):
+    """进程累计 CPU 时间（utime + stime，单位 jiffies）；进程不存在 / 读不到返回 None"""
+    if not pid:
+        return None
+    s = pf_read(os.path.join(_so.PROC, str(int(pid)), "stat"))
+    if not s or ")" not in s:
+        return None
+    f = s.rsplit(")", 1)[1].split()
+    try:
+        return int(f[11]) + int(f[12])
+    except (IndexError, ValueError):
+        return None
+
+
+def pf_iface():
+    """主网口：IPv4 默认路由走的网卡，没有时取第一块物理网卡；都没有返回空串"""
+    try:
+        r = _so.route_ifaces() or _so.net_ifaces()
+    except Exception:
+        r = []
+    return r[0] if r else ""
+
+
+def pf_link_speed(ifc):
+    """网口协商速率（Mbps）：/sys/class/net/<if>/speed。读不到 / -1（未连接、虚拟网卡、WiFi）返回 None"""
+    if not ifc or "/" in ifc:
+        return None
+    s = pf_read(os.path.join(_so.SYS_ROOT, "class", "net", ifc, "speed"))
+    try:
+        v = int((s or "").strip())
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
+def pf_nic_bytes(ifc):
+    if not ifc or "/" in ifc:
+        return None
+    base = os.path.join(_so.SYS_ROOT, "class", "net", ifc, "statistics")
+    try:
+        return int(pf_read(os.path.join(base, "rx_bytes")) or ""), int(pf_read(os.path.join(base, "tx_bytes")) or "")
+    except ValueError:
+        return None
+
+
+def pf_core_pid():
+    try:
+        from .sb_config import core_pid
+        return core_pid()
+    except Exception:
+        return 0
+
+
+def pf_snap(pid, ifc):
+    return {"t": time.monotonic(), "proc": pf_proc_ticks(pid), "cpu": pf_cpu_times(), "nic": pf_nic_bytes(ifc)}
+
+
+def pf_delta(a, b, hz=None):
+    """两次采样 → 内核进程 CPU（% 单核）、整机 CPU 忙（%）、最忙的一个核（%）、网口收 / 发速率（Mbps）"""
+    dt = max(b["t"] - a["t"], 1e-3)
+    hz = hz or pf_clk_tck()
+    out = {"core_pct": None, "cpu_pct": None, "cpu_max": None, "rx_mbps": None, "tx_mbps": None}
+    if a["proc"] is not None and b["proc"] is not None and b["proc"] >= a["proc"]:
+        out["core_pct"] = round((b["proc"] - a["proc"]) / hz / dt * 100, 1)
+    per = []
+    for k, (busy1, tot1) in b["cpu"].items():
+        if k not in a["cpu"]:
+            continue
+        busy0, tot0 = a["cpu"][k]
+        dtot = tot1 - tot0
+        if dtot <= 0:
+            continue
+        pct = round(max(0, min(100, (busy1 - busy0) / dtot * 100)), 1)
+        if k == "cpu":
+            out["cpu_pct"] = pct
+        else:
+            per.append(pct)
+    if per:
+        out["cpu_max"] = max(per)
+    elif out["cpu_pct"] is not None:
+        out["cpu_max"] = out["cpu_pct"]
+    if a["nic"] and b["nic"]:
+        rx, tx = b["nic"][0] - a["nic"][0], b["nic"][1] - a["nic"][1]
+        if rx >= 0 and tx >= 0:  # 计数器回绕 / 网卡重建时跳过
+            out["rx_mbps"], out["tx_mbps"] = round(rx * 8 / dt / 1e6, 1), round(tx * 8 / dt / 1e6, 1)
+    return out
+
+
+def pf_clk_tck():
+    try:
+        return os.sysconf("SC_CLK_TCK") or 100
+    except (AttributeError, ValueError, OSError):
+        return 100
+
+
+def pf_judge(m, testing=False):
+    """瓶颈判断 → (代码, 说明)。代码：nic 网口封顶 / cpu CPU 打满 / cpu_one 单核打满 / node 节点或线路 / idle 没有负载 / unknown 读不到"""
+    cores = m.get("cores") or 1
+    link, peak = m.get("link_mbps"), max(m.get("rx_mbps") or 0, m.get("tx_mbps") or 0)
+    cpu, cmax, core = m.get("cpu_pct"), m.get("cpu_max"), m.get("core_pct")
+    if cpu is None and core is None and m.get("rx_mbps") is None:
+        return "unknown", "读不到 /proc 和网口计数器（非 Linux 或容器限制），无法判断"
+    aes_tip = "；这块板子没有 AES 硬件加速，节点改用 chacha20-poly1305 / Reality 能明显省 CPU" if m.get("aes") is False else ""
+    if link and peak >= link * 0.85:
+        return "nic", f"网口封顶：{m.get('iface') or '网口'} 协商速率 {link} Mbps，当前已跑到 {peak:g} Mbps。换千兆 / 2.5G 网口或网线（看是否协商成百兆）才能更快"
+    if (cpu is not None and cpu >= 90) or (core is not None and core >= 90 * cores):
+        return "cpu", f"CPU 打满：整机 {cpu if cpu is not None else '-'}%，内核进程 {core if core is not None else '-'}%（{cores} 核，满载 {100 * cores}%）" + aes_tip
+    if cores > 1 and cmax is not None and cmax >= 95:
+        return "cpu_one", f"单个核心打满（{cmax:g}%），其余核心有空闲：多为单条连接的加解密或网卡中断集中在一个核。可在 设置 → 系统优化 打开「多核网络分流（RPS）」" + aes_tip
+    if not testing and peak < 5:
+        return "idle", "当前没有明显流量：点上面的「测速」或在局域网设备上跑一次测速，测速过程中再看"
+    return "node", "CPU 和网口都没跑满：瓶颈在节点 / 线路（或测速源），换节点、换时段或用带宽择优比较"
+
+
+def pf_measure():
+    """采样一次（带 TTL 缓存与锁：并发请求不重复 sleep）"""
+    with PF_LOCK:
+        now = time.monotonic()
+        if PF_LAST["v"] is not None and now - PF_LAST["t"] < PF_TTL:
+            return dict(PF_LAST["v"])
+        pid, ifc = pf_core_pid(), pf_iface()
+        a = pf_snap(pid, ifc)
+        time.sleep(PF_GAP)
+        b = pf_snap(pid, ifc)
+        v = pf_delta(a, b)
+        v.update(pid=pid or 0, iface=ifc, link_mbps=pf_link_speed(ifc), running=bool(pid) and a["proc"] is not None)
+        PF_LAST.update(t=time.monotonic(), v=v)
+        return dict(v)
+
+
+def pf_speed_live():
+    """测速页正在测的实时速度（没在测返回 None）"""
+    try:
+        from . import speedtest
+        j = speedtest.JOB
+        if j.get("running"):
+            return {"kind": j.get("kind"), "phase": j.get("phase"), "mbps": j.get("mbps")}
+    except Exception:
+        pass
+    return None
+
+
+def pf_status():
+    """GET /api/perf：体检结果（读不到的项为 None）"""
+    info = pf_cpuinfo()
+    try:
+        m = pf_measure()
+    except Exception as e:  # 采样本身不该失败；万一失败也不让面板 500
+        from .errlog import log_err
+        log_err("性能体检", e)
+        m = {"core_pct": None, "cpu_pct": None, "cpu_max": None, "rx_mbps": None, "tx_mbps": None, "pid": 0, "iface": "",
+             "link_mbps": None, "running": False}
+    m.update(info)
+    live = pf_speed_live()
+    code, msg = pf_judge(m, testing=bool(live and live.get("phase") == "download"))
+    m.update(verdict=code, verdict_msg=msg, speed=live, linux=sys.platform.startswith("linux"))
+    return m
+
+
+# ---------------------------------------------------------------- 加密方式提示
+def pf_cipher_of(p):
+    """节点的加密方式（只看 Shadowsocks / VMess 显式写的；TLS / Reality / QUIC 类由 TLS 协商，Go 在没有 AES 加速时自己优先 ChaCha20）"""
+    if not isinstance(p, dict):
+        return ""
+    sb = p.get("_sb") if isinstance(p.get("_sb"), dict) else None
+    if sb:  # sing-box JSON 订阅的原样出站
+        t = sb.get("type")
+        c = sb.get("method") if t == "shadowsocks" else sb.get("security") if t == "vmess" else ""
+    else:
+        t = p.get("type")
+        c = p.get("cipher") if t in ("ss", "vmess") else ""
+    return str(c or "").strip().lower()
+
+
+def pf_is_aes(cipher):
+    return bool(cipher) and bool(PF_AES_RX.search(cipher))
+
+
+def pf_aes_nodes(d=None, limit=200):
+    """用 AES 类加密的节点：[{name, sub, cipher}]（手动节点 sub 为空）。读不到订阅缓存的订阅跳过"""
+    from .data import load
+    from .share import share_nodes_raw
+    d = d or load()
+    out = []
+    for n in d.get("nodes") or []:
+        p = n.get("proxy") if isinstance(n, dict) else None
+        c = pf_cipher_of(p)
+        if pf_is_aes(c):
+            out.append({"name": str(p.get("name") or ""), "sub": "", "cipher": c})
+    for s in d.get("subs") or []:
+        if not isinstance(s, dict) or not s.get("name"):
+            continue
+        try:
+            nodes = share_nodes_raw(s)
+        except Exception:
+            continue
+        for p in nodes:
+            c = pf_cipher_of(p)
+            if pf_is_aes(c):
+                out.append({"name": str(p.get("name") or (p.get("_sb") or {}).get("tag") or ""), "sub": s["name"], "cipher": c})
+    return out[:limit], len(out)
+
+
+def pf_cipher_status(d=None):
+    """GET /api/perf/cipher：有 AES 加速时不列（AES-GCM 本来就快）；aes 读不到时照常列出，由用户判断"""
+    info = pf_cpuinfo()
+    if info["aes"] is True:
+        return {"aes": True, "nodes": [], "total": 0, "message": "CPU 有 AES 硬件加速，AES-GCM 节点不用换"}
+    nodes, total = pf_aes_nodes(d)
+    tip = ("CPU 没有 AES 硬件加速：下面这些节点用 AES 加密，加解密全靠 CPU 软件计算，速度会被 CPU 卡住。"
+           "可以让机场 / 自建服务端换成 chacha20-ietf-poly1305（SS 2022 用 2022-blake3-chacha20-poly1305）或 VLESS Reality。只是提示，面板不会改节点"
+           if info["aes"] is False else "读不到 CPU 是否有 AES 加速（/proc/cpuinfo 不可读），下面是用 AES 加密的节点，供参考")
+    return {"aes": info["aes"], "nodes": nodes, "total": total, "message": tip if total else (
+        "没有发现用 AES 加密的 Shadowsocks / VMess 节点" if info["aes"] is False else tip)}
+
+
+# ---------------------------------------------------------------- TUN 协议栈对比（只读引导）
+def pf_ab_guide(d=None):
+    """当前内核可选的协议栈和按顺序手动对比的步骤。不自动切换：见 CHANGELOG v9.2.5 的说明"""
+    from .data import load
+    from .mihomo import mh_bin, mh_has_gvisor
+    from .sb_common import active_core
+    d = d or load()
+    core = active_core(d)
+    tun = d.get("tun") if isinstance(d.get("tun"), dict) else {}
+    cur = tun.get("stack") or "auto"
+    stacks = []
+    try:
+        if core == "singbox":
+            from .sb_config import sb_has_gvisor, sb_tun_native
+            if sb_tun_native():
+                stacks.append({"v": "auto", "label": "默认（sing-tun 自有栈）"})
+            stacks.append({"v": "system", "label": "system"})
+            if sb_has_gvisor():
+                stacks += [{"v": "mixed", "label": "mixed"}, {"v": "gvisor", "label": "gvisor"}]
+        else:
+            stacks.append({"v": "system", "label": "system（默认）"})
+            if mh_has_gvisor(mh_bin(core)):
+                stacks += [{"v": "mixed", "label": "mixed"}, {"v": "gvisor", "label": "gvisor"}]
+    except Exception:
+        stacks = stacks or [{"v": "system", "label": "system"}]
+    return {"core": core, "proxy_mode": d.get("proxy_mode"), "stack": cur, "auto_redirect": bool(tun.get("auto_redirect", True)),
+            "stacks": stacks}
+
+
+# ---------------------------------------------------------------- 按设备的实时流量
+PF_DEV_LOCK = threading.Lock()
+# 上一次的连接快照：ts 快照时间、c {连接 id: (上传, 下载)}（算速率用）、out 上次的汇总结果（同一份快照直接复用）
+PF_DEV_PREV = {"ts": 0.0, "c": {}, "out": None, "ok": False}
+PF_DEV_MAX = 200
+
+
+def pf_dev_aggregate(conns, prev, dt):
+    """连接列表 → 每个源 IP 的 {ip, conns, up, down, up_rate, down_rate, node, nodes}；同时返回本轮的 {id: (上传, 下载)}"""
+    devs, cur = {}, {}
+    for x in conns or []:
+        if not isinstance(x, dict):
+            continue
+        md = x.get("metadata") or {}
+        ip = str(md.get("sourceIP") or "") or "?"
+        try:
+            up, dn = int(x.get("upload") or 0), int(x.get("download") or 0)
+        except (TypeError, ValueError):
+            up = dn = 0
+        cid = x.get("id")
+        if cid is not None:
+            cur[cid] = (up, dn)
+        pu, pd = prev.get(cid, (up, dn)) if cid is not None else (up, dn)
+        ru, rd = max(0, up - pu), max(0, dn - pd)
+        ch = x.get("chains") or ["DIRECT"]
+        node = str(ch[0]) if isinstance(ch, list) and ch else "DIRECT"
+        e = devs.setdefault(ip, {"ip": ip, "conns": 0, "up": 0, "down": 0, "up_rate": 0.0, "down_rate": 0.0, "_n": {}})
+        e["conns"] += 1
+        e["up"] += up
+        e["down"] += dn
+        e["up_rate"] += ru / dt if dt else 0
+        e["down_rate"] += rd / dt if dt else 0
+        nb = e["_n"].setdefault(node, [0, 0])
+        nb[0] += 1
+        nb[1] += up + dn + (ru + rd) * 1000  # 正在跑流量的节点排前面
+    out = []
+    for e in devs.values():
+        ns = sorted(e.pop("_n").items(), key=lambda kv: (-kv[1][1], -kv[1][0], kv[0]))
+        e["node"] = ns[0][0] if ns else ""
+        e["nodes"] = [{"name": k, "conns": v[0]} for k, v in ns[:5]]
+        e["up_rate"], e["down_rate"] = int(e["up_rate"]), int(e["down_rate"])
+        out.append(e)
+    out.sort(key=lambda e: (-(e["down_rate"] + e["up_rate"]), -(e["down"] + e["up"]), e["ip"]))
+    return out, cur
+
+
+def pf_devtraffic():
+    """GET /api/devtraffic：按源 IP 汇总当前连接（与连接页共用 2 秒快照）。内核没运行时 running=False、devices=[]。
+    速率 = 两份快照之间的字节差 / 快照时间差：同一份快照（2 秒 TTL 内的重复请求、多个浏览器同时打开）直接复用上次结果，速率不会忽然归零"""
+    from . import core as pf_core_mod
+    c = pf_core_mod.conns_snapshot(timeout=5)
+    if not isinstance(c, dict):
+        with PF_DEV_LOCK:
+            PF_DEV_PREV.update(ts=0.0, c={}, out=None, ok=False)
+        return {"running": False, "devices": [], "total": 0, "rate_ok": False, "message": "内核没在运行或控制接口无响应"}
+    snap = pf_core_mod._CONN_SNAP.get("v")
+    ts = snap[0] if snap and snap[1] is c else time.time()
+    with PF_DEV_LOCK:
+        if PF_DEV_PREV["out"] is not None and PF_DEV_PREV["ts"] == ts:
+            devs, ok = PF_DEV_PREV["out"], PF_DEV_PREV["ok"]
+        else:
+            gap = ts - PF_DEV_PREV["ts"]
+            dt = gap if PF_DEV_PREV["ts"] and 0 < gap < 60 else 0
+            devs, cur = pf_dev_aggregate(c.get("connections") or [], PF_DEV_PREV["c"] if dt else {}, dt)
+            ok = bool(dt)
+            # 只保留本轮还在的连接：已关闭连接的记录随之丢弃，不会越积越多
+            PF_DEV_PREV.update(ts=ts, c=cur, out=devs, ok=ok)
+        devs = [dict(e) for e in devs]
+    total = len(devs)
+    devs = devs[:PF_DEV_MAX]
+    try:
+        from .devices import device_map
+        names = device_map([e["ip"] for e in devs if e["ip"] != "?"])
+    except Exception:
+        names = {}
+    for e in devs:
+        e["name"] = (names.get(e["ip"]) or {}).get("name", "")
+    return {"running": True, "devices": devs, "total": total, "rate_ok": ok}
 '''
 _SRC['shunt.entry'] = '''"""直连不进内核（入口旁路，v9.2.0，默认关）+ 关闭连接时清掉系统连接跟踪。
 
@@ -18330,7 +18992,7 @@ from urllib.parse import parse_qs, quote
 
 from . import adblock
 from .base import AB_DIR, AB_PRESETS, DNS_DEFAULT, DNS_LISTS, G_SEL, LOCK
-from .data import HISTORY_FILE, HISTORY_SKIP, load, migrate_names, read_json, save, update
+from .data import HISTORY_SKIP, history_list, load, migrate_names, save, update
 from .ruleutil import AB_SCOPES, complete_rule, norm_rule
 from .mihomo import bad_rule_policies, dns_cfg, rule_policy_names, validate_dns
 from .core import reload_core
@@ -18546,15 +19208,28 @@ class RulesAPI:
 
     @api_route("/api/history", "GET")
     def api_history_get(self, m, p, b, q):
-        h = read_json(HISTORY_FILE, [])
-        return self.send(200, [{"id": x["id"], "t": x["t"], "changed": x["changed"]} for x in h])
+        return self.send(200, [{"id": x["id"], "t": x.get("t") or 0, "changed": x.get("changed") or []} for x in history_list()])
 
     @api_route("/api/history", "POST")
     def api_history_post(self, m, p, b, q):
-        h = {x["id"]: x for x in read_json(HISTORY_FILE, [])}
+        h = {x["id"]: x for x in history_list()}
         snap = h.get(str(b.get("id") or ""))
         if not snap:
             return self.send(404, {"message": "快照不存在"})
+        return self._history_apply(snap)
+
+    @api_route("/api/history/undo", "POST")
+    def api_history_undo(self, m, p, b, q):
+        """v9.2.5 一键回到上一份：恢复最新的一份快照（= 最近一次修改之前的设置）。恢复本身也会把当前设置记成新快照，再点一次就是重做"""
+        h = history_list()
+        if not h:
+            return self.send(404, {"message": "还没有快照：修改过设置后才有可以回到的上一份"})
+        return self._history_apply(h[0])
+
+    def _history_apply(self, snap):
+
+        if not isinstance(snap.get("data"), dict):
+            return self.send(400, {"message": "快照内容损坏，无法恢复"})
 
         def apply_snap(d):
             d.update({k: v for k, v in snap["data"].items() if k not in HISTORY_SKIP})
@@ -18592,7 +19267,7 @@ import copy, os, re, ssl, threading, time
 from urllib.parse import parse_qs
 
 from .errlog import log_err
-from . import base, entry, failover, hotswitch, landing, share, stats, warp
+from . import base, entry, failover, hotswitch, landing, perf, share, stats, warp
 from . import gguard
 from .base import (
     CERT, DEFAULT_EXCLUDE, DNS_DEFAULT, KEY, LOCK, MIHOMO_BIN, PANEL_VERSION, PROXY_MODES, SMART_BIN, TUN_STACKS, UPD_STATE, upd_begin,
@@ -18605,7 +19280,7 @@ from .mihomo import dns_cfg, mh_bin, mh_has_gvisor, safe_dev
 from .core import reload_core
 from .corehttp import core
 from .sb_common import CORES, SB_STATE, active_core, core_conf_path
-from .sb_config import build_singbox, sb_has_gvisor, sb_is_fork, sb_tun_native, tun_stack_tip, sb_version
+from .sb_config import build_singbox, sb_has_gvisor, sb_is_fork, sb_multi_queue_ok, sb_tun_native, tun_stack_tip, sb_version
 from .sb_switch import core_switch_job
 from .panel_update import CHANNELS, self_rollback, self_update
 from .core_update import (
@@ -18627,6 +19302,17 @@ from .webapi_base import (
     _SVC_LOCK, SVC_JOB, SVC_NAMES, tp_apply, _svc_job, _svc_status, api_route, mask_secret, unmask, state_subs, config_view, ad_today,
     state_groups, state_nodes, rs_caches_sync, rs_drop_removed, sub_caches_sync, sub_refetch, RESTORE_KEYS, renames_note, probe_data
 )
+
+
+def _tun_mq_state(d):
+    """v9.2.5 TUN 多队列开关能不能用：只在 sing-box 下显示；不能用时给出原因（单核、非 Linux、内核 < 1.15）"""
+    if active_core(d) != "singbox":
+        return {"ok": False, "why": "mihomo 没有这个选项", "show": False}
+    try:
+        ok, why = sb_multi_queue_ok()
+    except Exception as e:
+        ok, why = False, str(e)[:80]
+    return {"ok": ok, "why": why, "show": True}
 
 
 class SysAPI:
@@ -18652,7 +19338,7 @@ class SysAPI:
         def fn(d):
             d["proxy_mode"], d["tproxy"] = mode, mode == "tproxy"
             t = d["tun"]
-            for k in ("stack", "auto_redirect", "strict_route", "quic_block", "mss_clamp"):
+            for k in ("stack", "auto_redirect", "strict_route", "quic_block", "mss_clamp", "multi_queue"):
                 if k in tun_in:
                     t[k] = tun_in[k] if k == "stack" else bool(tun_in[k])
             if "device" in tun_in:
@@ -18700,6 +19386,7 @@ class SysAPI:
                "panel_version": PANEL_VERSION, "update_channel": "preview" if d.get("update_channel") == "preview" else "stable", "core": active_core(d), "sb_fork": sb_is_fork(),
                "tun_gvisor": sb_has_gvisor() if active_core(d) == "singbox" else mh_has_gvisor(mh_bin(active_core(d))),
                "tun_native": active_core(d) == "singbox" and sb_tun_native(),
+               "tun_mq": _tun_mq_state(d),
                "wd": {"status": WD["status"], "last_check": WD["last_check"], "events": list(WD["events"]),
                       "counts": wd_counts(), "max": WD_EVENTS_MAX}}
         for k in ("mode", "subs", "rules", "rulesets", "bypass", "tests", "sub_interval", "ipv6", "https", "watchdog", "tg_token",
@@ -18979,6 +19666,33 @@ class SysAPI:
     @api_route("/api/failover", "POST")
     def api_failover_post(self, m, p, b, q):
         return self.send(*failover.fo_api_post(b if isinstance(b, dict) else {}))
+
+    @api_route("/api/failover/events", "GET")
+    def api_failover_events(self, m, p, b, q):
+        """v9.2.5：节点连续失败 / 故障切换记录（只记录，切换仍由内核 fallback / url-test 组与「主备优先」负责）"""
+        return self.send(*failover.fo_events_api())
+
+    @api_route("/api/failover/events", "DELETE")
+    def api_failover_events_clear(self, m, p, b, q):
+        failover.fo_clear()
+        return self.send(200, {"message": "已清空故障切换记录"})
+
+    # ---- v9.2.5：板子性能体检 / 加密方式提示 / 协议栈对比引导 / 按设备实时流量（全部只读）
+    @api_route("/api/perf", "GET")
+    def api_perf_get(self, m, p, b, q):
+        return self.send(200, perf.pf_status())
+
+    @api_route("/api/perf/cipher", "GET")
+    def api_perf_cipher(self, m, p, b, q):
+        return self.send(200, perf.pf_cipher_status())
+
+    @api_route("/api/perf/ab", "GET")
+    def api_perf_ab(self, m, p, b, q):
+        return self.send(200, perf.pf_ab_guide())
+
+    @api_route("/api/devtraffic", "GET")
+    def api_devtraffic_get(self, m, p, b, q):
+        return self.send(200, perf.pf_devtraffic())
 
     @api_route("/api/switch", "GET")
     def api_switch_get(self, m, p, b, q):
