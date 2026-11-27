@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shunt 分流 — 详细使用说明 | Alpine 旁路由透明代理面板</title>
+<meta name="description" content="Shunt 分流详细使用说明（正式版 v9.2.5 / 预览版 v9.2.7）：安装与更新、内核选择、订阅、节点与分组、订阅分享、测速、统计、DNS、TUN、配置快照与备份、日志、常见问题，逐个功能讲清入口和操作步骤。">
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--text:#e6edf3;--mut:#8b949e;--acc:#2f81f7;--grn:#3fb950;--warn:#d29922}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:960px;margin:0 auto;padding:0 20px 64px}
+header{padding:56px 0 24px;text-align:center}
+header img{width:96px;height:96px}
+h1{font-size:38px;margin:16px 0 8px;letter-spacing:1px}
+.tag{color:var(--mut);font-size:18px;margin:0}
+.badges{margin:20px 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.badge{border:1px solid var(--line);border-radius:999px;padding:4px 14px;font-size:13px;color:var(--mut)}
+.badge b{color:var(--text)}
+.btns{margin-top:24px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;background:var(--acc);color:#fff;padding:10px 22px;border-radius:8px;font-weight:600}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 24px;margin-top:32px}
+nav.toc h2{margin:0 0 8px;font-size:17px;border:0;padding:0}
+nav.toc ul{columns:2;margin:0;padding-left:20px}
+nav.toc li{margin:4px 0}
+@media(max-width:640px){nav.toc ul{columns:1}h1{font-size:30px}}
+section{margin-top:56px}
+h2{font-size:24px;border-bottom:1px solid var(--line);padding-bottom:8px}
+h3{font-size:19px;margin:28px 0 8px}
+h4{font-size:16px;margin:20px 0 6px}
+p{margin:10px 0}
+ul,ol{padding-left:22px}
+li{margin:6px 0}
+.mut{color:var(--mut)}
+.note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;padding:12px 16px;margin:16px 0;font-size:15px}
+.note b{color:var(--warn)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.card h3{margin:0 0 6px;font-size:17px}
+.card p{margin:0;color:var(--mut);font-size:14px}
+.shots img{width:100%;border:1px solid var(--line);border-radius:12px;margin-top:16px}
+.shots .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:640px){.shots .row{grid-template-columns:1fr}}
+.shots figure{margin:16px 0 0}
+.shots figcaption{color:var(--mut);font-size:13px;text-align:center;margin-top:6px}
+pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:13.5px;line-height:1.6}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14.5px}
+th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:var(--card)}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:14px;text-align:center}
+.steps{counter-reset:step}
+.steps li{margin:12px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+<img src="https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/icon.svg" alt="Shunt">
+<h1>Shunt 分流</h1>
+<p class="tag">Alpine 旁路由一键透明代理 + Web 管理面板，支持 mihomo / mihomo Smart / sing-box（官方与魔改版）内核</p>
+<div class="badges">
+<span class="badge">正式版 <b>v9.2.5</b></span>
+<span class="badge">预览版 <b>v9.2.7</b></span>
+<span class="badge">内核 <b>mihomo · Smart · sing-box</b></span>
+<span class="badge">许可 <b>GPL-3.0</b></span>
+</div>
+<div class="btns">
+<a class="btn" href="https://github.com/Skycnhe/Shunt-release">GitHub 仓库</a>
+<a class="btn ghost" href="https://github.com/Skycnhe/Shunt-release/releases/tag/offline">下载离线包</a>
+<a class="btn ghost" href="https://github.com/Skycnhe/Shunt-release/blob/shunt/CHANGELOG.md">更新记录</a>
+</div>
+</header>
+
+<nav class="toc">
+<h2>目录</h2>
+<ul>
+<li><a href="#what">1. 是什么 / 工作原理</a></li>
+<li><a href="#versions">2. 版本与更新通道</a></li>
+<li><a href="#install">3. 安装与更新</a></li>
+<li><a href="#quickstart">4. 快速上手</a></li>
+<li><a href="#ui">5. 面板布局与通用操作</a></li>
+<li><a href="#kernels">6. 内核选择</a></li>
+<li><a href="#subs">7. 订阅</a></li>
+<li><a href="#nodes">8. 节点与分组</a></li>
+<li><a href="#share">9. 订阅分享</a></li>
+<li><a href="#rules">10. 规则与广告拦截</a></li>
+<li><a href="#dns">11. DNS</a></li>
+<li><a href="#tun">12. 代理方式与 TUN 设置</a></li>
+<li><a href="#speed">13. 测速</a></li>
+<li><a href="#stats">14. 连接与统计</a></li>
+<li><a href="#backup">15. 配置快照与备份</a></li>
+<li><a href="#logs">16. 日志</a></li>
+<li><a href="#more">17. 其他设置与工具</a></li>
+<li><a href="#preview">18. 预览版专属功能（仅预览版 9.2.7）</a></li>
+<li><a href="#faq">19. 常见问题与排错</a></li>
+<li><a href="#ports">20. 端口、文件与命令</a></li>
+<li><a href="#uninstall">21. 卸载</a></li>
+</ul>
+</nav>
+
+<!-- ============================================================ -->
+<section id="what">
+<h2>1. 是什么 / 工作原理</h2>
+<p>Shunt 装在一台 <b>Alpine Linux 旁路由</b>（软路由、PVE / ESXi 虚拟机、LXC 容器、旧电脑、ARM 小板子都行）上。局域网设备把<b>网关和 DNS</b> 指向旁路由，流量就会按规则分流：国内直连、国外走代理节点。手机、电视、游戏机都不用逐台装客户端。</p>
+<ul>
+<li>设备流量进入旁路由后，由 nftables 打标记转给内核（<b>TProxy</b>），或由内核的虚拟网卡接管（<b>TUN</b>）。</li>
+<li>设备发往 53 端口的 DNS 查询被劫持到内核的 <code>1053</code> 端口；Fake-IP 模式下设备拿到的是 <code>198.18.x.x</code> 虚拟地址，这是正常的。</li>
+<li>内核（mihomo / mihomo Smart / sing-box）按规则和策略组选择直连还是哪个节点；面板负责生成配置、启停内核、测速、看门狗、日志和统计。</li>
+</ul>
+<div class="note"><b>注意：</b>Shunt 只负责分流和管理，<b>不提供节点</b>。第一次用请准备好自己的订阅链接或节点链接。</div>
+<div class="shots">
+<figure><img src="overview.jpg" alt="概览"><figcaption>概览页</figcaption></figure>
+<div class="row">
+<figure><img src="nodes.jpg" alt="节点"><figcaption>节点页</figcaption></figure>
+<figure><img src="groups.jpg" alt="策略组"><figcaption>策略组页</figcaption></figure>
+</div>
+<div class="row">
+<figure><img src="themes.jpg" alt="主题"><figcaption>主题</figcaption></figure>
+<figure><img src="mobile.jpg" alt="手机端"><figcaption>手机端</figcaption></figure>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="versions">
+<h2>2. 版本与更新通道</h2>
+<table>
+<tr><th>通道</th><th>当前版本</th><th>发布分支</th><th>说明</th></tr>
+<tr><td>正式版</td><td><b>v9.2.5</b></td><td><a href="https://github.com/Skycnhe/Shunt-release/tree/shunt"><code>shunt</code></a>（默认）</td><td>测试过的稳定版本，有 Docker 镜像和离线包。9.2.5 在 9.2.4 基础上只加了「每天更新订阅」与「订阅自动更新」合并的修复。</td></tr>
+<tr><td>预览版</td><td><b>v9.2.7</b></td><td><a href="https://github.com/Skycnhe/Shunt-release/tree/shunt-preview"><code>shunt-preview</code></a></td><td>最新改动，版本号形如 <code>9.2.7-preview.N+提交号</code>。比正式版多出的功能见 <a href="#preview">第 18 节</a>。没有单独的 Docker 镜像和离线包。</td></tr>
+</table>
+<ul>
+<li>两个通道可以在面板里随时切换，不用重装，订阅和设置都保留（见 <a href="#update">3.7 在线更新与切换通道</a>）。</li>
+<li>发布仓库另有 <code>shunt-singbox</code> / <code>shunt-singbox-preview</code> 分支（只用 sing-box 的另一套面板），本文档说的是 <code>shunt</code> 系列。</li>
+<li>本文档以代码为准；每一版的完整改动见 <a href="https://github.com/Skycnhe/Shunt-release/blob/shunt/CHANGELOG.md">正式版 CHANGELOG</a> 和 <a href="https://github.com/Skycnhe/Shunt-release/blob/shunt-preview/CHANGELOG.md">预览版 CHANGELOG</a>。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="install">
+<h2>3. 安装与更新</h2>
+
+<h3 id="req">3.1 系统要求</h3>
+<ul>
+<li><b>Alpine Linux</b>（OpenRC）；用 <b>root</b> 执行安装。离线包按 Alpine 3.22 / 3.23 / 3.24 打包。</li>
+<li>CPU 架构：<b>amd64（x86_64）/ arm64（aarch64）/ armv7</b>（32 位 ARM 的限制见 <a href="#arm">3.5</a>）。</li>
+<li>内核模块：TProxy 需要 <code>nft_tproxy</code>，TUN 需要 <code>tun</code>（<code>/dev/net/tun</code>），安装脚本会尝试加载。</li>
+<li>端口 8080 / 7890 / 7893 / 1053 / 9090 不能被别的程序占用。</li>
+<li><b>Debian / Ubuntu（systemd，实验性）</b>：install.sh 用 apt 装依赖、服务交给 systemd，面板里的启停、看门狗、在线更新照常可用；尚未在真机上充分测试，系统防火墙（ufw / firewalld）需自己放行，「系统优化」只支持 Alpine。其他发行版不支持。</li>
+</ul>
+
+<h3 id="oneclick">3.2 一键安装（设备能联网）</h3>
+<p>在旁路由上用 root 执行。装完会打印面板地址（如 <code>http://192.168.1.2:8080</code>）。<b>重复执行同一条命令就是覆盖升级</b>，订阅和设置保留。</p>
+<p><b>正式版</b>：</p>
+<pre><code># 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top）
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh -s -- --cn
+
+# 国外网络
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh</code></pre>
+<p><b>预览版</b>（<code>sh</code> 前面要加 <code>PANEL_BRANCH=shunt-preview</code>，装完面板更新通道自动设为预览版）：</p>
+<pre><code># 国内网络
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-preview/install.sh | PANEL_BRANCH=shunt-preview sh -s -- --cn
+
+# 国外网络
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-preview/install.sh | PANEL_BRANCH=shunt-preview sh</code></pre>
+<p>也可以先装正式版，再在面板里切到预览通道，效果相同。</p>
+<p><b>安装参数</b>（放在 <code>sh -s --</code> 后面，可组合；环境变量写在管道右边的 <code>sh</code> 前面）：</p>
+<table>
+<tr><th>参数 / 环境变量</th><th>作用</th></tr>
+<tr><td><code>--cn</code></td><td>国内网络：apk 源换成 mirrors.ustc.edu.cn，GitHub 下载走 <code>https://ghfast.top/</code></td></tr>
+<tr><td><code>--update-core</code></td><td>重新下载最新的 mihomo 内核（默认已装过就不重下）</td></tr>
+<tr><td><code>--https</code></td><td>生成自签名证书，面板改用 https://（之后也能在设置里开关）</td></tr>
+<tr><td><code>--selftest</code></td><td>安装后用真实内核校验多种配置场景</td></tr>
+<tr><td><code>GH_PROXY=https://gh-proxy.com/</code></td><td>指定 GitHub 加速地址（覆盖 --cn 的默认值）；ghfast.top 打不开时换它</td></tr>
+<tr><td><code>APK_MIRROR=mirrors.aliyun.com</code></td><td>--cn 时改用别的 apk 镜像</td></tr>
+<tr><td><code>PANEL_BRANCH=&lt;分支&gt;</code></td><td>指定从发布仓库的哪个分支安装（预览版用 shunt-preview）</td></tr>
+</table>
+
+<h3 id="offline">3.3 离线安装包</h3>
+<p>离线包含面板、mihomo / mihomo Smart / sing-box 三个内核、geo 数据、sing-box 规则集和全部 apk 依赖，<b>只有 aarch64 / x86_64</b>，按 Alpine 3.22 / 3.23 / 3.24 分别打包，每周自动重打一次，<b>只跟正式版</b>。</p>
+<ol class="steps">
+<li>在旁路由上看架构和系统版本：<code>uname -m</code>、<code>cat /etc/alpine-release</code>。</li>
+<li>在电脑上打开 <a href="https://github.com/Skycnhe/Shunt-release/releases/tag/offline">Releases · offline</a>，下载对应的 <code>shunt-offline-&lt;架构&gt;-alpine&lt;版本&gt;.tar.gz</code>（同页的 SHA256SUMS 可用来校验）。</li>
+<li>传到设备后执行：<pre><code>tar xzf shunt-offline-*.tar.gz &amp;&amp; sh shunt-offline/install.sh</code></pre></li>
+<li>已安装的设备想用离线包升级内核：<code>sh shunt-offline/install.sh --update-core</code>（旧内核留 .bak，面板里可回滚）。</li>
+</ol>
+<p>设备能联网但直接装经常失败时，可以让脚本自己下载离线包：</p>
+<pre><code># 国内网络
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/offline.sh | sh -s -- --cn
+# 国外网络
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/offline.sh | sh</code></pre>
+<p>包的 Alpine 版本和本机不同时，依赖装不上会自动改为联网安装。<b>预览版没有离线包</b>：先离线装正式版，联网后在面板里切到预览通道。</p>
+
+<h3 id="docker">3.4 Docker</h3>
+<p>只支持 <b>Linux 宿主机 + host 网络</b>（透明代理规则写在宿主机网络里）。镜像 <code>skycn2022/shunt</code>（Docker Hub）或 <code>ghcr.io/skycnhe/shunt-release</code>，架构 amd64 / arm64，<b>只发布正式版</b>，标签 <code>latest</code>、<code>v&lt;面板版本&gt;</code>，内置三个内核和 geo 数据。Docker Desktop（Windows / macOS）或 bridge 网络下透明代理不可用，只能用 7890 手动代理。</p>
+<pre><code># 宿主机准备（容器和宿主机共用内核）
+modprobe nft_tproxy; modprobe tun
+sysctl -w net.ipv4.ip_forward=1
+
+docker run -d --name shunt --restart unless-stopped --network host \
+  --cap-add NET_ADMIN --cap-add NET_RAW --device /dev/net/tun \
+  -v shunt-data:/data -e TZ=Asia/Shanghai --stop-timeout 30 \
+  skycn2022/shunt:latest</code></pre>
+<ul>
+<li>数据全部在卷 <code>shunt-data:/data</code>，升级镜像不丢配置。升级：拉新镜像后重建容器。</li>
+<li>8080 被占用时加 <code>-e PANEL_PORT=8081</code>（host 网络下 <code>-p</code> 端口映射不起作用）。</li>
+<li>Docker 会把宿主机 FORWARD 默认策略改成 DROP，局域网转发会被丢，需要放行，例如 <code>iptables -I DOCKER-USER -i eth0 -j ACCEPT</code>（eth0 换成连局域网的网卡）。</li>
+<li>老内核（群晖等）TProxy 不可用时，在面板里把代理方式改成 TUN。</li>
+</ul>
+
+<h3 id="arm">3.5 Alpine ARM 旁路由（ARM 小板子）</h3>
+<table>
+<tr><th>架构</th><th>一键安装</th><th>离线包</th><th>Docker</th><th>sing-box 魔改版</th></tr>
+<tr><td>arm64（aarch64）</td><td>✓</td><td>✓（aarch64）</td><td>✓（arm64）</td><td>reF1nd 正式版 / reF1nd 预览版 / MiChongs 都可选</td></tr>
+<tr><td>armv7（32 位 ARM）</td><td>✓</td><td>✗</td><td>✗</td><td><b>只能用 MiChongs</b></td></tr>
+</table>
+<ul>
+<li>32 位 ARM 只能用一键安装（命令同 3.2），安装脚本会下载 armv7 版 mihomo。</li>
+<li>reF1nd 只发 amd64 / arm64 的程序，所以在 armv7 上无论选哪个魔改版通道，面板都会下载 <b>MiChongs</b> 版（基于 reF1nd，只有预发布版）。</li>
+<li>MiChongs 版没有编译 gVisor：TUN 协议栈选了 gvisor / mixed 时面板会自动改成 system，建议直接用「默认」或 system（见 <a href="#tun">第 12 节</a>）。</li>
+<li>小板子 CPU 弱时，代理加密可能是瓶颈。预览版的「🩺 板子性能体检」能看出 CPU 是否打满、有没有 AES 硬件加速，并列出用 AES 加密的节点（见 <a href="#preview">第 18 节</a>）。</li>
+</ul>
+
+<h3 id="first">3.6 首次进入面板</h3>
+<ol class="steps">
+<li>浏览器打开安装结束时打印的地址 <code>http://旁路由IP:8080</code>（用了 --https 则是 https://，证书提示不安全时选继续访问）。</li>
+<li><b>默认没有密码</b>、<b>默认只允许局域网访问</b>：来源必须是私有地址 / 本机 / 100.64.0.0/10（Tailscale / CGNAT）；地址栏必须是 IP、localhost 或 .lan / .local / .home / .home.arpa / .internal / .ts.net 等局域网域名，其他域名会显示「访问被拒绝」。</li>
+<li>需要密码时：「设置 → 通知与安全 → 面板安全」填新密码 →「保存密码」。设置后打开面板要先登录（会话 30 天）。</li>
+</ol>
+<pre><code># 命令行设置 / 查看 / 关闭面板密码（忘记密码时用 off）
+python3 /opt/mihomo-panel/server.py --password 新密码
+python3 /opt/mihomo-panel/server.py --password
+python3 /opt/mihomo-panel/server.py --password off
+
+# 改面板端口
+echo 'PANEL_PORT=8081' &gt; /etc/conf.d/shunt &amp;&amp; rc-service shunt restart
+
+# 允许用某个域名访问 / 允许非局域网来源访问（务必先设密码）
+python3 /opt/mihomo-panel/server.py --allow-host nas.example.com
+python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
+
+<h3 id="update">3.7 在线更新与切换通道</h3>
+<p>入口：<b>设置 → 备份与更新 → 面板更新</b>。</p>
+<ol class="steps">
+<li>（国内建议）在「GitHub 加速」框填加速地址，如 <code>https://ghfast.top/</code>；经常提示 403 rate limit 时，在「GitHub Token」框填一个<b>不勾任何权限</b>的 Token（每小时额度从 60 次提高到 5000 次，只发给 api.github.com，不进备份）。</li>
+<li>在通道下拉里选 <b>正式版</b> 或 <b>预览版</b>。</li>
+<li>点「检查更新」看有没有新版本，再点「立即更新」。文件先经代理下载、失败再直连；更新前自动校验并备份当前版本，新版启动失败会自动回滚。</li>
+<li>从预览版切回正式版：下拉选「正式版」后点「立即更新」，就会装回正式版。</li>
+<li>更新后有问题：点「回滚上一版本」，或在下方「版本备份」里恢复任一版本（见 <a href="#backup">第 15 节</a>）。</li>
+</ol>
+<ul>
+<li>校验方式：优先用 GitHub API 取文件校验值；API 限流或连不上时改用发布分支里的 <code>SHA256SUMS</code>；都拿不到时提示「未校验」，且只从 GitHub 直接下载、不走加速镜像。下载不完整或超过大小上限的文件不会被装上。出错时提示里写明是限流（及约几分钟后恢复）、代理 / 直连不通还是分支不存在。</li>
+<li>命令行更新：重新执行 3.2 的安装命令即可（覆盖安装，数据保留）。</li>
+<li>顶栏在面板或内核有新版本时会显示「有更新」按钮。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="quickstart">
+<h2>4. 快速上手</h2>
+<ol class="steps">
+<li><b>装好面板</b>：按 <a href="#install">第 3 节</a> 安装，打开 <code>http://旁路由IP:8080</code>。</li>
+<li><b>加订阅</b>：「订阅」页 →「添加订阅」填名称和订阅链接 →「添加并应用」。</li>
+<li><b>选节点</b>：「节点」页点「全部测速」，在「🚀 节点选择」里选一个地区竞技组（自动用最快节点）或具体节点。</li>
+<li><b>接设备</b>：把设备（或主路由 DHCP 下发）的<b>网关和 DNS 都改成旁路由 IP</b>。不要在设备上手写 8.8.8.8 之类的 DNS。</li>
+<li><b>验证</b>：回到「概览」，站点延迟变绿、「当前出口」显示代理出口 IP 即可；有问题到「设置 → 网络 → 网络诊断」点「一键诊断」。</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="ui">
+<h2>5. 面板布局与通用操作</h2>
+<ul>
+<li><b>页面</b>：概览、节点、策略组、订阅、规则、广告拦截、DNS、连接、统计、日志、设置、WARP、拓扑、测速。设置页再分 网络 / 核心 / 通知与安全 / 备份与更新 / 外观 五组。</li>
+<li><b>顶栏</b>：核心运行状态，「启动 / 停止 / 重启」核心按钮，搜索。</li>
+<li><b>命令面板</b>：按 <code>Ctrl K</code>（Mac 为 <code>⌘K</code>）或 <code>/</code>，可跳转页面、搜索节点并切换、切换策略组、重载配置、启停核心、切换模式等，方向键选择、回车执行、Esc 关闭。</li>
+<li><b>概览页</b>：实时流量（近 5 分钟）、当前出口（出口 IP、本地公网 IP、带宽择优结果，可点「隐藏 IP」截图）、<b>代理模式</b>「规则 / 全局 / 直连」切换、地区延迟热力格（点一行跳到该地区节点）、🚀 节点选择、域名过滤统计、当前负载均衡小拓扑、看门狗状态、最近 100 条 DNS 查询结果。</li>
+<li><b>保存即校验</b>：大部分「保存并应用」都会先校验新配置，失败自动撤销；每次改设置前自动存一份配置快照（见第 15 节）。</li>
+<li><b>界面</b>：「设置 → 外观」可选界面语言（简体中文 / 繁體中文 / English）、界面布局（经典横向标签栏 / 抽屉菜单）、主题、背景图；这些大多只保存在当前浏览器。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="kernels">
+<h2>6. 内核选择</h2>
+<table>
+<tr><th>内核</th><th>来源</th><th>特点</th><th>适合</th></tr>
+<tr><td>mihomo（默认）</td><td>MetaCubeX/mihomo，官方稳定版 / 预览版</td><td>规则、DNS 功能最全，有负载均衡（一致性哈希 / 轮询）和故障转移组</td><td>大多数人</td></tr>
+<tr><td>mihomo Smart</td><td>vernesong/mihomo，只有预览版</td><td>地区竞技组和「⚡ 全局自动选择」改为 smart 类型，按延迟、丢包、速度综合打分；可开 LightGBM 模型（约 9 MB，每 72 小时更新），内存占用更高</td><td>想要更聪明的自动选节点</td></tr>
+<tr><td>sing-box 官方稳定版 / 官方预览版</td><td>SagerNet/sing-box</td><td>没有负载均衡 / 故障转移出站：地区哈希、轮询组并入同地区竞技组，自定义的这两类组按自动测速运行</td><td>喜欢 sing-box、不需要多节点聚合</td></tr>
+<tr><td>sing-box 魔改版 reF1nd 正式版 / reF1nd 预览版</td><td>reF1nd/sing-box-releases，只有 amd64 / arm64</td><td>有 loadbalance：哈希 / 轮询组按 loadbalance 运行（多节点聚合）</td><td>x86 / arm64 上要 sing-box + 负载均衡</td></tr>
+<tr><td>sing-box 魔改版 MiChongs 预览版</td><td>MiChongs/sing-box，任意架构，只有预发布版</td><td>同样有 loadbalance；没编译 gVisor</td><td><b>32 位 ARM 唯一的魔改版</b>；其他架构也可手动选</td></tr>
+</table>
+
+<h3>6.1 切换内核</h3>
+<ol class="steps">
+<li>打开 <b>设置 → 核心 → 内核</b>。</li>
+<li>在分段按钮里点要用的内核（mihomo / mihomo Smart / 已下载的各个 sing-box 版本），下方会列出这个内核与当前内核的差异和当前配置的兼容提示。</li>
+<li>点「切换到 …」，确认后面板生成并校验新配置，通过后重启核心（局域网断网几秒）。<b>30 秒内没响应会自动切回原内核</b>。</li>
+</ol>
+<p>订阅、节点、规则、DNS、设备等设置所有内核共用；mihomo / Smart 的配置写在 <code>/etc/mihomo/config.yaml</code>，sing-box 写在 <code>/etc/sing-box/config.json</code>，都由面板生成，不要手改。</p>
+
+<h3>6.2 下载、更新与回滚内核</h3>
+<p>同一张卡片下方的「<b>已下载的内核</b>」表列出每个内核（含各 sing-box 版本）的已下载版本和最新版本：</p>
+<ul>
+<li>没下载的点「下载」；没在用的点「下载最新」；正在用的那一行点「更新」，新程序先校验能否运行、能否读当前配置，通过才替换并重启，30 秒内没响应自动换回旧版；「回滚」回到 .bak 旧版本。</li>
+<li>「检查更新」查最新版本；「全部更新」只下载有新版本的、没在使用的内核；「清理旧内核」只保留正在用的内核（之后不能再一键回滚）。</li>
+<li>勾选「自动更新已下载的内核」后每 12 小时检查一次，有新版本才下载；没用过的版本不下载。</li>
+<li>正在用预发布 sing-box（如 alpha）时会显示「建议正式版」提示。版本号旁的标签写明是官方稳定版、官方预览版、魔改版 reF1nd 还是 MiChongs。</li>
+<li>下载用「设置 → 备份与更新 → 面板更新」里填的 GitHub 加速地址。</li>
+</ul>
+
+<h3>6.3 协议栈与代理方式建议</h3>
+<ul>
+<li><b>首选 TProxy</b>（默认）：性能最好，所有内核都适用。TProxy 不可用（老内核、群晖、部分 LXC）时再用 TUN。</li>
+<li><b>TUN 协议栈选「默认」</b>：sing-box 1.15+ 不写 stack、用自有协议栈（推荐，最快最省），旧 sing-box 由内核自选；mihomo 的「默认」<b>正式版 9.2.5 等同 mixed</b>（TCP 走 system、UDP 走 gVisor），<b>预览版 9.2.7 改为 system</b>（ARM 小板上同节点实测 system 更快）。</li>
+<li>没编译 gVisor 的内核（如 MiChongs）选了 gvisor / mixed 时，面板会自动改为 system，TUN 设置里会显示实际生效的协议栈。</li>
+<li>开着 auto-redirect（默认开）时 TCP 由 nftables 直接重定向给内核，不经过协议栈，各协议栈的差别主要体现在 UDP / QUIC 上。</li>
+<li>不确定哪个快：预览版测速页有「🧪 TUN 协议栈对比（手动）」引导，按步骤逐个试（见第 18 节）。</li>
+</ul>
+<div class="note"><b>测速数值：</b>sing-box 官方版默认用新连接测速（TCP、握手、TLS 都算进延迟），看起来比 mihomo 高；支持 <code>urltest_unified_delay</code> 的魔改版会自动开启，口径和 mihomo 一致。</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="subs">
+<h2>7. 订阅</h2>
+
+<h3>7.1 添加订阅</h3>
+<ol class="steps">
+<li>打开「<b>订阅</b>」页 →「添加订阅」卡片。</li>
+<li>填名称（如 机场A）和订阅链接（Clash / Mihomo YAML 或 Base64 节点链接都可以）。</li>
+<li>可选：「保留节点（正则）」只留想要的节点，如 <code>港|日|新</code>；「排除节点（正则）」去掉不要的。排除规则默认过滤「剩余流量 / 到期时间 / 官网」这类信息节点，清空表示不排除。</li>
+<li>点「添加并应用」。订阅列表显示名称、节点数、过滤、流量（含已用百分比）、到期、更新时间；每行可「更新 / 测速 / 编辑 / 删除」。</li>
+</ol>
+<p><b>面板账号登录（Xboard / V2Board）</b>：同页填面板地址、邮箱、密码 →「登录并添加订阅」，之后更新订阅时自动用保存的 token 刷新订阅地址；密码只用来登录，不保存。登录过期时更新订阅会保留旧节点并提示重新登录。</p>
+<p><b>手动导入单个节点</b>：同页「手动导入单个节点」每行粘贴一个 <code>vless://</code> <code>vmess://</code> <code>ss://</code> <code>trojan://</code> <code>hysteria2://</code>（<code>hy2://</code>）<code>tuic://</code> 链接 →「导入并应用」。导入的节点加入「🖐️ 手动选择」「⚡ 全局自动选择」和对应地区的竞技 / 负载均衡组。</p>
+
+<h3 id="subauto">7.2 自动更新与定时任务（合并后的行为）</h3>
+<p>有两个设置会更新订阅，它们<b>共用同一个订阅任务</b>：</p>
+<table>
+<tr><th>设置</th><th>入口</th><th>默认</th><th>谁来执行</th></tr>
+<tr><td>订阅自动更新间隔</td><td>设置 → 网络 → 订阅与分组（1 小时 / 6 小时 / 12 小时 / 24 小时 / 3 天）</td><td>24 小时</td><td>mihomo / Smart：内核按间隔自己更新；sing-box：面板下载</td></tr>
+<tr><td>每天更新订阅</td><td>设置 → 核心 → 定时任务（填时间，留空不执行；「立即执行」马上跑一次）</td><td>04:00</td><td>面板，按旁路由本机时区</td></tr>
+</table>
+<ul>
+<li><b>同一轮只更新一次</b>：两者同时到期时合并执行，只下载一次、只核对 / 重载一次核心，连接不会断两次；事件里显示「定时更新订阅 + 订阅自动更新（合并为一次）」。</li>
+<li><b>30 分钟内已更新的跳过</b>：定时任务到点时，30 分钟内刚成功更新过的订阅不重复拉取（sing-box 看面板缓存的更新时间，mihomo 看内核记录的 updatedAt）。手动「立即执行」和订阅页「更新」不受影响，照常拉取。</li>
+<li><b>忙时推迟，不丢弃</b>：定时 / 自动更新遇到另一次订阅更新正在进行时，推迟到下一轮（20 秒后）再试；手动更新遇到时等它完成（最多 4 分钟，超时会提示原因）。</li>
+<li><b>失败重试</b>：失败 10 分钟后只重试失败的订阅，最多 3 次；更新后恢复各选择组原来的选择。</li>
+<li><b>核心重启时先等</b>：核心正在重启 / 重载（如每天重启核心、看门狗、手动重启）时，先等它完成（最多 150 秒）再下载，被墙的订阅不会因此失败。</li>
+<li><b>看结果</b>：两个设置下方都显示上次运行时间、结果（✓ / ✗ 和消息、是否与另一个合并执行）、被推迟的原因与时间、正在进行的更新、失败重试的时间；面板重启后仍显示。mihomo 下还会注明自动更新由内核负责。</li>
+</ul>
+
+<h3>7.3 更新失败与删除节点</h3>
+<ul>
+<li>订阅更新失败时<b>保留上次成功的节点</b>，列表里显示失败和上次更新时间。</li>
+<li>换了订阅链接（换机场 / 重置 token）：订阅行点「编辑」改链接，再点「更新」。</li>
+<li>不想要某些订阅节点：「节点」页 →「订阅节点管理」→「选择节点删除」→ 勾选 →「从订阅删除」，订阅更新后也不会再出现；要恢复，到「订阅」页点「恢复」或「全部恢复」。</li>
+<li>sing-box 下订阅由面板下载并解析（Clash YAML / Base64 / 分享链接），ssr、snell、wireguard 节点会被跳过。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="nodes">
+<h2>8. 节点与分组</h2>
+
+<h3>8.1 节点页</h3>
+<ul>
+<li><b>排序与筛选</b>：顶部「默认顺序 / 按延迟」「全部 / 只看正常 / 只看失效 / 含已隐藏」，「隐藏超时」一键藏起超时节点，搜索框按节点或分组名搜索。</li>
+<li><b>显示</b>：「卡片 / 列表」两种（按设备记住），「全部展开 / 全部收起」，点组标题展开 / 收起。</li>
+<li><b>测速</b>：「全部测速」测全部节点延迟；每个组标题也有「测速」。延迟色条 4 格：&lt;150 ms 满格、&lt;300 三格、&lt;800 两格，超时打叉。</li>
+<li><b>切换</b>：点节点即切到该节点；自动测速 / 故障转移组里点选节点可「固定」（sing-box 的 URLTest 组不能手动固定）。</li>
+<li><b>策略选择</b>卡片：各分流组（🚀 节点选择、YouTube、Google、Telegram、AI、Netflix、漏网之鱼等）当前用的节点 / 分组，直接下拉切换；「管理策略组」跳到策略组页。</li>
+<li><b>🚀 带宽择优</b>卡片：定期实测各节点下载带宽，按「延迟修正后的带宽」打分，把最高分节点设为「🚀 带宽择优」组的选中。可「指定节点」只测这些节点（不选 = 全部参与）→「保存指定节点」；「立即测试」马上测一轮。周期与每轮上限在 设置 → 核心 → 定时任务 → 带宽择优 设置（每小时 / 2 / 4 / 12 小时，每个节点另起测试实例下载 10 秒或 32 MB，不影响正在跑的核心）。</li>
+</ul>
+
+<h3>8.2 自动生成的分组（策略组页 → 地区分组）</h3>
+<ul>
+<li>按节点名称识别地区，只为确实有节点的地区生成「🇯🇵 日本竞技」（url-test，每分钟测速，用延迟最低的）；节点 ≥2 的地区再生成「⚖️ 日本哈希」（一致性哈希，同一目标域名固定同一节点，会话稳定）。</li>
+<li>可开「⚖️ 轮询」组：每条新连接换下一个节点，多线程下载（IDM、aria2、Steam、测速）可叠加带宽；<b>登录类网站、银行、支付、游戏、视频不要用</b>。不会自动改现有选择，需要手动在节点选择或分流组里选它。</li>
+<li>「识别扩展地区」（韩国、英国、德国…）、「🌐 其他」分组（收纳没识别出地区的节点）、「懒惰测速（lazy）」（组没被使用时不做健康检查）。</li>
+<li>测速间隔（1 分钟 … 1 小时，默认 1 分钟）、容差（默认 50 ms，新节点快过当前节点超过该值才切换，0 = 谁最快用谁）、测速地址（默认 gstatic generate_204）。</li>
+<li>LightGBM 模型开关（仅 mihomo Smart）和「更新模型」。</li>
+<li>改完点「保存并应用」（先校验，失败自动撤销）。</li>
+<li>「已识别的地区」卡片列出各地区节点数和生成的分组；订阅更新后每 10 分钟自动重新识别，也可点「按订阅重新识别」。</li>
+<li>「🚀 节点选择」只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → ⚡ 全局自动选择 → 🏠 直连。</li>
+</ul>
+
+<h3>8.3 自定义策略组</h3>
+<ol class="steps">
+<li>「策略组」页 →「自定义策略组」→「＋ 新建策略组」。</li>
+<li>填名称（如 🎮 游戏加速）、可选图标 URL，选类型：<b>手动选择 / 自动测速 / 故障转移 / 负载均衡</b>（负载均衡再选一致性哈希或轮询）。可单独设测速间隔和容差。</li>
+<li>故障转移类型可勾「<b>主备优先</b>」（新建时默认勾上）：成员顺序就是优先级，主用不通才切备用，主用恢复再切回。mihomo 下是 fallback 组；sing-box 下由面板按测速间隔探测成员并切换，不重启内核。</li>
+<li>添加成员：搜索节点 / 分组点击加入（按顺序）；也可勾选订阅节点，或填正则（如 <code>(?i)美国|US|日本</code>）筛选全部节点追加在成员之后；「包含订阅节点」控制是否带上订阅节点。</li>
+<li>「加入分流组候选」：打开后这个组出现在 YouTube / Google / Telegram / AI / Netflix / 漏网之鱼的下拉里（不再加入 🚀 节点选择；开启时不能再引用这些分流组，但可引用 🚀 节点选择）。</li>
+<li>点「保存并应用」。列表里每个组可「编辑 / 删除」，并显示被哪里引用。</li>
+</ol>
+<p>自定义组可在自定义规则、规则集、DNS（写 <code>#组名</code>）里引用。</p>
+
+<h3>8.4 WARP 与链式代理（WARP 页）</h3>
+<ul>
+<li><b>☁️ Cloudflare WARP</b>：「注册新账号」或「导入配置」（填端点、私钥等）生成名为 WARP 的 WireGuard 手动节点，可像普通节点一样用；可「修改配置 / 重新加入节点 / 删除」。</li>
+<li><b>🎯 本地优选 IP</b>：「开始优选」对 WARP 端点发真实握手测延迟和丢包，选中后「替换端点」；也可填只测哪些端点。</li>
+<li><b>🔗 链式代理 / 落地</b>：添加 SOCKS5 / HTTP / HTTPS 出口（可批量粘贴 <code>socks5://用户:密码@地址:端口#名称</code> 或 <code>地址:端口:用户:密码</code>；HTTPS 可填 SNI、跳过证书校验），选「前置节点」（节点、地区竞技组、全局自动或自定义组）→「添加」。流量走「设备 → 前置 → 出口 → 网站」，建好后是一个普通节点；「检测」/「检测全部」看出口 IP、归属和延迟。</li>
+</ul>
+
+<h3>8.5 拓扑页</h3>
+<p>「🕸️ 负载均衡拓扑」以每个负载均衡组为中心连向成员节点：连线越粗连接越多，蓝框为正在使用，灰色为健康检查失败被剔除；点组名展开 / 收起，页面打开时每 2 秒刷新。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="share">
+<h2>9. 订阅分享</h2>
+<p>把旁路由上的几个节点生成一个订阅链接，给手机 / 电脑上的客户端直接订阅。入口：<b>「订阅」页底部「🔗 订阅分享」</b>。</p>
+<ol class="steps">
+<li>点「展开」，再点「＋ 新建分享」。</li>
+<li>填标题（如 家里的节点）；可选填访问用的域名 / IP（留空 = 当前地址）和 http:// / https:// 前缀。</li>
+<li>在节点列表里点选要分享的节点（手动节点或订阅里的节点，可按订阅「全选 / 取消」、搜索）。节点按名字引用，订阅更新后自动跟上新参数。</li>
+<li>点「保存并生成」，得到 <code>/share/&lt;32 位随机令牌&gt;</code> 链接。</li>
+<li>每条分享可：「复制」（base64 分享链接）、「复制 Clash 链接」（链接后加 <code>?format=clash</code>）、「二维码」（在浏览器本地生成，不经过任何外部服务）、启用 / 停用开关、「编辑」、「换新链接」（旧链接立即失效）、「删除」。</li>
+</ol>
+<ul>
+<li><b>格式</b>：默认返回 base64 分享链接，支持 ss / vmess / vless（含 REALITY）/ trojan / hysteria2（含端口跳跃）/ hysteria / tuic / anytls / socks；Clash / mihomo / Stash 客户端订阅时自动拿到 Clash 配置，也可用 <code>?format=clash</code> 指定。</li>
+<li>Clash 配置里节点重名时自动改名为「名字 2」「名字 3」…，避免客户端报 duplicate name；vmess 分享保留「跳过证书校验」。</li>
+<li>sing-box JSON 订阅里的节点无法转换成分享格式，不会出现在可选节点里。</li>
+<li>链接凭令牌访问，不需要面板密码，但和面板一样<b>默认只允许局域网访问</b>。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="rules">
+<h2>10. 规则与广告拦截</h2>
+<h3>10.1 规则页</h3>
+<ul>
+<li><b>规则测试</b>：输入域名或 IP（如 chatgpt.com）点「测试」，看命中哪条规则、走哪个组；「真实路由验证」实际发请求对照。规则不生效时先在这里查。</li>
+<li><b>自定义规则</b>（优先于内置规则）：选类型（DOMAIN-SUFFIX / DOMAIN / DOMAIN-KEYWORD / GEOSITE / IP-CIDR / GEOIP / SRC-IP-CIDR / DST-PORT / PROCESS-NAME）、填内容、选策略 →「添加」；或在批量框每行一条（不写目标策略默认 🚀 节点选择）→「保存批量规则」。</li>
+<li><b>规则集订阅（rule-providers）</b>：快速添加 广告拦截 / OpenAI / Apple 直连 / 微软直连 / Steam，或填名称、链接、behavior（domain / ipcidr / classical）、格式（yaml / text / mrs）→「添加」。</li>
+<li><b>切换不断连</b>（默认关）：打开后每个规则集可在「原目标 / 直连 / 拒绝」之间切换，只改写开关规则集文件、内核不重启，已建立的连接不断；关着时切换会重新生成配置（mihomo 热重载，sing-box 重启）。</li>
+<li><b>当前生效规则</b>：列出最终配置里的全部规则，可搜索。</li>
+</ul>
+<h3>10.2 广告拦截页</h3>
+<ul>
+<li>「过滤列表」：点内置规则添加，或填名称和链接添加 AdGuard / ABP、hosts、纯域名、Clash 规则格式的列表；每个列表可启用 / 停用。「自动更新」可选不自动 / 6 小时 / 12 小时 / 每天 / 3 天 / 每周，「立即更新全部」马上刷新（只刷新规则文件，不中断连接）。</li>
+<li>「DNS 层拦截」：命中的域名直接返回 NXDOMAIN（这部分不计入「今日拦截」）。</li>
+<li>「检测域名」查某域名是否被拦；「今日拦截排行」从核心日志统计，保留 14 天。</li>
+<li>「自定义规则」：黑名单（全部 / 只拦国内直连 / 只拦国外代理）、白名单（总是放行，优先，接受 <code>@@||example.com^</code>）→「保存并应用」。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="dns">
+<h2>11. DNS</h2>
+<p>入口：「<b>DNS</b>」页。改完点「保存 DNS 设置」（先校验，失败自动撤销）；「恢复默认」回到默认设置。</p>
+<ul>
+<li><b>增强模式</b>：fake-ip（推荐，防泄露，客户端只拿到 198.18.x.x）或 redir-host（返回真实 IP）。</li>
+<li><b>国内域名走直连 DNS</b>：geosite:cn,private 走直连 DNS，其余（含未知域名）全部走代理 DNS。</li>
+<li><b>respect-rules</b>：DNS 查询连接也遵循分流规则；节点域名用「节点域名解析」DNS。</li>
+<li><b>阻止客户端绕过 DNS</b>：拒绝局域网设备直连 DoT / DoQ（853）和常见公共 DoH，迫使浏览器 / 手机回落到旁路由 DNS。</li>
+<li>缓存算法 ARC / LRU；上游格式：IP、udp:// tcp:// tls:// https:// quic:// dhcp://、system，可加 <code>#策略组</code> 指定走哪个组。</li>
+<li><b>DNS 泄露检测</b>：「开始检测」检查配置并经代理在线测实际上游（出现国内解析器即泄露）；「一键应用防泄露设置」。</li>
+<li><b>Hosts 静态解析</b>：「＋ 添加」域名 → IP（或别名域名），支持 <code>+.example.com</code>、<code>*.example.com</code>。</li>
+<li><b>DNS 分流策略（nameserver-policy）</b>：「＋ 添加」指定域名用哪组 DNS，如 <code>geosite:apple,microsoft@cn</code>、<code>+.corp.example</code>、<code>rule-set:名称</code>。</li>
+<li><b>DNS 查询</b>：输入域名、选类型（A / AAAA / CNAME / HTTPS / MX / TXT / NS）→「查询」，结果是真实上游结果；「清空 DNS 缓存」。</li>
+</ul>
+<div class="note"><b>注意：</b>设备手动设了 8.8.8.8 这类公共 DNS 会绕过面板，按域名分流会失效。把设备 DNS 改回自动（走网关），或打开「阻止客户端绕过 DNS」。</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="tun">
+<h2>12. 代理方式与 TUN 设置</h2>
+<p>入口：<b>设置 → 网络 → 代理方式</b>。</p>
+<ol class="steps">
+<li>选 <b>TProxy</b>（默认，nftables 把流量转到 7893，性能最好，需要 nft_tproxy）、<b>TUN</b>（虚拟网卡接管，TProxy 不可用时用）或 <b>关闭</b>（不做透明代理，只能手动用 7890）。</li>
+<li>选 TUN 后展开「TUN 选项」：
+<ul>
+<li><b>协议栈</b>：默认 / system / gvisor / mixed（建议见 <a href="#kernels">6.3</a>）。</li>
+<li><b>网卡名称</b>（默认 Meta）。</li>
+<li><b>auto-redirect</b>（默认开）：用 nftables 重定向 TCP，旁路由性能更好；内核不支持时自动关闭。</li>
+<li><b>strict-route</b>（默认关）：严格路由防绕过，可能影响局域网访问。</li>
+<li><b>TUN MTU</b>（默认 9000，个别网络可降到 1280–9000）。</li>
+<li><b>QUIC 屏蔽</b>（默认开）：拦截走代理的 QUIC（UDP 443），浏览器自动退回 TCP；直连站点不受影响。</li>
+<li><b>MSS 钳制</b>（默认关）：MTU 不对称的链路不再丢大包。</li>
+<li><b>多队列 multi_queue</b>：<b>仅预览版 9.2.7</b>，见第 18 节。</li>
+</ul></li>
+<li>点「应用 TUN 设置」（内核会重启，局域网断开几秒）。auto-route、auto-detect-interface 自动开启，DNS 劫持 any:53。</li>
+</ol>
+<ul>
+<li><b>IPv6 透明代理</b>（同卡片）：核心与 DNS 启用 IPv6 并代理 IPv6 流量，需客户端以旁路由作 IPv6 网关。</li>
+<li><b>故障自动直连（看门狗）</b>（同卡片，默认开）：每 30 秒检查核心，无响应自动重启；连续 2 次失败则关闭透明代理让局域网直连，核心恢复后自动重新接管。手动停掉的核心不会被拉起。</li>
+<li><b>绕过设备（不走代理）</b>（设置 → 网络）：每行一个 IP、网段或 MAC →「保存」。TUN 下按 IP / 网段生成直连规则（MAC 只在 TProxy 有效）；被绕过的设备 DNS 请设为主路由。</li>
+<li><b>直连不进内核（入口旁路）</b>（设置 → 网络，默认关，只在 TProxy 生效）：打开「启用入口旁路」并勾选集合（中国大陆 IP〔只在 Fake-IP 下〕/ 节点服务器地址 / 自定义直连 IP 规则），直连连接在 nftables 入口直接放行，更快更省 CPU；卡片显示各集合条数和是否生效，「重新生成集合」立即重建。放行的连接在连接页和统计里看不到。同卡片「关闭连接时清理连接跟踪」需要 conntrack 命令（<code>apk add conntrack-tools</code>）。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="speed">
+<h2>13. 测速</h2>
+<p>入口：「<b>测速</b>」页。</p>
+<ul>
+<li>「🇨🇳 国内测速 · 直连」：12 条连接同时下载腾讯 / 360 的 CDN；「🌏 国外测速 · 经代理」：经当前代理 4 条连接下载 Cloudflare。各测 10 秒，点卡片上的「测速」或顶部「全部测速」。会消耗流量（每 100M 宽带约 120 MB）。</li>
+<li>卡片下方显示最近 12 次成功测速的趋势线和最低 / 平均 / 最高；「测速记录」表列出时间、类型、下载、峰值、延迟、下载源（保存最近 30 次）。</li>
+<li>节点延迟测速在「节点」页（见 8.1）；定时测速在 设置 → 核心 → 定时任务「节点自动测速」（关闭 / 每 10 分钟 / 30 分钟 / 每小时 / 3 小时）。</li>
+<li><b>节点健康检查</b>（设置 → 核心 → 定时任务）：每天定时测全部节点，连续失败 N 天标红、M 天自动隐藏；「立即检查」马上跑一次。隐藏的节点在节点页「含已隐藏」里可「取消隐藏」。</li>
+<li>系统优化卡片里另有「下载测速」（Cloudflare 最多 50 MB / 10 秒，直连 / 经代理），用来对比优化前后。</li>
+<li>预览版在本页另有「🩺 板子性能体检」和「🧪 TUN 协议栈对比（手动）」，见第 18 节。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="stats">
+<h2>14. 连接与统计</h2>
+<h3>14.1 连接页</h3>
+<ul>
+<li>实时列出每个连接的主机、来源设备、网络（TCP / UDP）、命中规则、链路、上下行速度、下载量、时长；顶部汇总活动连接、设备数、合计速率。</li>
+<li>点表头排序；搜索框按域名 / IP / 设备 / 规则 / 节点过滤；勾「暂停」冻结列表；每行可关闭单个连接，「断开全部」关闭所有连接。超过 300 条只显示前 300 条。</li>
+</ul>
+<h3>14.2 统计页</h3>
+<ul>
+<li>概要：今日合计、本月合计、近 30 天日均、近 30 天峰值日。</li>
+<li>「每日流量（近 30 天）」图：悬停 / 点按看当天下载、上传、合计；「刷新」。</li>
+<li>「明细」：切「今日 / 本月」，按设备（点 ✎ 设置备注）和按节点列出上传、下载、合计、占比。</li>
+<li>每 5 秒采样一次连接，数据保留 60 天；单位按 1024 进制。存活不足 5 秒的短连接可能计入总量但不计入明细。</li>
+<li>设备名来自「设置 → 网络 → 设备备注」（每行 <code>IP 或 MAC = 名称</code>），没备注的依次尝试 DHCP 租约、/etc/hosts、反向解析。</li>
+<li>预览版另有「📱 设备实时流量」卡片，见第 18 节。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="backup">
+<h2>15. 配置快照与备份</h2>
+<p>入口：<b>设置 → 备份与更新</b>。三种机制别弄混：</p>
+<table>
+<tr><th>机制</th><th>什么时候产生</th><th>怎么恢复</th></tr>
+<tr><td>配置快照</td><td>每次修改设置前自动保存上一版设置，最近 10 份（不含密码）</td><td>在「配置快照」列表里点某一份的「恢复」（经同样的校验和重载）；「刷新」更新列表。预览版另有「↩ 回到上一份」</td></tr>
+<tr><td>备份 / 恢复</td><td>自己点「下载备份」</td><td>「从文件恢复…」选备份文件。备份含订阅链接、手动节点、广告拦截与 DNS 设置和 Telegram Token，请妥善保管</td></tr>
+<tr><td>版本备份</td><td>面板在线更新前自动备份当前版本（带版本号），也可点「立即备份」；只保留最近 10 个</td><td>点某个版本的「恢复」，面板自动重启；不要的可「删除」。也可用「面板更新」里的「回滚上一版本」</td></tr>
+</table>
+<ul>
+<li>换设备、重装系统前，先「下载备份」存到电脑。</li>
+<li>命令行手动备份全部设置：<code>tar czf /root/shunt-backup-$(date +%F).tar.gz /etc/mihomo-panel</code></li>
+<li>内核更新时旧程序保留为 <code>/usr/local/bin/&lt;内核&gt;.bak</code>，可在「已下载的内核」里「回滚」。</li>
+<li>预览版的快照与版本备份另有容量上限，见第 18 节。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="logs">
+<h2>16. 日志</h2>
+<ul>
+<li>入口：「<b>日志</b>」页。「实时」看内核实时日志流，「日志文件」看核心日志文件最近 300 行（「刷新」重读）。</li>
+<li>级别下拉 debug / info / warning / error；关键字过滤框；勾「暂停」停止滚动；「清空」清掉当前显示。工具栏下方显示缓冲区里错误 / 警告 / 信息 / 调试的行数。</li>
+<li>30 秒内重复的「missing fakeip record」合并成一行并计数；内核重启期间只显示「内核未运行或正在重启，等待恢复…」。</li>
+<li><b>日志清理</b>：设置 → 核心 → 日志清理，选上限 1M / 2M / 5M（默认）/ 10M / 20M，超过时自动截断只留最后 200 行（每分钟检查）；「立即清理」。</li>
+<li>命令行：<code>tail -n 100 /var/log/mihomo-panel.log</code>（面板日志，反馈问题时请附上）、<code>tail -n 100 /var/log/mihomo.log</code>（内核日志，上次运行末尾在 mihomo.log.prev）。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="more">
+<h2>17. 其他设置与工具</h2>
+<ul>
+<li><b>流媒体 / AI 解锁检测</b>（设置 → 网络）：点「检测」（约 10 秒），按当前规则分流检测出口位置、Netflix、ChatGPT、Disney+、YouTube Premium、Gemini、Google 定位。</li>
+<li><b>系统优化</b>（设置 → 网络）：针对旁路由调优内核网络参数（数值按本机内存和 CPU 计算），「选推荐项」→「应用」，开机自动生效；「全部恢复」还原原值。PVE LXC / Docker 容器里开不了的项显示「由宿主机控制」并给出宿主机命令。</li>
+<li><b>网络诊断</b>（设置 → 网络）：「一键诊断」检查核心、透明代理 / TUN、IP 转发、DNS 解析与出站连通性，并给出修复建议。</li>
+<li><b>核心服务</b>（设置 → 核心）：「重载配置」「更新 GEO 数据库」「清空 Fake-IP 缓存」，域名嗅探（sniffer，推荐开），「生成的配置文件」可「查看 / 下载」（控制器密钥已隐藏）。启动 / 停止 / 重启在顶栏。</li>
+<li><b>定时任务</b>（设置 → 核心）：每天更新订阅、每天重启核心、每天更新 GEO 数据库、节点自动测速、节点健康检查、带宽择优；改完点「保存」，每项可「立即执行」。按旁路由本机时区执行。</li>
+<li><b>延迟检测站点</b>（设置 → 核心）：每行「名称|网址」，概览的站点延迟卡片用它（默认 Google、YouTube、Telegram、GitHub、百度、淘宝）。</li>
+<li><b>面板安全</b>（设置 → 通知与安全）：HTTPS（自签名证书）开关；面板密码（当前密码 / 新密码 / 再输一次 →「保存密码」；「关闭密码」「退出登录」）。脚本调用接口要加请求头 <code>X-Shunt: 1</code>，设了密码再加 <code>X-Shunt-Auth: 密码</code>。</li>
+<li><b>Telegram 通知</b>（设置 → 通知与安全）：先找 @BotFather 建机器人、给它发一条消息、用 @userinfobot 查 chat id，填 Bot Token 和 Chat ID →「发送测试」→「保存」。看门狗事件、节点全部超时、订阅 3 天内到期或流量超 90% 时推送，同一状态只提醒一次。</li>
+<li><b>背景图</b>（设置 → 外观）：上传图片或「使用图片链接」，图片由路由器保存、所有设备共用；可设每天自动更新、模糊、遮罩。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="preview">
+<h2>18. 预览版专属功能（仅预览版 9.2.7）</h2>
+<div class="note"><b>仅预览版 9.2.7：</b>本节功能只在预览通道（<code>shunt-preview</code>）里有，正式版 9.2.5 没有。切到预览版见 <a href="#update">3.7</a>。这些功能都是只读或默认关闭的；除了 mihomo 选「默认」协议栈的用户（见 18.6），生成的配置与正式版相同。</div>
+
+<h3>18.1 🩺 板子性能体检（测速页）</h3>
+<ol class="steps">
+<li>打开「测速」页，找到「🩺 板子性能体检」卡片，点「体检」看一次。</li>
+<li>点上面的「测速」时，卡片会边测边每 1.5 秒自动刷新。</li>
+</ol>
+<ul>
+<li>显示：内核进程 CPU 占用（单核百分比，标出满载是几核 × 100%）、整机 CPU 与最忙的一个核、CPU 核数和型号、有没有 AES 硬件加速、主网口（默认路由网卡）的协商速率和实时收发速率。</li>
+<li>瓶颈判断：网口封顶（收或发达到协商速率的 85%）/ CPU 打满 / 单核打满（多核板子上某个核 ≥95%，建议开 RPS）/ 瓶颈在节点或线路 / 暂无负载。</li>
+<li>全部只读，不改任何设置；读不到的项显示「未知」。</li>
+</ul>
+
+<h3>18.2 AES 加密提示（同一张卡片）</h3>
+<ul>
+<li>CPU 没有 AES 加速时（很多 32 位 ARM、没开 Crypto 扩展的 A53 / A72 小板），卡片下方列出手动节点和订阅里<b>显式用 AES 加密</b>的 Shadowsocks / VMess 节点（含 SS 2022 的 2022-blake3-aes-*-gcm）。</li>
+<li>建议让服务端换成 chacha20-ietf-poly1305 / 2022-blake3-chacha20-poly1305 或 VLESS Reality。<b>只提示，不改任何节点</b>；有 AES 加速时不列。TLS / Reality / QUIC 类节点和 VMess「auto」不列。</li>
+</ul>
+
+<h3>18.3 🧪 TUN 协议栈对比（手动，测速页）</h3>
+<ol class="steps">
+<li>先在 设置 → 网络 → 代理方式 选 TUN（协议栈只在 TUN 下起作用）。</li>
+<li>打开「测速」页「🧪 TUN 协议栈对比（手动）」，点「刷新」，卡片列出当前内核可选的协议栈。</li>
+<li>挑一台局域网设备，在「节点」页把策略组手动固定到同一个节点，关掉其他大流量。</li>
+<li>到 设置 → 网络 → TUN 选项 → 协议栈 依次切换，每次点「应用 TUN 设置」（内核重启，断网几秒）。</li>
+<li>每切一次，在那台设备上用同一个测速网站测 2～3 次取平均，同时看「体检」CPU 有没有打满。</li>
+<li>比完把协议栈改回你想用的。</li>
+</ol>
+<p class="mut">为什么不做成一键自动对比：每切一次都要重启内核、局域网断网；面板自己的测速经 7890 端口走代理，不经过 TUN 协议栈；auto-redirect 开着时 TCP 也不经过协议栈。所以只做手动引导。</p>
+
+<h3>18.4 📱 设备实时流量（统计页）</h3>
+<ul>
+<li>「统计」页「📱 设备实时流量」按来源设备汇总内核当前的连接：设备名（备注 / DHCP / hosts / 反向解析）、连接数、实时下载 / 上传速率、这些连接累计的流量、正在用的节点（悬停看全部）。</li>
+<li>每 3 秒自动刷新，也可点「刷新」；离开页面或浏览器切到后台时停止。最多列 200 个设备；内核没运行时显示提示。</li>
+</ul>
+
+<h3>18.5 🔁 故障切换记录（节点页，只保留最新 5 条）</h3>
+<ul>
+<li>「节点」页「🔁 故障切换记录」：面板每 30 秒读一次各组状态，<b>只记录、不切换</b>。组的当前节点变了记「切换」（注明原因），节点连续 3 次测速失败记「连续失败」，之后恢复记「恢复」；「主备优先」组的切换也记一条。手动选择组的变化不记，全节点测速期间不记，内核重启 / 切换内核后重新建基线。</li>
+<li><b>只保留最新 5 条</b>（9.2.7 起），新事件挤掉更早的；面板重启后照常显示。旧预览版存了更多条时，第一次读取会自动裁剪到 5 条。</li>
+<li>「刷新」重读，「清空」清除全部记录。</li>
+</ul>
+
+<h3>18.6 mihomo TUN「默认」协议栈改为 system</h3>
+<p>mihomo / Smart 的 TUN 协议栈「默认」从 mixed 改为 system。只影响选「默认」的用户；显式选了 mixed / gvisor 的照旧。sing-box 不变。</p>
+
+<h3>18.7 sing-box TUN 多队列 multi_queue</h3>
+<ol class="steps">
+<li>切到 sing-box 内核、代理方式选 TUN、协议栈选「默认」。</li>
+<li>设置 → 网络 → TUN 选项 → 打开「多队列 multi_queue」→「应用 TUN 设置」。</li>
+</ol>
+<p>打开后 TUN 入站写 <code>multi_queue: true</code>，吞吐随 CPU 核数增加。<b>默认关</b>；只在 Linux 3.8+、多核、sing-box 1.15+ 且协议栈为「默认」时生效。单核设备、旧内核、mihomo 下开关禁用或隐藏并写明原因。</p>
+
+<h3>18.8 配置快照「↩ 回到上一份」与容量上限</h3>
+<ul>
+<li>设置 → 备份与更新 →「配置快照」卡片的「<b>↩ 回到上一份</b>」：恢复最近一次修改之前的设置（同样校验和重载）。恢复前的设置会记成新快照，<b>再点一次就是重做</b>。</li>
+<li>配置快照合计不超过 4 MB（从最旧的丢起，至少留 1 份）。</li>
+<li>版本备份合计不超过 48 MB（从最旧的删起，最新一份和正要恢复的那份始终保留）；存储剩余不足 24 MB 时跳过自动备份并说明，避免写满小板子的存储。</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="faq">
+<h2>19. 常见问题与排错</h2>
+<p>先到「设置 → 网络 → 网络诊断」点「一键诊断」，再看「日志」页。</p>
+<table>
+<tr><th>现象</th><th>处理</th></tr>
+<tr><td>安装时下载失败、raw.githubusercontent.com 打不开</td><td>用 --cn 版命令；还不行把加速地址换成 <code>https://gh-proxy.com/</code>，或加 <code>GH_PROXY=...</code></td></tr>
+<tr><td>在线更新 / 内核更新失败，提示 403 rate limit</td><td>「面板更新」里填 GitHub 加速地址和不勾权限的 GitHub Token；或重新执行安装命令覆盖更新（设置保留）</td></tr>
+<tr><td>预览通道提示没有可用版本</td><td>看提示里写的原因（限流 / 网络 / 分支）；9.2.1 及更早的面板用 3.2 的预览版安装命令覆盖安装一次</td></tr>
+<tr><td>打开面板显示「访问被拒绝」</td><td>不是从局域网访问或用了非局域网域名：改用 IP，或用 --allow-host / --allow-public（见 3.6）</td></tr>
+<tr><td>打不开面板</td><td>确认端口（<code>cat /etc/conf.d/shunt</code>）和 <code>rc-service shunt status</code>；8080 被占用时改 PANEL_PORT</td></tr>
+<tr><td><code>rc-service shunt status</code> 显示 crashed</td><td>先看 /var/log/mihomo-panel.log，再 <code>rc-service shunt zap &amp;&amp; rc-service shunt start</code>（内核同理用 shunt-core）</td></tr>
+<tr><td>设备设了网关却上不了网</td><td>确认设备 DNS 也指向旁路由；TProxy 不可用时改 TUN；看门狗切直连后核心恢复会自动接管</td></tr>
+<tr><td>节点全部超时</td><td>看日志有没有拨号超时；换地区或换节点；先把概览的代理模式切到「直连」保证家里不断网</td></tr>
+<tr><td>规则不生效 / 网站走错节点</td><td>「规则」页规则测试；检查设备是否用了自己的 DNS 或浏览器安全 DNS（可开「阻止客户端绕过 DNS」）</td></tr>
+<tr><td>日志刷 missing fakeip record</td><td>内核重启或清空 Fake-IP 缓存后客户端还拿着旧地址，一般几分钟内自愈；可在「核心服务」清空 Fake-IP 缓存</td></tr>
+<tr><td>内核起不来 / 反复重启</td><td>看 /var/log/mihomo.log 和 .prev；检查 7890 / 7893 / 1053 / 9090 是否被占用；在「已下载的内核」里回滚</td></tr>
+<tr><td>订阅更新失败，节点会丢吗</td><td>不会，保留上次成功的节点；定时 / 自动更新失败 10 分钟后只重试失败的订阅（最多 3 次）</td></tr>
+<tr><td>定时任务到点了却没拉订阅</td><td>30 分钟内刚成功更新过的订阅会跳过；正在进行别的订阅更新时会推迟 20 秒；看「每天更新订阅」下方的上次结果与推迟原因</td></tr>
+<tr><td>手动更新订阅提示正在更新</td><td>另一次订阅更新正在进行，手动更新会等它最多 4 分钟；超时稍后再点</td></tr>
+<tr><td>32 位 ARM 上魔改版 sing-box 是 MiChongs</td><td>正常：reF1nd 不发 armv7 程序，所有魔改通道在 armv7 都用 MiChongs</td></tr>
+<tr><td>TUN 协议栈选了 gvisor 却显示 system</td><td>当前内核没编译 gVisor（如 MiChongs），面板自动改用 system</td></tr>
+<tr><td>两个内核测出的延迟不一样</td><td>口径不同：sing-box 官方版把握手都算进延迟；魔改版自动开 urltest_unified_delay 后与 mihomo 一致</td></tr>
+<tr><td>面板更新后出问题</td><td>「面板更新」点「回滚上一版本」或在「版本备份」恢复</td></tr>
+<tr><td>忘记面板密码</td><td><code>python3 /opt/mihomo-panel/server.py --password off</code></td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<section id="ports">
+<h2>20. 端口、文件与命令</h2>
+<table>
+<tr><th>组件</th><th>端口 / 路径</th><th>说明</th></tr>
+<tr><td>面板网页</td><td><code>8080</code></td><td>服务名 shunt，可用 PANEL_PORT 改</td></tr>
+<tr><td>HTTP / SOCKS5 混合代理</td><td><code>7890</code></td><td>不走透明代理的设备可手动设 旁路由IP:7890</td></tr>
+<tr><td>TProxy 入口</td><td><code>7893</code></td><td>tproxy.sh 把局域网流量转到这里</td></tr>
+<tr><td>内核 DNS</td><td><code>1053</code></td><td>局域网 53 端口查询被重定向到这里</td></tr>
+<tr><td>内核控制接口</td><td><code>127.0.0.1:9090</code></td><td>只监听本机</td></tr>
+<tr><td>内核程序</td><td><code>/usr/local/bin/mihomo</code>、<code>mihomo-smart</code>、<code>sing-box</code></td><td>服务名 shunt-core</td></tr>
+<tr><td>面板程序</td><td><code>/opt/mihomo-panel/</code></td><td>server.py、index.html、tproxy.sh 等</td></tr>
+<tr><td>面板数据</td><td><code>/etc/mihomo-panel/</code></td><td>订阅、节点、规则、设置（data.json）</td></tr>
+<tr><td>生成的内核配置</td><td><code>/etc/mihomo/config.yaml</code>、<code>/etc/sing-box/config.json</code></td><td>面板自动生成，不要手改</td></tr>
+<tr><td>日志</td><td><code>/var/log/mihomo-panel.log</code>、<code>/var/log/mihomo.log</code></td><td>面板 / 内核</td></tr>
+</table>
+<pre><code>rc-service shunt restart            # 重启面板
+rc-service shunt-core restart       # 重启代理内核
+rc-service shunt status; rc-service shunt-core status
+/opt/mihomo-panel/tproxy.sh stop    # 临时关闭透明代理（apply 恢复）</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<section id="uninstall">
+<h2>21. 卸载</h2>
+<p>先把设备（或主路由 DHCP）的网关和 DNS 改回主路由；用过「系统优化」的先在面板里点「全部恢复」。然后在旁路由执行：</p>
+<pre><code>rc-service shunt stop; rc-service shunt-core stop      # 停止时会撤掉透明代理规则
+rc-update del shunt default; rc-update del shunt-core default
+rm -f /etc/init.d/shunt /etc/init.d/shunt-core /etc/conf.d/shunt /etc/conf.d/shunt-core
+rm -rf /opt/mihomo-panel /etc/mihomo-panel /etc/mihomo /etc/sing-box
+rm -f /usr/local/bin/mihomo /usr/local/bin/mihomo-smart /usr/local/bin/sing-box \
+      /usr/local/bin/mihomo.bak /usr/local/bin/mihomo-smart.bak /usr/local/bin/sing-box.bak
+rm -f /etc/sysctl.d/99-mihomo-panel.conf /var/log/mihomo*.log* /var/log/shunt-core-hang.log
+nft delete table inet mihomo_panel 2&gt;/dev/null; true</code></pre>
+<p><code>/etc/mihomo-panel</code> 里是全部设置，想保留请先备份。Docker 安装的卸载：<code>docker rm -f shunt &amp;&amp; docker volume rm shunt-data</code>。</p>
+</section>
+
+<footer>
+<p>Shunt 分流 · GPL-3.0-or-later · <a href="https://github.com/Skycnhe/Shunt-release">Skycnhe/Shunt-release</a></p>
+<p class="mut">本文档对应正式版 v9.2.5 与预览版 v9.2.7（预览专属功能见第 18 节）；以后的改动以仓库 CHANGELOG 为准。</p>
+</footer>
+
+</div>
+</body>
+</html>
