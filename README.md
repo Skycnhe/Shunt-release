@@ -12,7 +12,7 @@ Shunt 装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、LXC
 
 > ⚠️ 这是**预览分支** `shunt-preview`（v9.2.7）：放最新测试版本，可能有问题。日常使用建议装正式分支 [`shunt`](https://github.com/Skycnhe/Shunt-release/tree/shunt)（v9.2.5）。
 
-![概览](docs/overview.jpg)
+![概览](docs/img/hero-overview.webp)
 
 ## 版本
 
@@ -86,11 +86,11 @@ docker run -d --name shunt --restart unless-stopped --network host \
 
 ## 截图
 
-| 节点 | 策略组 |
+| 节点 | 深色主题 |
 | --- | --- |
-| ![节点](docs/nodes.jpg) | ![策略组](docs/groups.jpg) |
-| **主题** | **手机** |
-| ![主题](docs/themes.jpg) | <img src="docs/mobile.jpg" width="320" alt="手机"> |
+| ![节点](docs/img/hero-nodes.webp) | ![深色主题](docs/img/overview-dark.webp) |
+
+<p align="center"><img src="docs/img/mobile.webp" width="320" alt="手机"></p>
 
 ## 许可证
 

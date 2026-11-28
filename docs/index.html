@@ -54,6 +54,16 @@ th{background:var(--card)}
 footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:14px;text-align:center}
 .steps{counter-reset:step}
 .steps li{margin:12px 0}
+.fig{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.fig img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:8px;background:#fff}
+.fig figcaption{font-size:14px;color:var(--mut);margin-top:10px}
+.fig figcaption b{color:var(--text);margin-right:10px}
+.fig .path{color:var(--text)}
+.fig .fnote{display:block;margin-top:6px}
+ol.marks{list-style:none;padding:0;margin:8px 0 0;counter-reset:mk;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:2px 16px}
+ol.marks li{counter-increment:mk;margin:3px 0;padding-left:30px;position:relative}
+ol.marks li::before{content:counter(mk);position:absolute;left:0;top:1px;width:22px;height:22px;border-radius:11px;background:#ef4444;color:#fff;font:700 13px/22px Inter,system-ui,sans-serif;text-align:center}
+.shots img{height:auto}
 </style>
 </head>
 <body>
@@ -114,14 +124,14 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:v
 </ul>
 <div class="note"><b>注意：</b>Shunt 只负责分流和管理，<b>不提供节点</b>。第一次用请准备好自己的订阅链接或节点链接。</div>
 <div class="shots">
-<figure><img src="overview.jpg" alt="概览"><figcaption>概览页</figcaption></figure>
+<figure><img src="img/hero-overview.webp" alt="概览页" width="1280" height="800" loading="lazy"><figcaption>概览页</figcaption></figure>
 <div class="row">
-<figure><img src="nodes.jpg" alt="节点"><figcaption>节点页</figcaption></figure>
-<figure><img src="groups.jpg" alt="策略组"><figcaption>策略组页</figcaption></figure>
+<figure><img src="img/hero-nodes.webp" alt="节点页" width="1280" height="800" loading="lazy"><figcaption>节点页</figcaption></figure>
+<figure><img src="img/overview-dark.webp" alt="深色主题" width="1280" height="800" loading="lazy"><figcaption>深色主题</figcaption></figure>
 </div>
 <div class="row">
-<figure><img src="themes.jpg" alt="主题"><figcaption>主题</figcaption></figure>
-<figure><img src="mobile.jpg" alt="手机端"><figcaption>手机端</figcaption></figure>
+<figure><img src="img/mobile.webp" alt="手机端" width="390" height="844" loading="lazy"><figcaption>手机端</figcaption></figure>
+<figure><img src="img/mobile-drawer.webp" alt="手机端抽屉菜单" width="390" height="844" loading="lazy"><figcaption>手机端抽屉菜单</figcaption></figure>
 </div>
 </div>
 </section>
@@ -245,7 +255,7 @@ python3 /opt/mihomo-panel/server.py --allow-host nas.example.com
 python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 
 <h3 id="update">3.7 在线更新与切换通道</h3>
-<p>入口：<b>设置 → 备份与更新 → 面板更新</b>。</p>
+<p>入口：点「<b>设置</b>」→「<b>备份与更新</b>」→「<b>面板更新</b>」。</p>
 <ol class="steps">
 <li>（国内建议）在「GitHub 加速」框填加速地址，如 <code>https://ghfast.top/</code>；经常提示 403 rate limit 时，在「GitHub Token」框填一个<b>不勾任何权限</b>的 Token（每小时额度从 60 次提高到 5000 次，只发给 api.github.com，不进备份）。</li>
 <li>在通道下拉里选 <b>正式版</b> 或 <b>预览版</b>。</li>
@@ -253,6 +263,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>从预览版切回正式版：下拉选「正式版」后点「立即更新」，就会装回正式版。</li>
 <li>更新后有问题：点「回滚上一版本」，或在下方「版本备份」里恢复任一版本（见 <a href="#backup">第 15 节</a>）。</li>
 </ol>
+<figure class="fig"><img src="img/update.webp" alt="面板更新卡片" width="520" height="739" loading="lazy"><figcaption><b>面板更新卡片</b><span class="path">操作：点「设置」 → 「备份与更新」 → 「面板更新」</span><ol class="marks"><li>通道下拉：正式版 / 预览版</li><li>检查更新</li><li>立即更新</li><li>回滚上一版本</li></ol></figcaption></figure>
 <ul>
 <li>校验方式：优先用 GitHub API 取文件校验值；API 限流或连不上时改用发布分支里的 <code>SHA256SUMS</code>；都拿不到时提示「未校验」，且只从 GitHub 直接下载、不走加速镜像。下载不完整或超过大小上限的文件不会被装上。出错时提示里写明是限流（及约几分钟后恢复）、代理 / 直连不通还是分支不存在。</li>
 <li>命令行更新：重新执行 3.2 的安装命令即可（覆盖安装，数据保留）。</li>
@@ -284,6 +295,9 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>界面</b>：「设置 → 外观」可选界面语言（简体中文 / 繁體中文 / English）、界面布局（经典横向标签栏 / 抽屉菜单）、主题、背景图；这些大多只保存在当前浏览器。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/overview.webp" alt="概览页顶栏与常用卡片" width="1280" height="800" loading="lazy"><figcaption><b>概览页顶栏与常用卡片</b><span class="path">操作：点「概览」</span><ol class="marks"><li>核心运行状态（运行中 / 已停止）</li><li>重启核心</li><li>停止核心</li><li>代理模式：规则 / 全局 / 直连</li><li>当前出口：出口 IP、本地公网 IP、带宽择优</li><li>搜索 / 命令面板（Ctrl K）</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/overview-groups.webp" alt="地区延迟与 🚀 节点选择" width="1280" height="800" loading="lazy"><figcaption><b>地区延迟与 🚀 节点选择</b><span class="path">操作：点「概览」 → 向下滚到「地区延迟」</span><ol class="marks"><li>地区延迟热力格：点一行跳到该地区节点</li><li>🚀 节点选择：选地区竞技组或具体节点</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/look.webp" alt="外观设置" width="520" height="955" loading="lazy"><figcaption><b>外观设置</b><span class="path">操作：点「设置」 → 「外观」</span><ol class="marks"><li>界面语言：简体中文 / 繁體中文 / English</li><li>界面布局：经典横向标签栏 / 抽屉菜单（新）</li><li>主题（只保存在当前浏览器）</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="kernels">
@@ -299,10 +313,11 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 
 <h3>6.1 切换内核</h3>
 <ol class="steps">
-<li>打开 <b>设置 → 核心 → 内核</b>。</li>
+<li>点「<b>设置</b>」→「<b>核心</b>」→「<b>内核</b>」。</li>
 <li>在分段按钮里点要用的内核（mihomo / mihomo Smart / 已下载的各个 sing-box 版本），下方会列出这个内核与当前内核的差异和当前配置的兼容提示。</li>
 <li>点「切换到 …」，确认后面板生成并校验新配置，通过后重启核心（局域网断网几秒）。<b>30 秒内没响应会自动切回原内核</b>。</li>
 </ol>
+<figure class="fig"><img src="img/kernels.webp" alt="内核卡片" width="520" height="1100" loading="lazy"><figcaption><b>内核卡片</b><span class="path">操作：点「设置」 → 「核心」 → 「内核」</span><ol class="marks"><li>内核分段按钮：点要用的内核（图中选中 sing-box 官方版）</li><li>切换内核（30 秒内没响应自动切回）</li><li>「已下载的内核」表：下载 / 更新 / 回滚 / 清理旧内核</li></ol></figcaption></figure>
 <p>订阅、节点、规则、DNS、设备等设置所有内核共用；mihomo / Smart 的配置写在 <code>/etc/mihomo/config.yaml</code>，sing-box 写在 <code>/etc/sing-box/config.json</code>，都由面板生成，不要手改。</p>
 
 <h3>6.2 下载、更新与回滚内核</h3>
@@ -332,14 +347,17 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 
 <h3>7.1 添加订阅</h3>
 <ol class="steps">
-<li>打开「<b>订阅</b>」页 →「添加订阅」卡片。</li>
+<li>点「<b>订阅</b>」→「添加订阅」卡片。</li>
 <li>填名称（如 机场A）和订阅链接（Clash / Mihomo YAML 或 Base64 节点链接都可以）。</li>
 <li>可选：「保留节点（正则）」只留想要的节点，如 <code>港|日|新</code>；「排除节点（正则）」去掉不要的。排除规则默认过滤「剩余流量 / 到期时间 / 官网」这类信息节点，清空表示不排除。</li>
 <li>点「添加并应用」。订阅列表显示名称、节点数、过滤、流量（含已用百分比）、到期、更新时间；每行可「更新 / 测速 / 编辑 / 删除」。</li>
 </ol>
+<figure class="fig"><img src="img/subs-add.webp" alt="添加订阅与订阅列表" width="1028" height="461" loading="lazy"><figcaption><b>添加订阅与订阅列表</b><span class="path">操作：点「订阅」 → 「添加订阅」</span><ol class="marks"><li>名称，如 机场A</li><li>订阅链接</li><li>保留节点（正则），可选</li><li>添加并应用</li><li>订阅列表每行的「更新」</li><li>「编辑」：改链接或过滤</li></ol></figcaption></figure>
 <p><b>面板账号登录（Xboard / V2Board）</b>：同页填面板地址、邮箱、密码 →「登录并添加订阅」，之后更新订阅时自动用保存的 token 刷新订阅地址；密码只用来登录，不保存。登录过期时更新订阅会保留旧节点并提示重新登录。</p>
+<figure class="fig"><img src="img/subs-login.webp" alt="面板账号登录（Xboard / V2Board）" width="1028" height="259" loading="lazy"><figcaption><b>面板账号登录（Xboard / V2Board）</b><span class="path">操作：点「订阅」 → 「面板账号登录」</span><ol class="marks"><li>面板地址（下面依次填邮箱、密码）</li><li>登录并添加订阅</li></ol></figcaption></figure>
 <p><b>手动导入单个节点</b>：同页「手动导入单个节点」每行粘贴一个 <code>vless://</code> <code>vmess://</code> <code>ss://</code> <code>trojan://</code> <code>hysteria2://</code>（<code>hy2://</code>）<code>tuic://</code> 链接 →「导入并应用」。导入的节点加入「🖐️ 手动选择」「⚡ 全局自动选择」和对应地区的竞技 / 负载均衡组。</p>
 
+<figure class="fig"><img src="img/subs-manual.webp" alt="手动导入单个节点" width="1028" height="362" loading="lazy"><figcaption><b>手动导入单个节点</b><span class="path">操作：点「订阅」 → 「手动导入单个节点」</span><ol class="marks"><li>每行粘贴一个 vless:// vmess:// ss:// trojan:// hysteria2:// tuic:// 链接</li><li>导入并应用</li></ol></figcaption></figure>
 <h3 id="subauto">7.2 自动更新与定时任务（合并后的行为）</h3>
 <p>有两个设置会更新订阅，它们<b>共用同一个订阅任务</b>：</p>
 <table>
@@ -356,6 +374,8 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>看结果</b>：两个设置下方都显示上次运行时间、结果（✓ / ✗ 和消息、是否与另一个合并执行）、被推迟的原因与时间、正在进行的更新、失败重试的时间；面板重启后仍显示。mihomo 下还会注明自动更新由内核负责。</li>
 </ul>
 
+<figure class="fig"><img src="img/subs-interval.webp" alt="订阅自动更新间隔" width="520" height="239" loading="lazy"><figcaption><b>订阅自动更新间隔</b><span class="path">操作：点「设置」 → 「网络」 → 「订阅与分组」</span><ol class="marks"><li>订阅自动更新间隔（下方显示上次结果）</li><li>保存并应用</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/schedule.webp" alt="定时任务：每天更新订阅" width="520" height="967" loading="lazy"><figcaption><b>定时任务：每天更新订阅</b><span class="path">操作：点「设置」 → 「核心」 → 「定时任务」</span><ol class="marks"><li>每天更新订阅：填时间，留空不执行；下方显示上次结果与推迟原因</li><li>立即执行</li><li>保存</li></ol></figcaption></figure>
 <h3>7.3 更新失败与删除节点</h3>
 <ul>
 <li>订阅更新失败时<b>保留上次成功的节点</b>，列表里显示失败和上次更新时间。</li>
@@ -379,6 +399,9 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>🚀 带宽择优</b>卡片：定期实测各节点下载带宽，按「延迟修正后的带宽」打分，把最高分节点设为「🚀 带宽择优」组的选中。可「指定节点」只测这些节点（不选 = 全部参与）→「保存指定节点」；「立即测试」马上测一轮。周期与每轮上限在 设置 → 核心 → 定时任务 → 带宽择优 设置（每小时 / 2 / 4 / 12 小时，每个节点另起测试实例下载 10 秒或 32 MB，不影响正在跑的核心）。</li>
 </ul>
 
+<figure class="fig"><img src="img/nodes.webp" alt="节点页" width="1280" height="800" loading="lazy"><figcaption><b>节点页</b><span class="path">操作：点「节点」</span><ol class="marks"><li>搜索节点 / 分组</li><li>全部测速</li><li>卡片 / 列表切换</li><li>按地区筛选（全部 / 各地区）</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/nodes-select.webp" alt="策略选择卡片" width="1028" height="461" loading="lazy"><figcaption><b>策略选择卡片</b><span class="path">操作：点「节点」 →「策略选择」卡片</span><ol class="marks"><li>管理策略组：跳到策略组页</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/nodes-group.webp" alt="节点页的地区分组" width="1280" height="800" loading="lazy"><figcaption><b>节点页的地区分组</b><span class="path">操作：点「节点」 → 向下滚到各地区分组</span><ol class="marks"><li>「自动测速」组：点组标题展开 / 收起，组右侧「测速」</li></ol></figcaption></figure>
 <h3>8.2 自动生成的分组（策略组页 → 地区分组）</h3>
 <ul>
 <li>按节点名称识别地区，只为确实有节点的地区生成「🇯🇵 日本竞技」（url-test，每分钟测速，用延迟最低的）；节点 ≥2 的地区再生成「⚖️ 日本哈希」（一致性哈希，同一目标域名固定同一节点，会话稳定）。</li>
@@ -391,15 +414,17 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>「🚀 节点选择」只包含：各地区竞技 → 各地区负载均衡 → 🖐️ 手动选择 → ⚡ 全局自动选择 → 🏠 直连。</li>
 </ul>
 
+<figure class="fig"><img src="img/groups.webp" alt="地区分组设置" width="1028" height="794" loading="lazy"><figcaption><b>地区分组设置</b><span class="path">操作：点「策略组」 → 「地区分组」</span><ol class="marks"><li>地区分组开关与选项</li><li>测速间隔 / 容差</li><li>保存并应用</li></ol></figcaption></figure>
 <h3>8.3 自定义策略组</h3>
 <ol class="steps">
-<li>「策略组」页 →「自定义策略组」→「＋ 新建策略组」。</li>
+<li>点「策略组」→「自定义策略组」→「＋ 新建策略组」。</li>
 <li>填名称（如 🎮 游戏加速）、可选图标 URL，选类型：<b>手动选择 / 自动测速 / 故障转移 / 负载均衡</b>（负载均衡再选一致性哈希或轮询）。可单独设测速间隔和容差。</li>
 <li>故障转移类型可勾「<b>主备优先</b>」（新建时默认勾上）：成员顺序就是优先级，主用不通才切备用，主用恢复再切回。mihomo 下是 fallback 组；sing-box 下由面板按测速间隔探测成员并切换，不重启内核。</li>
 <li>添加成员：搜索节点 / 分组点击加入（按顺序）；也可勾选订阅节点，或填正则（如 <code>(?i)美国|US|日本</code>）筛选全部节点追加在成员之后；「包含订阅节点」控制是否带上订阅节点。</li>
 <li>「加入分流组候选」：打开后这个组出现在 YouTube / Google / Telegram / AI / Netflix / 漏网之鱼的下拉里（不再加入 🚀 节点选择；开启时不能再引用这些分流组，但可引用 🚀 节点选择）。</li>
 <li>点「保存并应用」。列表里每个组可「编辑 / 删除」，并显示被哪里引用。</li>
 </ol>
+<figure class="fig"><img src="img/groups-custom.webp" alt="自定义策略组与已识别的地区" width="1028" height="715" loading="lazy"><figcaption><b>自定义策略组与已识别的地区</b><span class="path">操作：点「策略组」 → 「自定义策略组」</span><ol class="marks"><li>＋ 新建策略组</li><li>按订阅重新识别（「已识别的地区」卡片）</li></ol></figcaption></figure>
 <p>自定义组可在自定义规则、规则集、DNS（写 <code>#组名</code>）里引用。</p>
 
 <h3>8.4 WARP 与链式代理（WARP 页）</h3>
@@ -409,16 +434,19 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>🔗 链式代理 / 落地</b>：添加 SOCKS5 / HTTP / HTTPS 出口（可批量粘贴 <code>socks5://用户:密码@地址:端口#名称</code> 或 <code>地址:端口:用户:密码</code>；HTTPS 可填 SNI、跳过证书校验），选「前置节点」（节点、地区竞技组、全局自动或自定义组）→「添加」。流量走「设备 → 前置 → 出口 → 网站」，建好后是一个普通节点；「检测」/「检测全部」看出口 IP、归属和延迟。</li>
 </ul>
 
+<figure class="fig"><img src="img/warp.webp" alt="Cloudflare WARP" width="1028" height="214" loading="lazy"><figcaption><b>Cloudflare WARP</b><span class="path">操作：点「WARP」 →「☁️ Cloudflare WARP」</span><ol class="marks"><li>注册新账号</li><li>导入配置</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/landing.webp" alt="链式代理 / 落地" width="1028" height="357" loading="lazy"><figcaption><b>链式代理 / 落地</b><span class="path">操作：点「WARP」 →「🔗 链式代理 / 落地」</span><ol class="marks"><li>填出口与前置节点后点「添加」</li></ol></figcaption></figure>
 <h3>8.5 拓扑页</h3>
 <p>「🕸️ 负载均衡拓扑」以每个负载均衡组为中心连向成员节点：连线越粗连接越多，蓝框为正在使用，灰色为健康检查失败被剔除；点组名展开 / 收起，页面打开时每 2 秒刷新。</p>
 </section>
+<figure class="fig"><img src="img/topo.webp" alt="负载均衡拓扑" width="1280" height="800" loading="lazy"><figcaption><b>负载均衡拓扑</b><span class="path">操作：点「拓扑」</span></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="share">
 <h2>9. 订阅分享</h2>
 <p>把旁路由上的几个节点生成一个订阅链接，给手机 / 电脑上的客户端直接订阅。入口：<b>「订阅」页底部「🔗 订阅分享」</b>。</p>
 <ol class="steps">
-<li>点「展开」，再点「＋ 新建分享」。</li>
+<li>点「订阅」→ 底部「🔗 订阅分享」→「展开」→「＋ 新建分享」。</li>
 <li>填标题（如 家里的节点）；可选填访问用的域名 / IP（留空 = 当前地址）和 http:// / https:// 前缀。</li>
 <li>在节点列表里点选要分享的节点（手动节点或订阅里的节点，可按订阅「全选 / 取消」、搜索）。节点按名字引用，订阅更新后自动跟上新参数。</li>
 <li>点「保存并生成」，得到 <code>/share/&lt;32 位随机令牌&gt;</code> 链接。</li>
@@ -431,6 +459,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>链接凭令牌访问，不需要面板密码，但和面板一样<b>默认只允许局域网访问</b>。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/share.webp" alt="订阅分享" width="1028" height="263" loading="lazy"><figcaption><b>订阅分享</b><span class="path">操作：点「订阅」 → 底部「🔗 订阅分享」→「展开」</span><ol class="marks"><li>＋ 新建分享</li><li>复制（base64 分享链接）</li><li>复制 Clash 链接</li><li>二维码</li><li>换新链接（旧链接立即失效）</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="rules">
@@ -443,6 +472,8 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>切换不断连</b>（默认关）：打开后每个规则集可在「原目标 / 直连 / 拒绝」之间切换，只改写开关规则集文件、内核不重启，已建立的连接不断；关着时切换会重新生成配置（mihomo 热重载，sing-box 重启）。</li>
 <li><b>当前生效规则</b>：列出最终配置里的全部规则，可搜索。</li>
 </ul>
+<figure class="fig"><img src="img/rules.webp" alt="规则测试与自定义规则" width="1028" height="560" loading="lazy"><figcaption><b>规则测试与自定义规则</b><span class="path">操作：点「规则」 → 「规则测试」</span><ol class="marks"><li>输入域名或 IP，如 chatgpt.com</li><li>测试</li><li>自定义规则：选类型、填内容、选策略后「添加」</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/rulesets.webp" alt="规则集订阅" width="1028" height="895" loading="lazy"><figcaption><b>规则集订阅</b><span class="path">操作：点「规则」 → 「规则集订阅（rule-providers）」</span><ol class="marks"><li>快速添加：广告拦截 / OpenAI / Apple 直连 / 微软直连 / Steam</li><li>填名称和链接后「添加」</li></ol></figcaption></figure>
 <h3>10.2 广告拦截页</h3>
 <ul>
 <li>「过滤列表」：点内置规则添加，或填名称和链接添加 AdGuard / ABP、hosts、纯域名、Clash 规则格式的列表；每个列表可启用 / 停用。「自动更新」可选不自动 / 6 小时 / 12 小时 / 每天 / 3 天 / 每周，「立即更新全部」马上刷新（只刷新规则文件，不中断连接）。</li>
@@ -451,6 +482,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>「自定义规则」：黑名单（全部 / 只拦国内直连 / 只拦国外代理）、白名单（总是放行，优先，接受 <code>@@||example.com^</code>）→「保存并应用」。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/adblock.webp" alt="广告拦截页" width="1028" height="848" loading="lazy"><figcaption><b>广告拦截页</b><span class="path">操作：点「广告拦截」</span><ol class="marks"><li>广告拦截总开关</li><li>内置列表：点一下即添加（如 anti-AD）</li><li>填名称和链接添加自定义列表</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="dns">
@@ -467,13 +499,15 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>DNS 分流策略（nameserver-policy）</b>：「＋ 添加」指定域名用哪组 DNS，如 <code>geosite:apple,microsoft@cn</code>、<code>+.corp.example</code>、<code>rule-set:名称</code>。</li>
 <li><b>DNS 查询</b>：输入域名、选类型（A / AAAA / CNAME / HTTPS / MX / TXT / NS）→「查询」，结果是真实上游结果；「清空 DNS 缓存」。</li>
 </ul>
+<figure class="fig"><img src="img/dns.webp" alt="DNS 设置" width="1028" height="1000" loading="lazy"><figcaption><b>DNS 设置</b><span class="path">操作：点「DNS」 → 「DNS 设置」</span><ol class="marks"><li>增强模式：fake-ip（推荐）</li><li>国内域名走直连 DNS</li><li>保存 DNS 设置</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/dns-tools.webp" alt="DNS 泄露检测与 Hosts" width="1028" height="324" loading="lazy"><figcaption><b>DNS 泄露检测与 Hosts</b><span class="path">操作：点「DNS」 → 「DNS 泄露检测」</span><ol class="marks"><li>开始检测</li><li>一键应用防泄露设置</li></ol></figcaption></figure>
 <div class="note"><b>注意：</b>设备手动设了 8.8.8.8 这类公共 DNS 会绕过面板，按域名分流会失效。把设备 DNS 改回自动（走网关），或打开「阻止客户端绕过 DNS」。</div>
 </section>
 
 <!-- ============================================================ -->
 <section id="tun">
 <h2>12. 代理方式与 TUN 设置</h2>
-<p>入口：<b>设置 → 网络 → 代理方式</b>。</p>
+<p>入口：点「<b>设置</b>」→「<b>网络</b>」→「<b>代理方式</b>」。</p>
 <ol class="steps">
 <li>选 <b>TProxy</b>（默认，nftables 把流量转到 7893，性能最好，需要 nft_tproxy）、<b>TUN</b>（虚拟网卡接管，TProxy 不可用时用）或 <b>关闭</b>（不做透明代理，只能手动用 7890）。</li>
 <li>选 TUN 后展开「TUN 选项」：
@@ -489,6 +523,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 </ul></li>
 <li>点「应用 TUN 设置」（内核会重启，局域网断开几秒）。auto-route、auto-detect-interface 自动开启，DNS 劫持 any:53。</li>
 </ol>
+<figure class="fig"><img src="img/tun.webp" alt="代理方式与 TUN 选项" width="520" height="1150" loading="lazy"><figcaption><b>代理方式与 TUN 选项</b><span class="path">操作：点「设置」 → 「网络」 → 「代理方式」</span><ol class="marks"><li>TProxy（默认，性能最好）</li><li>TUN（TProxy 不可用时用）</li><li>协议栈：默认 / system / gvisor / mixed</li><li>应用 TUN 设置（内核重启，断网几秒）</li></ol></figcaption></figure>
 <ul>
 <li><b>IPv6 透明代理</b>（同卡片）：核心与 DNS 启用 IPv6 并代理 IPv6 流量，需客户端以旁路由作 IPv6 网关。</li>
 <li><b>故障自动直连（看门狗）</b>（同卡片，默认开）：每 30 秒检查核心，无响应自动重启；连续 2 次失败则关闭透明代理让局域网直连，核心恢复后自动重新接管。手动停掉的核心不会被拉起。</li>
@@ -510,6 +545,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>预览版在本页另有「🩺 板子性能体检」和「🧪 TUN 协议栈对比（手动）」，见第 18 节。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/speed.webp" alt="测速页" width="1280" height="800" loading="lazy"><figcaption><b>测速页</b><span class="path">操作：点「测速」</span><ol class="marks"><li>全部测速</li><li>单张卡片的「测速」</li><li>测速记录（最近 30 次）</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="stats">
@@ -519,6 +555,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>实时列出每个连接的主机、来源设备、网络（TCP / UDP）、命中规则、链路、上下行速度、下载量、时长；顶部汇总活动连接、设备数、合计速率。</li>
 <li>点表头排序；搜索框按域名 / IP / 设备 / 规则 / 节点过滤；勾「暂停」冻结列表；每行可关闭单个连接，「断开全部」关闭所有连接。超过 300 条只显示前 300 条。</li>
 </ul>
+<figure class="fig"><img src="img/conns.webp" alt="连接页" width="1280" height="800" loading="lazy"><figcaption><b>连接页</b><span class="path">操作：点「连接」</span><ol class="marks"><li>搜索 域名 / IP / 设备 / 规则 / 节点</li><li>暂停（冻结列表）</li><li>断开全部</li><li>单行「断开」</li></ol></figcaption></figure>
 <h3>14.2 统计页</h3>
 <ul>
 <li>概要：今日合计、本月合计、近 30 天日均、近 30 天峰值日。</li>
@@ -529,11 +566,12 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>预览版另有「📱 设备实时流量」卡片，见第 18 节。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/stats.webp" alt="统计页" width="1280" height="800" loading="lazy"><figcaption><b>统计页</b><span class="path">操作：点「统计」</span><ol class="marks"><li>今日合计</li><li>每日流量（近 30 天）</li><li>明细：今日 / 本月 切换</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="backup">
 <h2>15. 配置快照与备份</h2>
-<p>入口：<b>设置 → 备份与更新</b>。三种机制别弄混：</p>
+<p>入口：点「<b>设置</b>」→「<b>备份与更新</b>」。三种机制别弄混：</p>
 <table>
 <tr><th>机制</th><th>什么时候产生</th><th>怎么恢复</th></tr>
 <tr><td>配置快照</td><td>每次修改设置前自动保存上一版设置，最近 10 份（不含密码）</td><td>在「配置快照」列表里点某一份的「恢复」（经同样的校验和重载）；「刷新」更新列表。预览版另有「↩ 回到上一份」</td></tr>
@@ -547,6 +585,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>预览版的快照与版本备份另有容量上限，见第 18 节。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/backup.webp" alt="配置快照与版本备份" width="520" height="739" loading="lazy"><figcaption><b>配置快照与版本备份</b><span class="path">操作：点「设置」 → 「备份与更新」 →「配置快照」</span><ol class="marks"><li>某一份快照的「恢复」</li><li>下载备份</li><li>从文件恢复…</li><li>版本备份「立即备份」</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="logs">
@@ -559,6 +598,8 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>命令行：<code>tail -n 100 /var/log/mihomo-panel.log</code>（面板日志，反馈问题时请附上）、<code>tail -n 100 /var/log/mihomo.log</code>（内核日志，上次运行末尾在 mihomo.log.prev）。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/logs.webp" alt="日志页" width="1280" height="800" loading="lazy"><figcaption><b>日志页</b><span class="path">操作：点「日志」</span><ol class="marks"><li>实时日志流</li><li>日志文件（最近 300 行）</li><li>关键字过滤</li><li>暂停滚动</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/logs-clean.webp" alt="日志清理" width="520" height="291" loading="lazy"><figcaption><b>日志清理</b><span class="path">操作：点「设置」 → 「核心」 → 「日志清理」</span><ol class="marks"><li>上限（默认 5M）</li><li>立即清理</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="more">
@@ -575,6 +616,8 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li><b>背景图</b>（设置 → 外观）：上传图片或「使用图片链接」，图片由路由器保存、所有设备共用；可设每天自动更新、模糊、遮罩。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/sysopt.webp" alt="系统优化" width="520" height="1157" loading="lazy"><figcaption><b>系统优化</b><span class="path">操作：点「设置」 → 「网络」 → 「系统优化」</span><ol class="marks"><li>选推荐项</li><li>应用（开机自动生效）</li><li>全部恢复（还原原值）</li></ol></figcaption></figure>
+<figure class="fig"><img src="img/security.webp" alt="面板安全与 Telegram 通知" width="1028" height="477" loading="lazy"><figcaption><b>面板安全与 Telegram 通知</b><span class="path">操作：点「设置」 → 「通知与安全」</span><ol class="marks"><li>HTTPS（自签名证书）开关</li><li>面板密码</li><li>Telegram Bot Token（右边填 Chat ID）</li><li>发送测试</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="preview">
@@ -583,7 +626,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 
 <h3>18.1 🩺 板子性能体检（测速页）</h3>
 <ol class="steps">
-<li>打开「测速」页，找到「🩺 板子性能体检」卡片，点「体检」看一次。</li>
+<li>点「测速」→「🩺 板子性能体检」卡片 →「体检」看一次。</li>
 <li>点上面的「测速」时，卡片会边测边每 1.5 秒自动刷新。</li>
 </ol>
 <ul>
@@ -592,12 +635,14 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>全部只读，不改任何设置；读不到的项显示「未知」。</li>
 </ul>
 
+<figure class="fig"><img src="img/pv-perf.webp" alt="🩺 板子性能体检（仅预览版）" width="1028" height="487" loading="lazy"><figcaption><b>🩺 板子性能体检（仅预览版）</b><span class="path">操作：点「测速」 →「🩺 板子性能体检」→「体检」</span><ol class="marks"><li>体检：点一次读一次；测速时自动每 1.5 秒刷新</li><li>AES 加密提示与用 AES 加密的节点列表</li></ol></figcaption></figure>
 <h3>18.2 AES 加密提示（同一张卡片）</h3>
 <ul>
 <li>CPU 没有 AES 加速时（很多 32 位 ARM、没开 Crypto 扩展的 A53 / A72 小板），卡片下方列出手动节点和订阅里<b>显式用 AES 加密</b>的 Shadowsocks / VMess 节点（含 SS 2022 的 2022-blake3-aes-*-gcm）。</li>
 <li>建议让服务端换成 chacha20-ietf-poly1305 / 2022-blake3-chacha20-poly1305 或 VLESS Reality。<b>只提示，不改任何节点</b>；有 AES 加速时不列。TLS / Reality / QUIC 类节点和 VMess「auto」不列。</li>
 </ul>
 
+<figure class="fig"><img src="img/pv-aes.webp" alt="AES 加密提示（仅预览版）" width="1032" height="491" loading="lazy"><figcaption><b>AES 加密提示（仅预览版）</b><span class="path">操作：点「测速」 →「🩺 板子性能体检」</span><span class="fnote">这块 ARM 板（Cortex-A53）没有 AES 硬件加速，卡片列出显式用 aes-128-gcm 的节点，并建议换 chacha20-poly1305 / Reality；只提示，不改节点。</span></figcaption></figure>
 <h3>18.3 🧪 TUN 协议栈对比（手动，测速页）</h3>
 <ol class="steps">
 <li>先在 设置 → 网络 → 代理方式 选 TUN（协议栈只在 TUN 下起作用）。</li>
@@ -607,6 +652,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>每切一次，在那台设备上用同一个测速网站测 2～3 次取平均，同时看「体检」CPU 有没有打满。</li>
 <li>比完把协议栈改回你想用的。</li>
 </ol>
+<figure class="fig"><img src="img/pv-ab.webp" alt="🧪 TUN 协议栈对比（仅预览版）" width="1028" height="307" loading="lazy"><figcaption><b>🧪 TUN 协议栈对比（仅预览版）</b><span class="path">操作：点「测速」 →「🧪 TUN 协议栈对比（手动）」</span><ol class="marks"><li>当前生效的协议栈</li><li>刷新</li></ol></figcaption></figure>
 <p class="mut">为什么不做成一键自动对比：每切一次都要重启内核、局域网断网；面板自己的测速经 7890 端口走代理，不经过 TUN 协议栈；auto-redirect 开着时 TCP 也不经过协议栈。所以只做手动引导。</p>
 
 <h3>18.4 📱 设备实时流量（统计页）</h3>
@@ -615,6 +661,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>每 3 秒自动刷新，也可点「刷新」；离开页面或浏览器切到后台时停止。最多列 200 个设备；内核没运行时显示提示。</li>
 </ul>
 
+<figure class="fig"><img src="img/pv-devt.webp" alt="📱 设备实时流量（仅预览版）" width="1028" height="415" loading="lazy"><figcaption><b>📱 设备实时流量（仅预览版）</b><span class="path">操作：点「统计」 →「📱 设备实时流量」</span><ol class="marks"><li>当前节点（悬停看全部）</li></ol></figcaption></figure>
 <h3>18.5 🔁 故障切换记录（节点页，只保留最新 5 条）</h3>
 <ul>
 <li>「节点」页「🔁 故障切换记录」：面板每 30 秒读一次各组状态，<b>只记录、不切换</b>。组的当前节点变了记「切换」（注明原因），节点连续 3 次测速失败记「连续失败」，之后恢复记「恢复」；「主备优先」组的切换也记一条。手动选择组的变化不记，全节点测速期间不记，内核重启 / 切换内核后重新建基线。</li>
@@ -622,16 +669,18 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>「刷新」重读，「清空」清除全部记录。</li>
 </ul>
 
+<figure class="fig"><img src="img/pv-failover.webp" alt="🔁 故障切换记录（仅预览版）" width="1028" height="240" loading="lazy"><figcaption><b>🔁 故障切换记录（仅预览版）</b><span class="path">操作：点「节点」 →「🔁 故障切换记录」</span><ol class="marks"><li>刷新</li><li>清空</li></ol></figcaption></figure>
 <h3>18.6 mihomo TUN「默认」协议栈改为 system</h3>
 <p>mihomo / Smart 的 TUN 协议栈「默认」从 mixed 改为 system。只影响选「默认」的用户；显式选了 mixed / gvisor 的照旧。sing-box 不变。</p>
 
 <h3>18.7 sing-box TUN 多队列 multi_queue</h3>
 <ol class="steps">
 <li>切到 sing-box 内核、代理方式选 TUN、协议栈选「默认」。</li>
-<li>设置 → 网络 → TUN 选项 → 打开「多队列 multi_queue」→「应用 TUN 设置」。</li>
+<li>点「设置」→「网络」→「代理方式」→「TUN 选项」→ 打开「多队列 multi_queue」→「应用 TUN 设置」。</li>
 </ol>
 <p>打开后 TUN 入站写 <code>multi_queue: true</code>，吞吐随 CPU 核数增加。<b>默认关</b>；只在 Linux 3.8+、多核、sing-box 1.15+ 且协议栈为「默认」时生效。单核设备、旧内核、mihomo 下开关禁用或隐藏并写明原因。</p>
 
+<figure class="fig"><img src="img/pv-mq.webp" alt="TUN 多队列 multi_queue（仅预览版）" width="520" height="1200" loading="lazy"><figcaption><b>TUN 多队列 multi_queue（仅预览版）</b><span class="path">操作：点「设置」 → 「网络」 → 「代理方式」 → 「TUN」</span><ol class="marks"><li>TUN</li><li>协议栈「默认」</li><li>多队列 multi_queue 开关</li><li>应用 TUN 设置</li></ol></figcaption></figure>
 <h3>18.8 配置快照「↩ 回到上一份」与容量上限</h3>
 <ul>
 <li>设置 → 备份与更新 →「配置快照」卡片的「<b>↩ 回到上一份</b>」：恢复最近一次修改之前的设置（同样校验和重载）。恢复前的设置会记成新快照，<b>再点一次就是重做</b>。</li>
@@ -639,6 +688,7 @@ python3 /opt/mihomo-panel/server.py --allow-public on</code></pre>
 <li>版本备份合计不超过 48 MB（从最旧的删起，最新一份和正要恢复的那份始终保留）；存储剩余不足 24 MB 时跳过自动备份并说明，避免写满小板子的存储。</li>
 </ul>
 </section>
+<figure class="fig"><img src="img/pv-undo.webp" alt="↩ 回到上一份（仅预览版）" width="520" height="382" loading="lazy"><figcaption><b>↩ 回到上一份（仅预览版）</b><span class="path">操作：点「设置」 → 「备份与更新」 →「配置快照」</span><ol class="marks"><li>↩ 回到上一份（再点一次就是重做）</li><li>恢复某一份</li></ol></figcaption></figure>
 
 <!-- ============================================================ -->
 <section id="faq">
