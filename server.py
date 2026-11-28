@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.2.8-preview.965+bf1152d"
+PANEL_VERSION = "9.2.9-preview.973+2773338"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -379,7 +379,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.2.8-preview.965+bf1152d"
+PANEL_VERSION = "9.2.9-preview.973+2773338"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -4134,11 +4134,23 @@ def group_nodes(group):
 
 def manual_nodes(pg):
     """🖐️ 手动选择里的节点。v9.2.8 起这个组也含策略组（排在节点前），健康检查 / 全部节点测速 / 带宽择优
-    只要节点：按 /proxies 的类型去掉策略组。核心没应答时退回组的 all（去掉 DIRECT 等内置出站）"""
-    nodes = group_nodes(G_MANUAL)
-    if nodes is not None:
-        return nodes
-    return [m for m in ((pg.get("all") if isinstance(pg, dict) else None) or []) if isinstance(m, str) and m not in BUILTIN_POLICIES]
+    只要节点：按 /proxies 的类型去掉策略组。核心没应答时退回组的 all（去掉 DIRECT 等内置出站）。
+    v9.2.9：mihomo 的 /proxies 不列订阅（proxy-provider）里的节点，以前按「在 /proxies 里且不是组」取，订阅节点全被丢掉
+    （只剩手动节点：健康检查 / 带宽择优报「手动选择组里没有节点」，手动节点不通就误报全部节点超时）。
+    现在从组的 all 里只去掉 /proxies 认得的策略组和内置出站，不在 /proxies 里的成员按节点算"""
+    allm = [m for m in ((pg.get("all") if isinstance(pg, dict) else None) or []) if isinstance(m, str) and m not in BUILTIN_POLICIES]
+    px = (core_json("/proxies", timeout=8) or {}).get("proxies")
+    if not isinstance(px, dict):
+        return allm
+    if not allm and isinstance(px.get(G_MANUAL), dict):  # 调用方没给组信息：用 /proxies 里的
+        allm = [m for m in px[G_MANUAL].get("all") or [] if isinstance(m, str) and m not in BUILTIN_POLICIES]
+    out = []
+    for m in allm:
+        p = px.get(m)
+        if isinstance(p, dict) and (p.get("all") is not None or p.get("type") in NON_NODE_TYPES):
+            continue
+        out.append(m)
+    return out
 
 
 def fill_group(group, code, raw, budget=UI_BUDGET):
@@ -11622,13 +11634,15 @@ def _fo_last(p):
         return str(h[-1].get("time") or ""), 0
 
 
-def fo_watch(px):
-    """比较一份 /proxies 与上一份，记下切换 / 连续失败 / 恢复。返回本轮新记的事件。px 为 None（内核没运行）时不改状态"""
+def fo_watch(px, guess_reset=True):
+    """比较一份 /proxies 与上一份，记下切换 / 连续失败 / 恢复。返回本轮新记的事件。px 为 None（内核没运行）时不改状态。
+    guess_reset=False（sing-box，v9.2.9）：不按「大部分节点没了测速记录」猜内核重启——sing-box 测速失败本来就删记录，
+    节点不多且全部不通时以前被当成重启、一条失败都不记；sing-box 的重启 / 重载由 fo_watch_tick 按进程号和重载标记判断"""
     if not isinstance(px, dict):
         return []
     st, out = _FO_WATCH, []
     first = not st["now"] and not st["seen"]
-    if not first and fo_reset_like(px, st["seen"]):
+    if not first and guess_reset and fo_reset_like(px, st["seen"]):
         # 内核重启 / 热重载（mihomo PUT /configs 会重建全部节点）后测速记录全部清空、组回到默认选中：
         # 以前有记录的节点大多变成没记录，按「重新开始」处理，不把每个节点都记成失败、也不把组的复位记成切换
         first = True
@@ -11691,14 +11705,17 @@ def fo_watch_tick(force=False):
     if mass_testing():
         return []
     from .sb_config import core_pid
+    from .sb_common import SB_STATE, active_core
     pid = core_pid()
-    if pid != _FO_WATCH.get("pid"):  # 内核换了进程（重启 / 切换内核）：重新建基线
-        _FO_WATCH.update(now={}, seen={}, fail={}, pid=pid)
+    sb = active_core() == "singbox"
+    rel = SB_STATE.get("reload_ok") if sb else None  # sing-box 热重载（SIGHUP）成功的标记：进程号不变，但测速记录全部清空
+    if pid != _FO_WATCH.get("pid") or rel != _FO_WATCH.get("reload"):  # 内核换了进程（重启 / 切换内核）或 sing-box 重载过：重新建基线
+        _FO_WATCH.update(now={}, seen={}, fail={}, pid=pid, reload=rel)
     j = core_json("/proxies", timeout=5)
     if j is None:
         _FO_WATCH["t"] = time.time()
         return []
-    return fo_watch(j.get("proxies"))
+    return fo_watch(j.get("proxies"), guess_reset=not sb)
 
 
 def fo_events_api(q=None):
