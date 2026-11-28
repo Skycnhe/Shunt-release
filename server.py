@@ -21,7 +21,7 @@ bin/SHA256SUMS 缺失时（旧版拿不到 GitHub 校验值时只按内置文件
 """
 import gzip, hashlib, json, os, platform, queue, sys, threading, time, urllib.request
 
-PANEL_VERSION = "11.7.8-preview.796+90b6a5e"
+PANEL_VERSION = "11.7.9-preview.826+3e7f0ad"
 BASE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(BASE, "shunt")
 SUMS = os.path.join(BASE, "bin", "SHA256SUMS")
