@@ -2,8 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name="shunt"
 description="Shunt side-router panel"
-command="/usr/bin/python3"
-command_args="/opt/mihomo-panel/server.py"
+# Go 版面板是单个程序 /opt/mihomo-panel/shunt（不需要 python3）。
+# 从 Python 版在线更新上来、程序还没下载好时，start_pre 先用 python3 运行 server.py（引导程序：下载并校验本机架构的程序）。
+# 以前直接以 python3 server.py 作为服务进程、下载好后原地 exec 成 shunt：OpenRC 记下的 command 是 python3，
+# 而进程名已变成 shunt，于是 rc-status 显示 crashed，之后 stop / restart 匹配不到进程（只删 pidfile），
+# 旧进程一直占着端口，在线更新 / 重启面板都不生效，直到重启路由器。现在服务进程始终是 shunt 本身
+PANEL_BIN="/opt/mihomo-panel/shunt"
+command="$PANEL_BIN"
+command_args=""
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/mihomo-panel.log"
@@ -12,5 +18,21 @@ depend() { need net; }
 # 面板端口：在 /etc/conf.d/shunt 写一行 PANEL_PORT=8081（OpenRC 启动前会读取该文件），默认 8080
 start_pre() {
   [ -n "${PANEL_PORT:-}" ] && export PANEL_PORT
+  [ -x "$PANEL_BIN" ] && return 0
+  if [ ! -f /opt/mihomo-panel/server.py ] || ! command -v python3 >/dev/null 2>&1; then
+    eerror "缺少面板程序 $PANEL_BIN，请重新运行安装脚本"
+    return 1
+  fi
+  # 引导程序装好程序后 exec 成「shunt --version」：打印版本即退出（也验证了程序能在本机运行）
+  ebegin "下载 Go 版面板程序"
+  python3 /opt/mihomo-panel/server.py --version >>/var/log/mihomo-panel.log 2>&1 && [ -x "$PANEL_BIN" ]
+  eend $? "下载面板程序失败，详见 /var/log/mihomo-panel.log"
+}
+# 修正旧版引导程序留下的状态：服务以 python3 启动、进程已 exec 成 shunt 时，OpenRC 按记下的 python3 停不掉它
+stop_pre() {
+  local p c
+  p=$(cat "$pidfile" 2>/dev/null)
+  [ -n "$p" ] && c=$(cat "/proc/$p/comm" 2>/dev/null) || return 0
+  [ "$c" = shunt ] && [ "$(service_get_value command)" != "$PANEL_BIN" ] && service_set_value command "$PANEL_BIN"
   return 0
 }

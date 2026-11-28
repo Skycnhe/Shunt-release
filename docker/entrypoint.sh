@@ -16,6 +16,8 @@ mkdir -p /data/mihomo-panel /data/mihomo/providers /data/sing-box/rules /var/log
 for f in "$SEED"/sb-rules/*; do
   [ -f "$f" ] && { [ -s "/data/sing-box/rules/${f##*/}" ] || cp "$f" /data/sing-box/rules/; }
 done
+# 已有数据卷（配置里用到了镜像没预置的规则集）：后台补下载缺少的 .srs，不挡启动；面板启动后也会按需下载
+[ -f /data/mihomo-panel/data.json ] && ( "$PANEL/shunt" --sync-rules >/dev/null 2>&1 & )
 NEW=""
 if [ ! -f /data/mihomo-panel/data.json ]; then
   printf '{"secret":"","mode":"rule","tproxy":true,"subs":[],"rules":[]}\n' > /data/mihomo-panel/data.json
@@ -79,8 +81,8 @@ fi
 # 局域网网卡：默认路由所在网卡，可用 SHUNT_LAN_IF 指定（群晖常见 ovs_eth0 / bond0，Unraid 常见 br0）
 LAN_IF=${SHUNT_LAN_IF:-$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}')}
 LAN_NET=""
-[ -n "$LAN_IF" ] && LAN_NET=$(ip -4 -o addr show dev "$LAN_IF" 2>/dev/null | awk '{print $4; exit}' \
-  | python3 -c "import sys,ipaddress; v=sys.stdin.read().strip(); print(ipaddress.ip_interface(v).network if v else '')" 2>/dev/null)
+# 局域网网段直接取该网卡的内核直连路由（如 192.168.1.0/24），不需要 python3
+[ -n "$LAN_IF" ] && LAN_NET=$(ip -4 route show dev "$LAN_IF" proto kernel scope link 2>/dev/null | awk '$1 ~ /\//{print $1; exit}')
 # Docker 把 FORWARD 默认策略改成 DROP 时，局域网经旁路由转发的流量（TUN 模式全部流量、TProxy 下绕过 / 直连的）会被丢掉。
 # 在 Docker 的 DOCKER-USER 链里放行局域网网卡，docker stop 时撤掉。宿主机可能用 iptables-nft（Debian 11+ / Ubuntu 20.04+）
 # 或 iptables-legacy（群晖、老系统），两套都看。SHUNT_FORWARD_FIX=0 关闭
@@ -113,9 +115,9 @@ fi
 "$PANEL/tproxy.sh" stop leftovers >/dev/null 2>&1
 
 # 镜像升级（面板版本变化）：和 install.sh 一样先记下各策略组的选择，新配置生效后面板按新组名恢复
-VER=$(sed -n 's/^PANEL_VERSION = "\(.*\)"/\1/p' "$PANEL/server.py" | head -n 1)  # 内嵌的 base.py 里还有一行
+VER=$("$PANEL/shunt" --version 2>/dev/null)
 if [ -z "$NEW" ] && [ "$(cat /data/mihomo-panel/.image-version 2>/dev/null)" != "$VER" ]; then
-  python3 "$PANEL/server.py" --snapshot >/dev/null 2>&1 || true
+  "$PANEL/shunt" --snapshot >/dev/null 2>&1 || true
 fi
 echo "$VER" > /data/mihomo-panel/.image-version
 log "面板 v$VER"

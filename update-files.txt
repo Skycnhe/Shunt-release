@@ -1,5 +1,7 @@
 # 在线更新时下载并替换的文件（相对仓库根目录）。新增要部署到设备上的文件时加在这里
+# Go 版：server.py 在发布仓库里是引导程序（旧 Python 版更新上来时下载程序用）；bin/SHA256SUMS 由 tools/publish.sh 生成（程序本身在 <分支>-bin 分支）
 server.py
+bin/SHA256SUMS
 index.html
 tproxy.sh
 selftest.sh

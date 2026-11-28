@@ -8,6 +8,8 @@ Shunt 是装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、
 
 > Shunt 只负责分流和管理，**不提供节点**。第一次用请准备好自己的订阅链接或节点链接。
 
+> 本分支从 v11.7.8 起面板后端改为 **Go 单个程序**（`/opt/mihomo-panel/shunt`），设备上不再需要 python3，页面和功能与 Python 版一致。
+
 ## 目录
 
 - [分支说明](#分支说明)
@@ -35,7 +37,7 @@ Shunt 是装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、
 | --- | --- | --- | --- | --- | --- | --- |
 | [`shunt`](https://github.com/Skycnhe/Shunt-release/tree/shunt)（默认） | 正式 | mihomo / mihomo Smart / sing-box，面板里一键切换 | Python | 需要（安装脚本自动装） | amd64 / arm64 / armv7 | 有 / 有 |
 | [`shunt-preview`](https://github.com/Skycnhe/Shunt-release/tree/shunt-preview) | 预览 | 同 `shunt` | Python | 需要 | amd64 / arm64 / armv7 | 无（只跟正式版） |
-| [`shunt-singbox`](https://github.com/Skycnhe/Shunt-release/tree/shunt-singbox) | 正式 | 只有 sing-box（官方版或 reF1nd / MiChongs 魔改版） | Python（Go 版正在 `shunt-singbox-preview` 预览） | 需要（安装脚本自动装） | amd64 / arm64 / armv7 | Docker 有（`:singbox`）/ 离线包暂未发布 |
+| [`shunt-singbox`](https://github.com/Skycnhe/Shunt-release/tree/shunt-singbox) | 正式 | 只有 sing-box（官方版或 reF1nd / MiChongs 魔改版） | **Go 单个程序** | **不需要** | amd64 / arm64 / armv7 / 386 | Docker 有（`:singbox`）/ 离线包暂未发布 |
 | [`shunt-singbox-preview`](https://github.com/Skycnhe/Shunt-release/tree/shunt-singbox-preview) | 预览 | 同 `shunt-singbox` | **Go 单个程序** | **不需要** | amd64 / arm64 / armv7 / 386 | 无（只跟正式版） |
 
 - **正式 / 预览**：正式版是测试过的稳定版本；预览版是最新改动，版本号形如 `9.1.11-preview`、`11.7.8-preview.792+c7b71f9`。两者可以在面板里随时切换（见 [在线更新与预览通道](#在线更新与预览通道)），不用重装。
@@ -65,7 +67,7 @@ Shunt 是装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、
 | 内核 DNS | `1053` | 局域网设备的 53 端口 DNS 被重定向到这里 |
 | 内核控制接口 | `127.0.0.1:9090` | 只监听本机，面板与内核通信用 |
 | 代理内核服务 | 服务名 `shunt-core` | 程序在 `/usr/local/bin/`（`sing-box`） |
-| 面板程序 | `/opt/mihomo-panel/server.py` | 由 python3 运行，另有 `index.html`、`tproxy.sh` 等 |
+| 面板程序 | `/opt/mihomo-panel/shunt` | Go 单个程序，另有 `index.html`、`tproxy.sh`、`init.d` 等 |
 | 面板数据 | `/etc/mihomo-panel/data.json` | 订阅、节点、规则、设置都在这里 |
 | 内核配置（自动生成） | `/etc/sing-box/config.json`，规则集在 `/etc/sing-box/rules/` | 由面板生成，不要手改 |
 | 日志 | `/var/log/mihomo-panel.log`（面板）、`/var/log/mihomo.log`（内核） | 内核上次运行的末尾保存在 `/var/log/mihomo.log.prev` |
@@ -75,9 +77,9 @@ Fake-IP 模式下设备拿到的是 `198.18.x.x` / `198.19.x.x` 这样的虚拟�
 ## 系统要求
 
 - **Alpine Linux**（OpenRC；离线包按 3.22 / 3.23 / 3.24 打包）；用 **root** 执行安装。其他发行版不支持（安装脚本会直接退出）。
-- CPU 架构：**amd64（x86_64）/ arm64（aarch64）/ armv7**。
+- CPU 架构：**amd64（x86_64）/ arm64（aarch64）/ armv7 / 386（i686）**。
 - 内核模块：TProxy 需要 `nft_tproxy`，TUN 需要 `tun`（`/dev/net/tun`）。安装脚本会尝试加载并写入 `/etc/modules`；两者都不可用时只能用 7890 端口手动代理。
-- 依赖由安装脚本用 apk 自动安装：**python3**、curl、wget、nftables、iptables、iproute2、gzip、tar、tzdata 等。
+- 依赖由安装脚本用 apk 自动安装：curl、wget、nftables、iptables、iproute2、gzip、tar、tzdata 等。**不需要 python3**。
 - 旁路由要有固定的局域网 IP。
 - **PVE LXC 容器**：容器里没有自己的内核，模块和 TUN 设备要在宿主机准备。安装脚本检测到 LXC 时会打印需要在宿主机执行的命令（`modprobe nft_tproxy`、在 `/etc/pve/lxc/<ID>.conf` 加 `lxc.cgroup2.devices.allow: c 10:200 rwm` 与 `lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file`，并在 选项 → 功能 勾选 nesting）。
 
@@ -86,7 +88,7 @@ Fake-IP 模式下设备拿到的是 `198.18.x.x` / `198.19.x.x` 这样的虚拟�
 在旁路由上用 root 执行（本分支 `shunt-singbox`）：
 
 ```sh
-# 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top）
+# 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top，失败自动换 gh-proxy.com）
 wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh -s -- --cn
 
 # 国外网络
@@ -107,10 +109,10 @@ wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-rel
 wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt/install.sh | sh
 ```
 
-**`shunt-singbox`**（sing-box 正式版）
+**`shunt-singbox`**（sing-box 正式版（Go））
 
 ```sh
-# 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top）
+# 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top，失败自动换 gh-proxy.com）
 wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh -s -- --cn
 
 # 国外网络
@@ -143,7 +145,7 @@ wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox-
 
 | 参数 / 环境变量 | 作用 |
 | --- | --- |
-| `--cn` | 国内网络：apk 源换成 `mirrors.ustc.edu.cn`，GitHub 下载走 `https://ghfast.top/` |
+| `--cn` | 国内网络：apk 源换成 `mirrors.ustc.edu.cn`，GitHub 下载走 `https://ghfast.top/`，失败自动换内置的 `https://gh-proxy.com/` |
 | `--update-core` | 重新下载最新的 sing-box 内核（默认已装过就不重下） |
 | `--https` | 生成自签名证书，面板改用 `https://`（之后也能在设置里开关） |
 | `--selftest` | 安装后用真实内核校验多种配置场景 |
@@ -206,18 +208,20 @@ rc-service shunt restart
 **设置面板密码**（建议在允许外网或用域名访问前设置）：
 
 ```sh
-python3 /opt/mihomo-panel/server.py --password 新密码   # 设置
-python3 /opt/mihomo-panel/server.py --password          # 查看是否已设置
-python3 /opt/mihomo-panel/server.py --password off      # 关闭（忘记密码时用）
+/opt/mihomo-panel/shunt --password 新密码   # 设置
+/opt/mihomo-panel/shunt --password          # 查看是否已设置
+/opt/mihomo-panel/shunt --password off      # 关闭（忘记密码时用）
 ```
+
+> 面板页面里提示的 `shunt --password off` 就是这个程序；安装脚本没有把它放进 PATH，请写完整路径 `/opt/mihomo-panel/shunt`。
 
 也可以在「设置 → 通知与安全 → 面板安全」里设置。设置后打开面板要先登录（会话 30 天）；脚本调用接口时加请求头 `X-Shunt-Auth: 密码`。
 
 **从外网或用域名访问**（DDNS、反向代理、内网穿透）：
 
 ```sh
-python3 /opt/mihomo-panel/server.py --allow-host nas.example.com    # 允许用这个域名访问（--allow-host -nas.example.com 删除）
-python3 /opt/mihomo-panel/server.py --allow-public on                 # 允许非局域网来源访问（off 恢复只允许局域网）
+/opt/mihomo-panel/shunt --allow-host nas.example.com    # 允许用这个域名访问（--allow-host -nas.example.com 删除）
+/opt/mihomo-panel/shunt --allow-public on                 # 允许非局域网来源访问（off 恢复只允许局域网）
 ```
 
 允许外网前请务必先设置密码，并且不要把面板端口直接暴露到公网。
@@ -297,21 +301,19 @@ python3 /opt/mihomo-panel/server.py --allow-public on                 # 允许�
 
 ## 从 Python 版升级到 Go 版
 
-Go 版（`shunt-singbox` v11.7.8 起，目前在 `shunt-singbox-preview` 预览）的面板是单个程序，页面、数据和功能与 Python 版一致，设备上不再需要 python3。升级不用卸载、配置全部保留：
+Go 版（`shunt-singbox` v11.7.8 起）的面板是单个程序，页面、数据和功能与 Python 版一致，设备上不再需要 python3。升级不用卸载、配置全部保留：
 
-**方法一：面板在线更新（推荐）**：「设置 → 备份与更新 → 面板更新」，更新通道选 **预览版**，点「检查更新 → 立即更新」。旧版会先下载引导用的 `server.py` 和 `bin/SHA256SUMS`，重启时由引导程序按本机架构下载 Go 程序（sha256 校验）后交给它运行，只这一次用到 python3。国内网络建议先填好「GitHub 加速」。
+**方法一：面板在线更新（推荐）**：「设置 → 备份与更新 → 面板更新」点「检查更新 → 立即更新」。旧版会先下载引导用的 `server.py` 和 `bin/SHA256SUMS`，重启时由引导程序按本机架构下载 Go 程序（sha256 校验）后交给它运行，只这一次用到 python3。
 
-**方法二：用预览分支覆盖安装**：
+**方法二：重新执行一键安装命令**（覆盖安装）：
 
 ```sh
 # 国内网络（apk 换中科大镜像，GitHub 下载走 ghfast.top，失败自动换 gh-proxy.com）
-wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox-preview/install.sh | PANEL_BRANCH=shunt-singbox-preview sh -s -- --cn
+wget -qO- https://ghfast.top/https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh -s -- --cn
 
 # 国外网络
-wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox-preview/install.sh | PANEL_BRANCH=shunt-singbox-preview sh
+wget -qO- https://raw.githubusercontent.com/Skycnhe/Shunt-release/shunt-singbox/install.sh | sh
 ```
-
-装好后把更新通道设为「预览版」。
 
 **确认已是 Go 版**：
 
@@ -371,7 +373,7 @@ rc-service shunt status; rc-service shunt-core status
 | 规则不生效 / 某网站走错节点 | 「规则」页用规则测试查命中规则；检查设备是否用了自己的 DNS 或浏览器的安全 DNS（可开「阻止客户端绕过 DNS」） |
 | 日志刷 `missing fakeip record` | 内核重启或清空 Fake-IP 缓存后客户端还拿着旧的 198.18.x.x，一般几分钟内自愈；可在「核心服务」清空 Fake-IP 缓存 |
 | 内核起不来 / 反复重启 | 看 `/var/log/mihomo.log` 和 `/var/log/mihomo.log.prev`；检查 7890 / 7893 / 1053 / 9090 是否被占用；在内核列表里回滚 |
-| 忘记面板密码 | `python3 /opt/mihomo-panel/server.py --password off` |
+| 忘记面板密码 | `/opt/mihomo-panel/shunt --password off` |
 
 ## 卸载
 
