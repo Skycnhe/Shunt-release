@@ -1,7 +1,7 @@
 # 发版推送到 Telegram 群的「更新记录」话题：推送且 PANEL_VERSION 变了时，把这一版的 CHANGELOG 条目发到群里
 # 只在公开仓库 Skycnhe/Shunt-release 运行（2026-11-28 起；私库 Actions 免费分钟数不够，且避免两边重复发送）。
 # 文件经 tools/public-files.txt 发布到公开仓库；公开仓库没有 shunt/base.py，版本号读 server.py（预览分支里已是 <版本>-preview.N+哈希）
-# 需要公开仓库 Secret：TG_BOT_TOKEN（Settings → Secrets and variables → Actions）；没配就跳过
+# 需要公开仓库 Secret：TG_BOT_TOKEN（Settings → Secrets and variables → Actions）；没配就跳过；首尾空白 / 换行会自动去掉
 # 手动运行：mode=check 只检查机器人和群；mode=send 发当前版本；send + versions=9.2.4,9.2.5 按 CHANGELOG 里「## v<版本> 」条目逐条补发
 #   （公开仓库正式分支的 CHANGELOG 只留最新一条，更早的版本从本分支 git 历史里找）
 name: Telegram notify
@@ -48,7 +48,16 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -eu
+          # 去掉 secret 里所有空白（首尾空格、\r、\n、\t，粘贴时常带进来，会让 curl 报 URL rejected）
+          TG_BOT_TOKEN=$(printf %s "$TG_BOT_TOKEN" | tr -d '[:space:]')
           [ -n "$TG_BOT_TOKEN" ] || { echo "::notice::没有配置 TG_BOT_TOKEN，跳过"; exit 0; }
+          echo "::add-mask::$TG_BOT_TOKEN"
+          # 基本格式校验：<数字>:<字母数字_->；不符合只报长度和有没有冒号，绝不输出 token
+          if ! printf %s "$TG_BOT_TOKEN" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
+            case "$TG_BOT_TOKEN" in *:*) C=有 ;; *) C=没有 ;; esac
+            echo "::error::TG_BOT_TOKEN 格式不对（应为 数字:字符串）：去空白后长度 ${#TG_BOT_TOKEN}，${C}冒号"
+            exit 1
+          fi
           if [ "$EVENT" = workflow_dispatch ] && [ "$MODE" != send ]; then
             api() { curl -sS "https://api.telegram.org/bot$TG_BOT_TOKEN/$1" "${@:2}"; }
             ME=$(api getMe); echo "$ME" | jq -e .ok >/dev/null || { echo "::error::TG_BOT_TOKEN 无效：$(echo "$ME" | jq -r .description)"; exit 1; }
