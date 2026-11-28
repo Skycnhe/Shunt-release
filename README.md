@@ -10,7 +10,7 @@ Shunt 装在 **Alpine Linux 旁路由**（软路由、PVE / ESXi 虚拟机、LXC
 
 > Shunt 只负责分流和管理，**不提供节点**。第一次用请准备好自己的订阅链接或节点链接。
 
-![概览](docs/overview.jpg)
+![概览](docs/img/hero-overview.webp)
 
 ## 版本
 
@@ -84,11 +84,11 @@ docker run -d --name shunt --restart unless-stopped --network host \
 
 ## 截图
 
-| 节点 | 策略组 |
+| 节点 | 深色主题 |
 | --- | --- |
-| ![节点](docs/nodes.jpg) | ![策略组](docs/groups.jpg) |
-| **主题** | **手机** |
-| ![主题](docs/themes.jpg) | <img src="docs/mobile.jpg" width="320" alt="手机"> |
+| ![节点](docs/img/hero-nodes.webp) | ![深色主题](docs/img/overview-dark.webp) |
+
+<p align="center"><img src="docs/img/mobile.webp" width="320" alt="手机"></p>
 
 ## 许可证
 
