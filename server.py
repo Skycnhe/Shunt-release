@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.2.6"
+PANEL_VERSION = "9.2.7"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -378,7 +378,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.2.6"
+PANEL_VERSION = "9.2.7"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -4112,11 +4112,23 @@ def group_nodes(group):
 
 def manual_nodes(pg):
     """🖐️ 手动选择里的节点。v9.2.6 起这个组也含策略组（排在节点前），健康检查 / 全部节点测速 / 带宽择优
-    只要节点：按 /proxies 的类型去掉策略组。核心没应答时退回组的 all（去掉 DIRECT 等内置出站）"""
-    nodes = group_nodes(G_MANUAL)
-    if nodes is not None:
-        return nodes
-    return [m for m in ((pg.get("all") if isinstance(pg, dict) else None) or []) if isinstance(m, str) and m not in BUILTIN_POLICIES]
+    只要节点：按 /proxies 的类型去掉策略组。核心没应答时退回组的 all（去掉 DIRECT 等内置出站）。
+    v9.2.7：mihomo 的 /proxies 不列订阅（proxy-provider）里的节点，以前按「在 /proxies 里且不是组」取，订阅节点全被丢掉
+    （只剩手动节点：健康检查 / 带宽择优报「手动选择组里没有节点」，手动节点不通就误报全部节点超时）。
+    现在从组的 all 里只去掉 /proxies 认得的策略组和内置出站，不在 /proxies 里的成员按节点算"""
+    allm = [m for m in ((pg.get("all") if isinstance(pg, dict) else None) or []) if isinstance(m, str) and m not in BUILTIN_POLICIES]
+    px = (core_json("/proxies", timeout=8) or {}).get("proxies")
+    if not isinstance(px, dict):
+        return allm
+    if not allm and isinstance(px.get(G_MANUAL), dict):  # 调用方没给组信息：用 /proxies 里的
+        allm = [m for m in px[G_MANUAL].get("all") or [] if isinstance(m, str) and m not in BUILTIN_POLICIES]
+    out = []
+    for m in allm:
+        p = px.get(m)
+        if isinstance(p, dict) and (p.get("all") is not None or p.get("type") in NON_NODE_TYPES):
+            continue
+        out.append(m)
+    return out
 
 
 def fill_group(group, code, raw, budget=UI_BUDGET):
