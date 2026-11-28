@@ -1,7 +1,7 @@
 # 发版推送到 Telegram 群的「更新记录」话题：推送且 PANEL_VERSION 变了时，把这一版的 CHANGELOG 条目发到群里
 # 只在公开仓库 Skycnhe/Shunt-release 运行（2026-11-28 起；私库 Actions 免费分钟数不够，且避免两边重复发送）。
 # 文件经 tools/public-files.txt 发布到公开仓库；公开仓库没有 shunt/base.py，版本号读 server.py（预览分支里已是 <版本>-preview.N+哈希）
-# 需要公开仓库 Secret：TG_BOT_TOKEN（Settings → Secrets and variables → Actions）；没配就跳过；首尾空白 / 换行会自动去掉
+# 需要公开仓库 Secret：TG_BOT_TOKEN（Settings → Secrets and variables → Actions）；没配就跳过；空白、引号、bot / api 等前缀、零宽 / 非 ASCII 字符会自动清洗
 # 手动运行：mode=check 只检查机器人和群；mode=send 发当前版本；send + versions=9.2.4,9.2.5 按 CHANGELOG 里「## v<版本> 」条目逐条补发
 #   （公开仓库正式分支的 CHANGELOG 只留最新一条，更早的版本从本分支 git 历史里找）
 name: Telegram notify
@@ -48,19 +48,39 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -eu
-          # 去掉 secret 里所有空白（首尾空格、\r、\n、\t，粘贴时常带进来，会让 curl 报 URL rejected）
-          TG_BOT_TOKEN=$(printf %s "$TG_BOT_TOKEN" | tr -d '[:space:]')
-          [ -n "$TG_BOT_TOKEN" ] || { echo "::notice::没有配置 TG_BOT_TOKEN，跳过"; exit 0; }
+          # 清洗 secret（粘贴时常带进来的东西），只报告清洗掉的类别，绝不输出 token：
+          #   空白（空格、\r、\n、\t）→ 非 ASCII 可打印字符（零宽字符、BOM、全角符号等）→ 首尾引号 ' " → 开头的 bot 前缀（大小写不敏感）→ 其他非数字前缀（api、token= 等）
+          RAW_LEN=$(printf %s "$TG_BOT_TOKEN" | LC_ALL=C wc -c | tr -d ' ')
+          CLEANED=""
+          T=$(printf %s "$TG_BOT_TOKEN" | tr -d '[:space:]')
+          [ "$T" = "$TG_BOT_TOKEN" ] || CLEANED="$CLEANED 空白"
+          T2=$(printf %s "$T" | LC_ALL=C tr -cd '\041-\176')
+          [ "$T2" = "$T" ] || CLEANED="$CLEANED 非ASCII"
+          T=$T2
+          T2=$(printf %s "$T" | sed -E "s/^[\"']+//; s/[\"']+\$//")
+          [ "$T2" = "$T" ] || CLEANED="$CLEANED 引号"
+          T=$T2
+          T2=$(printf %s "$T" | sed -E 's/^[Bb][Oo][Tt]([0-9])/\1/')
+          [ "$T2" = "$T" ] || CLEANED="$CLEANED bot前缀"
+          T=$T2
+          # 其他非数字前缀（如 api、token=）：从第一个「数字串:」开始取
+          T2=$(printf %s "$T" | sed -E 's/^[^0-9]*([0-9]+:)/\1/')
+          [ "$T2" = "$T" ] || CLEANED="$CLEANED 非数字前缀"
+          TG_BOT_TOKEN=$T2; unset T T2
+          [ -n "$TG_BOT_TOKEN" ] || { echo "::notice::没有配置 TG_BOT_TOKEN（或清洗后为空），跳过"; exit 0; }
           echo "::add-mask::$TG_BOT_TOKEN"
-          # 基本格式校验：<数字>:<字母数字_->；不符合只报长度和有没有冒号，绝不输出 token
-          if ! printf %s "$TG_BOT_TOKEN" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
-            case "$TG_BOT_TOKEN" in *:*) C=有 ;; *) C=没有 ;; esac
-            echo "::error::TG_BOT_TOKEN 格式不对（应为 数字:字符串）：去空白后长度 ${#TG_BOT_TOKEN}，${C}冒号"
-            exit 1
-          fi
+          CLEANED=${CLEANED# }
+          TOKEN_INFO="清洗前 ${RAW_LEN} 字节，清洗后 ${#TG_BOT_TOKEN} 字节，清洗掉：${CLEANED:-无}"
+          echo "TG_BOT_TOKEN：$TOKEN_INFO"
+          # 只拦明显不是 token 的情况（没有冒号）；其余交给 Telegram getMe 判断
+          case "$TG_BOT_TOKEN" in
+            *:*) ;;
+            *) echo "::error::TG_BOT_TOKEN 不像机器人 token（应为 数字:字符串，没有冒号）：$TOKEN_INFO"; exit 1 ;;
+          esac
           if [ "$EVENT" = workflow_dispatch ] && [ "$MODE" != send ]; then
             api() { curl -sS "https://api.telegram.org/bot$TG_BOT_TOKEN/$1" "${@:2}"; }
-            ME=$(api getMe); echo "$ME" | jq -e .ok >/dev/null || { echo "::error::TG_BOT_TOKEN 无效：$(echo "$ME" | jq -r .description)"; exit 1; }
+            ME=$(api getMe || true)
+            echo "$ME" | jq -e .ok >/dev/null 2>&1 || { echo "::error::getMe 失败：$(echo "$ME" | jq -r '"\(.error_code // "") \(.description // "无返回")"' 2>/dev/null || echo 无法解析返回)；$TOKEN_INFO"; exit 1; }
             echo "机器人：@$(echo "$ME" | jq -r .result.username)"
             CH=$(api getChat --data-urlencode "chat_id=$TG_CHAT_ID"); echo "$CH" | jq -e .ok >/dev/null || { echo "::error::群 $TG_CHAT_ID 不可用：$(echo "$CH" | jq -r .description)"; exit 1; }
             echo "群：$(echo "$CH" | jq -r .result.title)（话题模式：$(echo "$CH" | jq -r .result.is_forum)，话题 ID $TG_THREAD_ID）"
@@ -71,9 +91,10 @@ jobs:
           fi
           send() {  # $1 = 消息文件
             python3 -c "t=open('$1',encoding='utf-8').read(); open('msg4k.txt','w',encoding='utf-8').write(t if len(t)<=3800 else t[:3790]+'…')"  # 按字符截断（按字节截会切坏 UTF-8，Telegram 返回 400）
-            curl -fsS "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+            R=$(curl -sS "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
               --data-urlencode "chat_id=$TG_CHAT_ID" --data-urlencode "message_thread_id=$TG_THREAD_ID" --data-urlencode "text@msg4k.txt" \
-              --data-urlencode "disable_web_page_preview=true" -o /dev/null
+              --data-urlencode "disable_web_page_preview=true" || true)
+            echo "$R" | jq -e .ok >/dev/null 2>&1 || { echo "::error::sendMessage 失败：$(echo "$R" | jq -r '"\(.error_code // "") \(.description // "无返回")"' 2>/dev/null || echo 无法解析返回)"; return 1; }
           }
           ver() { sed -n 's/^PANEL_VERSION = "\(.*\)"/\1/p' "$@" | head -n 1; }
           # 某个版本的 CHANGELOG 条目（标题以「## v<版本> 」开头）：先看当前 CHANGELOG，没有再按时间倒序找本分支历史里的 CHANGELOG
