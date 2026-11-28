@@ -4,7 +4,7 @@
 
 本文件由 tools/build.py 生成，内嵌了 shunt/ 目录下全部模块的源码。请修改 shunt/ 下的文件后重新生成，不要直接改这里。
 """
-PANEL_VERSION = "9.2.5"
+PANEL_VERSION = "9.2.6"
 import importlib.util, linecache, marshal, os, sys, types, zlib
 
 _SRC = {}
@@ -378,7 +378,7 @@ LEGACY_AUTO = "♻️ 自动选择"  # v5 及以前的名称，读取旧数据�
 AUTO_ORDER = ["日本", "新加坡", "香港", "美国"]  # 「自动优选」组在节点选择中的顺序，其余地区按识别顺序排在后面
 LB_ORDER = ["香港", "日本", "新加坡", "美国"]    # 「负载均衡」组的顺序
 SCHEMA = 9
-PANEL_VERSION = "9.2.5"
+PANEL_VERSION = "9.2.6"
 L, R = "(?<![A-Za-z])", "(?![A-Za-z])"  # 英文缩写两侧不能紧挨字母，避免 (?i)US 误匹配 Russia / Plus / Australia
 REGIONS = [  # (分组名, 正则)；正则同时在 Python 与 mihomo(regexp2) 中使用，只用两者都支持的语法
     ("🇭🇰 香港", f"🇭🇰|(?i:香港|港|Hong ?Kong)|{L}HKG?{R}"),
@@ -2421,6 +2421,51 @@ def migrate_ruleset_cache(d, startup=False):
     return done
 
 
+def bw_on(d):
+    """带宽择优是否打开（设置 → 带宽择优；默认关）。关着时 🚀 带宽择优 只是一个没人维护选中的全节点组"""
+    return bool((d.get("bw_cfg") or {}).get("enabled"))
+
+
+def group_empty(g):
+    """策略组没有实际成员：没写 proxies（或只有占位的 COMPATIBLE / DIRECT）也没引用订阅"""
+    return not g.get("use") and not [m for m in g.get("proxies") or [] if m not in ("COMPATIBLE", "DIRECT")]
+
+
+def manual_groups(groups, proxies, cands):
+    """v9.2.6：🖐️ 手动选择 以前只列节点，地区竞技 / 哈希 / 轮询、🚀 带宽择优、⚡ 全局自动选择和自定义策略组都选不到。
+    现在把这些组按 cands 的顺序排在节点前面。跳过：不存在 / 已被禁用（没生成）的组、空组、
+    以及成员里（递归，含链式代理节点的前置 dialer-proxy）会回到 🖐️ 手动选择 的组——否则成环，内核拒绝加载。
+    直接改 groups 里的 🖐️ 手动选择；返回加入的组名"""
+    gmap = {g["name"]: g for g in groups}
+    man = gmap.get(G_MANUAL)
+    if not man:
+        return []
+    dial = {p.get("name"): p.get("dialer-proxy") for p in proxies if p.get("dialer-proxy")}
+
+    def reaches(n, seen):
+        """从 n 出发（组成员 + 节点的前置）能不能走到 🖐️ 手动选择"""
+        if n == G_MANUAL:
+            return True
+        if n in seen:
+            return False
+        seen.add(n)
+        g = gmap.get(n)
+        nxt = list(g.get("proxies") or []) if g else []
+        if n in dial:
+            nxt.append(dial[n])
+        return any(reaches(m, seen) for m in nxt)
+
+    out = []
+    for n in cands:
+        g = gmap.get(n)
+        if not g or n == G_MANUAL or n in out or group_empty(g) or reaches(n, set()):
+            continue
+        out.append(n)
+    if out:
+        man["proxies"] = out + [m for m in man.get("proxies") or [] if m not in out and m != "COMPATIBLE"]
+    return out
+
+
 def build_config(d, strict=False):
     providers = {}
     for s in d["subs"]:
@@ -2561,6 +2606,8 @@ def build_config(d, strict=False):
         if not g.get("proxies") and not g.get("use"):
             g["proxies"] = ["COMPATIBLE"]
         groups.append(g)
+    if have:
+        manual_groups(groups, proxies, rnames + ([G_BW] if bw_on(d) else []) + [G_AUTO] + cnames)
     policies = {g["name"] for g in groups} | BUILTIN_POLICIES | set(names)
     extra = {}
     if any(p.get("dialer-proxy") for p in proxies):  # 落地的前置节点被删 / 改名时去掉，免得整份配置加载失败
@@ -3928,7 +3975,7 @@ import threading
 import time
 from urllib.parse import quote
 
-from .base import BUILTIN_POLICIES, HC, mass_begin, mass_end
+from .base import BUILTIN_POLICIES, G_MANUAL, HC, mass_begin, mass_end
 from .corehttp import core, core_json
 
 PROBE_WORKERS = 8    # 逐个节点测速的全局并发上限（所有调用方合计）
@@ -4061,6 +4108,15 @@ def group_nodes(group):
             continue
         out.append(m)
     return out
+
+
+def manual_nodes(pg):
+    """🖐️ 手动选择里的节点。v9.2.6 起这个组也含策略组（排在节点前），健康检查 / 全部节点测速 / 带宽择优
+    只要节点：按 /proxies 的类型去掉策略组。核心没应答时退回组的 all（去掉 DIRECT 等内置出站）"""
+    nodes = group_nodes(G_MANUAL)
+    if nodes is not None:
+        return nodes
+    return [m for m in ((pg.get("all") if isinstance(pg, dict) else None) or []) if isinstance(m, str) and m not in BUILTIN_POLICIES]
 
 
 def fill_group(group, code, raw, budget=UI_BUDGET):
@@ -5657,7 +5713,7 @@ _SRC['shunt.sb_config'] = '''"""生成 sing-box 配置"""
 import ipaddress, json, os, re, shlex, signal, threading, time, urllib.request, urllib.error
 
 from .base import (
-    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_BW, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
+    AB_DIR, BUILTIN_POLICIES, CN_ECS, CTRL_HOST, CTRL_PORT, G_BW, G_MANUAL, G_OTHER, G_SEL, MIHOMO_LOG, MIXED, REGIONS, UA, dl_check, read_full, wd_hold)
 from .errlog import log_err
 from . import hotswitch
 from .data import _atomic_write, auto_name, lb_dropped_names, lb_names, lb_old_name, load, rs_file, safe, write_json
@@ -6034,6 +6090,11 @@ def sb_group_outbounds(cfg, gc, node_names, prov_names, warn, picks=None, fork=F
                  "interrupt_exist_connections": False}
             sb_idle(o, g["type"] == "url-test" and not g.get("lazy", True))
         outbounds.append(o)
+    # v9.2.6：🖐️ 手动选择 里的策略组（mihomo.manual_groups 加的）在 sing-box 下按订阅展开后没有成员（只剩 DIRECT 占位）时去掉
+    empty = {o["tag"] for o in outbounds if o["outbounds"] == ["DIRECT"] and o["tag"] != G_MANUAL}
+    for o in outbounds:
+        if o["tag"] == G_MANUAL and empty & set(o["outbounds"]):
+            o["outbounds"] = [m for m in o["outbounds"] if m not in empty] or ["DIRECT"]
     return alias, outbounds
 
 
@@ -7856,7 +7917,7 @@ from urllib.parse import quote
 from .base import BUILTIN_POLICIES, G_MANUAL, HC
 from .corehttp import core, core_json
 from .data import load, update
-from .nodeprobe import fill_absent
+from .nodeprobe import fill_absent, manual_nodes
 from .sb_common import active_core
 
 HEALTH_STATE = {"running": False, "last_run": 0, "total": 0, "checked": 0}
@@ -8001,7 +8062,7 @@ def run_check():
         pg = core_json("/proxies/" + quote(G_MANUAL))
         if not pg:
             return False, "手动选择组不存在"
-        members = pg.get("all") or []
+        members = manual_nodes(pg)
         code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=180)
         if code not in (200, 504):  # 504：mihomo 全部节点超时，按全部失败记录
             return False, f"测速接口返回 {code}"
@@ -10043,7 +10104,7 @@ from urllib.parse import quote
 from .base import CORE_UPD, G_MANUAL, HC, MIHOMO_LOG, NOTIFY_FILE, PANEL_DIR, TPROXY_SH, WD_HOLD, mass_testing
 from .data import load, read_json, write_json
 from .corehttp import core, core_json
-from .nodeprobe import confirm_all_down
+from .nodeprobe import confirm_all_down, manual_nodes
 from .sb_common import CORE_PID, CORES, active_core
 from .sysopt import SVC_OP, proxy_opener, sh, svc_restart
 def tg_send(text, d=None):
@@ -10382,11 +10443,13 @@ def check_nodes():
         return
     if not isinstance(res, dict):
         return
-    all_down = not any(v for v in res.values() if isinstance(v, int) and v > 0)
+    members = manual_nodes(pg)  # 手动选择里的策略组（v9.2.6 起）不算节点
+    keep = set(members)
+    all_down = not any(v for k, v in res.items() if (not keep or k in keep) and isinstance(v, int) and v > 0)
     st = load_notified()
     if all_down and not st.get("allnodes") and code == 200:
         # 200 却没有一个可用节点：sing-box 全部超时就是这样（也可能只是没轮到测），逐个节点复核后再告警
-        all_down = confirm_all_down((pg.get("all") or []) if isinstance(pg, dict) else [], NODE_CONFIRM_BUDGET)
+        all_down = confirm_all_down(members, NODE_CONFIRM_BUDGET)
         if all_down is None:
             return
     if all_down != bool(st.get("allnodes")):
@@ -12400,7 +12463,7 @@ from .errlog import log_err
 from .health import merge_delay
 from .groups import bw_resolve
 from .mihomo import mh_bin
-from .nodeprobe import fill_absent, probe_nodes
+from .nodeprobe import fill_absent, manual_nodes, probe_nodes
 from .sb_common import SB_BIN, active_core
 from .sb_nodes import sb_outbound
 
@@ -12625,7 +12688,7 @@ def _delays(pool=None):
     pg = core_json("/proxies/" + quote(G_MANUAL))
     if not pg:
         return None, "核心未运行或手动选择组不存在"
-    members = pg.get("all") or []
+    members = manual_nodes(pg)
     code, raw = core("GET", f"/group/{quote(G_MANUAL)}/delay?url={quote(HC)}&timeout=5000", timeout=180)
     if code not in (200, 504):  # 504：mihomo 全部节点超时，按全部失败处理
         return None, f"测速接口返回 {code}"
@@ -14483,11 +14546,11 @@ from collections import deque
 from urllib.parse import quote
 
 from .errlog import log_err
-from .base import BUILTIN_POLICIES, G_MANUAL, HC, PANEL_DIR
+from .base import G_MANUAL, HC, PANEL_DIR
 from .data import load, read_json, write_json
 from .core import refresh_regions, reload_core
 from .corehttp import core, core_json
-from .nodeprobe import fill_absent
+from .nodeprobe import fill_absent, manual_nodes
 from .sb_common import active_core
 from .notify import core_alive
 from .groups import sb_sub_cache
@@ -14841,10 +14904,11 @@ def run_task(name):
                 res = json.loads(r2) if c2 == 200 else {}
             except Exception:
                 res = {}
-            res = {k: v for k, v in res.items() if isinstance(v, int) and not isinstance(v, bool) and v > 0} if isinstance(res, dict) else {}
+            members = manual_nodes(pg)  # 手动选择里的策略组（v9.2.6 起）不算节点
+            keep = set(members)
+            res = {k: v for k, v in res.items() if (not keep or k in keep) and isinstance(v, int) and not isinstance(v, bool) and v > 0} if isinstance(res, dict) else {}
             if c2 == 200 and active_core() == "singbox":
                 # sing-box 整组测速同时只测 10 个、共用超时：没轮到测的节点不在结果里，也没有刷新延迟，逐个补测
-                members = [m for m in ((pg.get("all") if isinstance(pg, dict) else None) or []) if isinstance(m, str) and m not in BUILTIN_POLICIES]
                 res = fill_absent({m: res.get(m, 0) for m in members}, LATENCY_PROBE_BUDGET)
             n = sum(1 for v in res.values() if v > 0)
             code = 200 if (code == 200 or c2 in (200, 504)) else code
